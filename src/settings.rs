@@ -1,0 +1,212 @@
+//! User settings, persisted as JSON next to the database.
+//!
+//! Unknown keys in an existing file are dropped and missing ones fall back to
+//! the default, so a settings file written by an older build keeps working.
+
+use std::net::Ipv4Addr;
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+pub const APP_NAME: &str = "NetDoctor";
+pub const DNS_TEST_HOST: &str = "example.com";
+
+/// Where a probe sits in the chain, which is what lets us blame the right
+/// party when it stops answering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Scope {
+    Lan,
+    Isp,
+    Internet,
+}
+
+#[derive(Debug, Clone)]
+pub struct Target {
+    pub key: String,
+    pub label: String,
+    /// `None` means "resolve at runtime" (the router, the ISP resolver).
+    pub host: Option<Ipv4Addr>,
+    pub scope: Scope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    pub probe_interval_ms: u64,
+    pub ping_timeout_ms: u32,
+    pub outage_after_fails: u32,
+    pub history_points: usize,
+    pub extra_targets: Vec<String>,
+
+    pub ping_good_ms: f64,
+    pub ping_ok_ms: f64,
+    pub ping_bad_ms: f64,
+    pub jitter_good_ms: f64,
+    pub jitter_ok_ms: f64,
+    pub loss_good_pct: f64,
+    pub loss_ok_pct: f64,
+
+    pub notify_on_outage: bool,
+    pub start_minimised: bool,
+    pub keep_days: i64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            probe_interval_ms: 1000,
+            ping_timeout_ms: 1000,
+            outage_after_fails: 3,
+            history_points: 300,
+            extra_targets: Vec::new(),
+
+            ping_good_ms: 30.0,
+            ping_ok_ms: 60.0,
+            ping_bad_ms: 120.0,
+            jitter_good_ms: 5.0,
+            jitter_ok_ms: 15.0,
+            loss_good_pct: 0.5,
+            loss_ok_pct: 2.0,
+
+            notify_on_outage: true,
+            start_minimised: false,
+            keep_days: 14,
+        }
+    }
+}
+
+pub fn data_dir() -> PathBuf {
+    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    base.join(APP_NAME)
+}
+
+pub fn settings_path() -> PathBuf {
+    data_dir().join("settings.json")
+}
+
+pub fn db_path() -> PathBuf {
+    data_dir().join("history.db")
+}
+
+pub fn snapshot_path() -> PathBuf {
+    data_dir().join("tweak_snapshots.json")
+}
+
+impl Settings {
+    pub fn load() -> Self {
+        match std::fs::read_to_string(settings_path()) {
+            Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+            Err(_) => Settings::default(),
+        }
+    }
+
+    pub fn save(&self) -> anyhow::Result<()> {
+        std::fs::create_dir_all(data_dir())?;
+        std::fs::write(settings_path(), serde_json::to_string_pretty(self)?)?;
+        Ok(())
+    }
+
+    pub fn interval(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.probe_interval_ms.max(300))
+    }
+
+    /// Built-in targets plus whatever the user added. Invalid entries are
+    /// skipped rather than failing the whole list.
+    pub fn targets(&self) -> Vec<Target> {
+        let mut out = vec![
+            Target {
+                key: "gateway".into(),
+                label: "Router".into(),
+                host: None,
+                scope: Scope::Lan,
+            },
+            Target {
+                key: "dns_isp".into(),
+                label: "ISP resolver".into(),
+                host: None,
+                scope: Scope::Isp,
+            },
+            Target {
+                key: "cloudflare".into(),
+                label: "1.1.1.1".into(),
+                host: Some(Ipv4Addr::new(1, 1, 1, 1)),
+                scope: Scope::Internet,
+            },
+            Target {
+                key: "google".into(),
+                label: "8.8.8.8".into(),
+                host: Some(Ipv4Addr::new(8, 8, 8, 8)),
+                scope: Scope::Internet,
+            },
+        ];
+
+        for (i, raw) in self.extra_targets.iter().enumerate() {
+            let text = raw.trim();
+            if text.is_empty() {
+                continue;
+            }
+            if let Some(addr) = resolve_target(text) {
+                out.push(Target {
+                    key: format!("custom{i}"),
+                    label: text.to_string(),
+                    host: Some(addr),
+                    scope: Scope::Internet,
+                });
+            }
+        }
+        out
+    }
+}
+
+/// Accepts a literal IPv4 address or a hostname to resolve once at load time.
+pub fn resolve_target(text: &str) -> Option<Ipv4Addr> {
+    if let Ok(addr) = text.parse::<Ipv4Addr>() {
+        return Some(addr);
+    }
+    use std::net::ToSocketAddrs;
+    (text, 80u16)
+        .to_socket_addrs()
+        .ok()?
+        .find_map(|sa| match sa.ip() {
+            std::net::IpAddr::V4(v4) => Some(v4),
+            _ => None,
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_sane() {
+        let s = Settings::default();
+        assert!(s.ping_good_ms < s.ping_ok_ms);
+        assert!(s.ping_ok_ms < s.ping_bad_ms);
+        assert!(s.jitter_good_ms < s.jitter_ok_ms);
+        assert_eq!(s.targets().len(), 4);
+    }
+
+    #[test]
+    fn unknown_keys_are_ignored_and_missing_ones_default() {
+        let json = r#"{"ping_ok_ms": 45.0, "obsolete": 1}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.ping_ok_ms, 45.0);
+        assert_eq!(s.ping_bad_ms, Settings::default().ping_bad_ms);
+    }
+
+    #[test]
+    fn interval_never_drops_below_the_floor() {
+        let mut s = Settings::default();
+        s.probe_interval_ms = 5;
+        assert_eq!(s.interval(), std::time::Duration::from_millis(300));
+    }
+
+    #[test]
+    fn literal_addresses_become_targets_and_junk_is_skipped() {
+        let mut s = Settings::default();
+        s.extra_targets = vec!["8.8.4.4".into(), "   ".into(), "!!!not a host!!!".into()];
+        let hosts: Vec<_> = s.targets().iter().filter_map(|t| t.host).collect();
+        assert!(hosts.contains(&Ipv4Addr::new(8, 8, 4, 4)));
+        assert_eq!(s.targets().len(), 5);
+    }
+}
