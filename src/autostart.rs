@@ -38,12 +38,12 @@ pub fn is_stale() -> bool {
 pub fn enable() -> Result<String> {
     let cmd = command_line()?;
     winreg::write_string(Root::CurrentUser, RUN_KEY, VALUE, &cmd)?;
-    Ok("NetDoctor will start minimised when you sign in.".into())
+    Ok(crate::i18n::auto_enabled().into())
 }
 
 pub fn disable() -> Result<String> {
     winreg::delete_value(Root::CurrentUser, RUN_KEY, VALUE)?;
-    Ok("Autostart disabled.".into())
+    Ok(crate::i18n::auto_disabled().into())
 }
 
 pub fn set(enabled: bool) -> Result<String> {
@@ -82,7 +82,7 @@ pub fn relaunch_elevated() -> Result<()> {
     };
     // ShellExecuteW returns >32 on success.
     if result.0 as isize <= 32 {
-        return Err(anyhow!("Elevation was declined or failed."));
+        return Err(anyhow!(crate::i18n::auto_elevation_declined()));
     }
     Ok(())
 }

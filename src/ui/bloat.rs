@@ -6,6 +6,7 @@ use eframe::egui;
 
 use super::{stat_card, App, Job, FG, FG_DIM, GREEN, RED, YELLOW};
 use crate::bandwidth::{self, Grade};
+use crate::i18n;
 
 fn grade_colour(g: Grade) -> egui::Color32 {
     match g {
@@ -17,15 +18,10 @@ fn grade_colour(g: Grade) -> egui::Color32 {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    ui.label(egui::RichText::new("Latency under load").size(18.0).strong().color(FG));
+    ui.label(egui::RichText::new(i18n::bloat_title()).size(18.0).strong().color(FG));
     ui.add_space(4.0);
     ui.label(
-        egui::RichText::new(
-            "Idle latency says little. What matters is what happens to it when somebody in the \
-             house starts a download. This test saturates the link and measures the rise.\n\n\
-             It pulls a few dozen MB from Cloudflare and takes about 25 seconds. Skip it on a \
-             metered connection.",
-        )
+        egui::RichText::new(i18n::bloat_blurb())
         .size(12.0)
         .color(FG_DIM),
     );
@@ -33,7 +29,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!app.bloat_running, egui::Button::new("Run test").fill(super::ACCENT))
+            .add_enabled(!app.bloat_running, egui::Button::new(i18n::bloat_btn_run()).fill(super::ACCENT))
             .clicked()
         {
             start(app);
@@ -48,25 +44,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let r = app.bloat.clone();
     ui.horizontal(|ui| {
         match r.idle_avg {
-            Some(v) => stat_card(ui, "Idle latency", &format!("{v:.0} ms"), "", FG),
-            None => stat_card(ui, "Idle latency", "—", "", FG_DIM),
+            Some(v) => stat_card(ui, i18n::bloat_card_idle(), &format!("{v:.0} ms"), "", FG),
+            None => stat_card(ui, i18n::bloat_card_idle(), "—", "", FG_DIM),
         }
         let bump = r.bump_ms.unwrap_or(0.0);
         let colour = if bump < 60.0 { GREEN } else if bump < 150.0 { YELLOW } else { RED };
         match r.loaded_avg {
-            Some(v) => stat_card(ui, "Under load", &format!("{v:.0} ms"), "", colour),
-            None => stat_card(ui, "Under load", "—", "", FG_DIM),
+            Some(v) => stat_card(ui, i18n::bloat_card_loaded(), &format!("{v:.0} ms"), "", colour),
+            None => stat_card(ui, i18n::bloat_card_loaded(), "—", "", FG_DIM),
         }
         match r.bump_ms {
-            Some(v) => stat_card(ui, "Increase", &format!("+{v:.0} ms"), "", colour),
-            None => stat_card(ui, "Increase", "—", "", FG_DIM),
+            Some(v) => stat_card(ui, i18n::bloat_card_increase(), &format!("+{v:.0} ms"), "", colour),
+            None => stat_card(ui, i18n::bloat_card_increase(), "—", "", FG_DIM),
         }
         match r.mbps {
-            Some(v) => stat_card(ui, "Throughput", &format!("{v:.0} Mbps"), "during the test", FG),
-            None => stat_card(ui, "Throughput", "—", "", FG_DIM),
+            Some(v) => stat_card(
+                ui,
+                i18n::bloat_card_throughput(),
+                &format!("{v:.0} Mbps"),
+                i18n::bloat_card_throughput_sub(),
+                FG,
+            ),
+            None => stat_card(ui, i18n::bloat_card_throughput(), "—", "", FG_DIM),
         }
         let g = r.grade_or_unknown();
-        stat_card(ui, "Grade", g.letter(), "", grade_colour(g));
+        stat_card(ui, i18n::bloat_card_grade(), g.letter(), "", grade_colour(g));
     });
 
     ui.add_space(14.0);
@@ -83,10 +85,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
                 if let (Some(max), true) = (r.loaded_max, r.loaded_avg.is_some()) {
                     ui.label(
-                        egui::RichText::new(format!(
-                            "Worst sample under load: {max:.0} ms, packet loss {:.0}%.",
-                            r.loaded_loss_pct
-                        ))
+                        egui::RichText::new(i18n::bloat_worst(max, r.loaded_loss_pct))
                         .size(12.0)
                         .color(FG),
                     );
@@ -100,7 +99,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 fn start(app: &mut App) {
     app.bloat_running = true;
     app.bloat_progress = 0.0;
-    app.bloat_label = "Starting…".into();
+    app.bloat_label = i18n::bloat_starting().into();
     // Our own probes would otherwise count as part of the load.
     app.monitor.set_paused(true);
 

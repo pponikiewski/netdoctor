@@ -46,7 +46,7 @@ impl Medium {
         match self {
             Medium::Wifi => "Wi-Fi",
             Medium::Ethernet => "Ethernet",
-            Medium::Unknown => "unknown",
+            Medium::Unknown => crate::i18n::medium_unknown(),
         }
     }
 }
@@ -400,7 +400,7 @@ pub fn dns_lookup_ms(host: &str) -> (Option<f64>, String) {
         Ok(mut it) => {
             let found: Option<SocketAddr> = it.next();
             if found.is_none() {
-                return (None, "resolver returned no addresses".into());
+                return (None, crate::i18n::dns_no_addresses().into());
             }
             (Some(started.elapsed().as_secs_f64() * 1000.0), String::new())
         }

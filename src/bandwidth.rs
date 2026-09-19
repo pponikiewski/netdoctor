@@ -43,12 +43,12 @@ impl Grade {
 
     pub fn verdict(&self) -> &'static str {
         match self {
-            Grade::A => "Excellent — the link does not bloat under load.",
-            Grade::B => "Good — a mild rise, unnoticeable in games.",
-            Grade::C => "Fair — latency climbs noticeably while downloading.",
-            Grade::D => "Poor — games will stutter during any download.",
-            Grade::F => "Very poor — textbook bufferbloat.",
-            Grade::Unknown => "Not measured.",
+            Grade::A => crate::i18n::grade_a(),
+            Grade::B => crate::i18n::grade_b(),
+            Grade::C => crate::i18n::grade_c(),
+            Grade::D => crate::i18n::grade_d(),
+            Grade::F => crate::i18n::grade_f(),
+            Grade::Unknown => crate::i18n::grade_unknown(),
         }
     }
 
@@ -138,18 +138,18 @@ pub fn run(
         }
     };
 
-    say("Measuring idle latency…", 0.05);
+    say(crate::i18n::bloat_prog_idle(), 0.05);
     let idle_samples = ping_window(host, idle, timeout_ms);
     let idle_rtts: Vec<f64> = idle_samples.iter().flatten().copied().collect();
     if idle_rtts.is_empty() {
-        res.error = format!("No reply from {host} — test aborted.");
+        res.error = crate::i18n::bloat_no_reply(&host.to_string());
         return res;
     }
     let idle_stats = store::summarise(idle_samples.len(), &idle_rtts);
     res.idle_avg = idle_stats.avg;
     res.idle_max = idle_stats.max;
 
-    say("Saturating the link and measuring latency under load…", 0.4);
+    say(crate::i18n::bloat_prog_load(), 0.4);
     let stop = Arc::new(AtomicBool::new(false));
     let counter = Arc::new(AtomicU64::new(0));
     let workers: Vec<_> = (0..STREAMS)
@@ -184,8 +184,7 @@ pub fn run(
 
     if loaded_rtts.is_empty() {
         res.grade = Some(Grade::F);
-        res.error =
-            "Under load the host stopped replying entirely — that is itself the result.".into();
+        res.error = crate::i18n::bloat_silent_under_load().into();
         return res;
     }
 
@@ -194,7 +193,7 @@ pub fn run(
     res.bump_ms = Some(loaded_stats.avg.unwrap_or(0.0) - idle_stats.avg.unwrap_or(0.0));
     res.grade = Some(Grade::from_bump(res.bump_ms.unwrap_or(0.0)));
 
-    say("Done", 1.0);
+    say(crate::i18n::bloat_prog_done(), 1.0);
     res
 }
 
@@ -203,38 +202,24 @@ pub fn advice(res: &BloatResult) -> String {
     match res.grade_or_unknown() {
         Grade::Unknown => {
             if res.error.is_empty() {
-                "Run the test to get a result.".into()
+                crate::i18n::bloat_advice_run().into()
             } else {
                 res.error.clone()
             }
         }
-        Grade::A | Grade::B => "Nothing to do — the link copes with load. If you still get lag, \
-             the cause is elsewhere (Wi-Fi, driver, or the route to that particular server)."
-            .into(),
+        Grade::A | Grade::B => crate::i18n::bloat_advice_ok().into(),
         _ => {
             let mut lines = vec![
-                format!(
-                    "Latency rises by {:.0} ms when the link is busy, which means packets are \
-                     queueing — either in your router or at the ISP.",
-                    res.bump_ms.unwrap_or(0.0)
-                ),
+                crate::i18n::bloat_advice_intro(res.bump_ms.unwrap_or(0.0)),
                 String::new(),
-                "What helps, most effective first:".into(),
-                "1. Enable SQM / Smart Queue / QoS on the router (look for \"cake\" or \
-                 \"fq_codel\") and cap it at about 90% of the real line speed."
-                    .into(),
-                "2. If the router has no such option, that is the best possible reason to replace \
-                 it. No Windows setting can fix this."
-                    .into(),
-                "3. As a stopgap, throttle whatever saturates the link (Steam, torrents, updates) \
-                 to about 80% of capacity."
-                    .into(),
+                crate::i18n::bloat_advice_header().into(),
+                crate::i18n::bloat_advice_1().into(),
+                crate::i18n::bloat_advice_2().into(),
+                crate::i18n::bloat_advice_3().into(),
             ];
             if let Some(mbps) = res.mbps {
                 lines.push(String::new());
-                lines.push(format!(
-                    "Throughput measured during the test: {mbps:.0} Mbps — use that to set the cap."
-                ));
+                lines.push(crate::i18n::bloat_advice_throughput(mbps));
             }
             lines.join("\n")
         }
@@ -256,9 +241,10 @@ mod tests {
 
     #[test]
     fn good_grades_do_not_produce_a_wall_of_advice() {
+        let _guard = crate::i18n::test_lock();
         let res = BloatResult { grade: Some(Grade::A), ..Default::default() };
         let text = advice(&res);
-        assert!(text.contains("Nothing to do"));
+        assert_eq!(text, crate::i18n::bloat_advice_ok());
         assert!(!text.contains("SQM"));
     }
 
@@ -279,6 +265,7 @@ mod tests {
     fn an_unrun_test_says_so_rather_than_claiming_success() {
         let res = BloatResult::default();
         assert_eq!(res.grade_or_unknown(), Grade::Unknown);
-        assert!(advice(&res).contains("Run the test"));
+        let _guard = crate::i18n::test_lock();
+        assert_eq!(advice(&res), crate::i18n::bloat_advice_run());
     }
 }

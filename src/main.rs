@@ -5,6 +5,7 @@
 mod autostart;
 mod bandwidth;
 mod diagnose;
+mod i18n;
 mod monitor;
 mod optimize;
 mod probe;
@@ -22,6 +23,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    let cfg = settings::Settings::load();
+    // Before anything that produces text, including --help and --scan.
+    i18n::set(cfg.effective_lang());
+
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("netdoctor {VERSION}");
         return Ok(());
@@ -31,11 +36,10 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
-    let cfg = settings::Settings::load();
     let store = match store::Store::open_default() {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            eprintln!("Cannot open the history database: {e}");
+            eprintln!("{} {e}", i18n::err_open_db());
             return Ok(());
         }
     };
@@ -60,7 +64,7 @@ fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size([1120.0, 760.0])
         .with_min_inner_size([900.0, 620.0])
-        .with_title(format!("NetDoctor {VERSION} — network diagnostics and latency optimiser"))
+        .with_title(format!("NetDoctor {VERSION} — {}", i18n::app_tagline()))
         .with_visible(!minimised);
 
     let options = eframe::NativeOptions { viewport, ..Default::default() };
@@ -73,19 +77,5 @@ fn main() -> eframe::Result<()> {
 }
 
 fn print_help() {
-    println!(
-        "netdoctor {VERSION} — network diagnostics and latency optimiser for Windows
-
-USAGE:
-    netdoctor [OPTIONS]
-
-OPTIONS:
-    --scan         run the diagnostic scan on the console and exit
-    --minimised    start with the window minimised (used by autostart)
-    --version      print the version and exit
-    --help         print this help
-
-Diagnostics work without elevation. Applying changes needs administrator
-rights; the app offers to relaunch itself when you ask it to apply one."
-    );
+    println!("netdoctor {VERSION} — {}\n\n{}", i18n::app_tagline(), i18n::cli_help());
 }

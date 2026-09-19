@@ -3,27 +3,24 @@
 use eframe::egui;
 
 use super::{App, FG, FG_DIM, GREEN, RED, YELLOW};
+use crate::i18n;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.columns(2, |cols| {
             let left = &mut cols[0];
-            section(left, "Probing", |ui| {
-                num_u64(ui, "Interval between sweeps (ms)", &mut app.draft.probe_interval_ms);
-                hint(ui, "Lower is more detailed but adds traffic. The floor is 300 ms.");
-                num_u32(ui, "Ping timeout (ms)", &mut app.draft.ping_timeout_ms);
-                num_u32(ui, "Failed sweeps before an alarm", &mut app.draft.outage_after_fails);
-                hint(ui, "Guards against logging a single dropped packet as an outage.");
-                num_usize(ui, "Chart width (samples)", &mut app.draft.history_points);
-                num_i64(ui, "Days of history to keep", &mut app.draft.keep_days);
+            section(left, i18n::set_sec_probing(), |ui| {
+                num_u64(ui, i18n::set_interval(), &mut app.draft.probe_interval_ms);
+                hint(ui, i18n::set_interval_hint());
+                num_u32(ui, i18n::set_ping_timeout(), &mut app.draft.ping_timeout_ms);
+                num_u32(ui, i18n::set_fails_before_alarm(), &mut app.draft.outage_after_fails);
+                hint(ui, i18n::set_fails_hint());
+                num_usize(ui, i18n::set_chart_width(), &mut app.draft.history_points);
+                num_i64(ui, i18n::set_keep_days(), &mut app.draft.keep_days);
             });
 
-            section(left, "Extra ping targets", |ui| {
-                hint(
-                    ui,
-                    "One host per line — for example the game server you play on. Names are \
-                     resolved when settings are saved.",
-                );
+            section(left, i18n::set_sec_targets(), |ui| {
+                hint(ui, i18n::set_targets_hint());
                 ui.add(
                     egui::TextEdit::multiline(&mut app.draft_targets)
                         .desired_rows(4)
@@ -33,20 +30,44 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
 
             let right = &mut cols[1];
-            section(right, "Thresholds", |ui| {
-                num_f64(ui, "Latency still good up to (ms)", &mut app.draft.ping_ok_ms);
-                num_f64(ui, "Latency bad above (ms)", &mut app.draft.ping_bad_ms);
-                num_f64(ui, "Jitter good up to (ms)", &mut app.draft.jitter_good_ms);
-                num_f64(ui, "Jitter acceptable up to (ms)", &mut app.draft.jitter_ok_ms);
-                num_f64(ui, "Acceptable packet loss (%)", &mut app.draft.loss_ok_pct);
+            section(right, i18n::set_language(), |ui| {
+                // Applied on click rather than on save: a language picker that
+                // needs a second confirmation is hard to undo once the labels
+                // are in a language you cannot read.
+                let mut chosen = app.draft.effective_lang();
+                ui.horizontal(|ui| {
+                    for lang in i18n::Lang::ALL {
+                        if ui
+                            .selectable_label(chosen == lang, lang.native_name())
+                            .clicked()
+                        {
+                            chosen = lang;
+                        }
+                    }
+                });
+                if chosen != app.draft.effective_lang() {
+                    app.draft.lang = Some(chosen);
+                    app.settings.lang = Some(chosen);
+                    i18n::set(chosen);
+                    let _ = app.settings.save();
+                }
+                hint(ui, i18n::set_language_hint());
             });
 
-            section(right, "Behaviour", |ui| {
-                ui.checkbox(&mut app.draft.notify_on_outage, "Announce outages in the app");
-                ui.checkbox(&mut app.draft.start_minimised, "Start minimised");
+            section(right, i18n::set_sec_thresholds(), |ui| {
+                num_f64(ui, i18n::set_lat_good(), &mut app.draft.ping_ok_ms);
+                num_f64(ui, i18n::set_lat_bad(), &mut app.draft.ping_bad_ms);
+                num_f64(ui, i18n::set_jitter_good(), &mut app.draft.jitter_good_ms);
+                num_f64(ui, i18n::set_jitter_ok(), &mut app.draft.jitter_ok_ms);
+                num_f64(ui, i18n::set_loss_ok(), &mut app.draft.loss_ok_pct);
+            });
+
+            section(right, i18n::set_sec_behaviour(), |ui| {
+                ui.checkbox(&mut app.draft.notify_on_outage, i18n::set_notify());
+                ui.checkbox(&mut app.draft.start_minimised, i18n::set_start_min());
 
                 let mut autostart = app.autostart_on;
-                if ui.checkbox(&mut autostart, "Start with Windows").changed() {
+                if ui.checkbox(&mut autostart, i18n::set_autostart()).changed() {
                     let now = ui.input(|i| i.time);
                     match crate::autostart::set(autostart) {
                         Ok(msg) => {
@@ -56,17 +77,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         Err(e) => app.toast(e.to_string(), RED, now),
                     }
                 }
-                hint(
-                    ui,
-                    "Autostart only matters together with background monitoring: without it the \
-                     app cannot record an outage that happens while it is closed.",
-                );
+                hint(ui, i18n::set_autostart_hint());
                 if crate::autostart::is_stale() {
                     ui.label(
-                        egui::RichText::new(
-                            "The autostart entry points at an executable that no longer exists. \
-                             Toggle it off and on again to repoint it here.",
-                        )
+                        egui::RichText::new(i18n::set_autostart_stale())
                         .size(11.0)
                         .color(YELLOW),
                     );
@@ -76,10 +90,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if ui.button("Save settings").clicked() {
+            if ui.button(i18n::set_btn_save()).clicked() {
                 save(app, ui);
             }
-            if ui.button("Restore defaults").clicked() {
+            if ui.button(i18n::set_btn_defaults()).clicked() {
                 app.draft = crate::settings::Settings::default();
                 app.draft_targets.clear();
                 save(app, ui);
@@ -92,11 +106,11 @@ fn save(app: &mut App, ui: &mut egui::Ui) {
     let now = ui.input(|i| i.time);
 
     if app.draft.probe_interval_ms < 300 {
-        app.toast("An interval below 300 ms loads the network more than it measures.", RED, now);
+        app.toast(i18n::set_err_interval(), RED, now);
         return;
     }
     if app.draft.ping_ok_ms >= app.draft.ping_bad_ms {
-        app.toast("\"Good\" latency must be lower than \"bad\" latency.", RED, now);
+        app.toast(i18n::set_err_thresholds(), RED, now);
         return;
     }
     app.draft.history_points = app.draft.history_points.max(30);
@@ -123,16 +137,12 @@ fn save(app: &mut App, ui: &mut egui::Ui) {
         Ok(()) => {
             app.monitor.update_settings(app.settings.clone());
             if unresolved.is_empty() {
-                app.toast("Settings saved.", GREEN, now);
+                app.toast(i18n::set_saved(), GREEN, now);
             } else {
-                app.toast(
-                    format!("Saved, but these could not be resolved: {}", unresolved.join(", ")),
-                    YELLOW,
-                    now,
-                );
+                app.toast(i18n::set_saved_unresolved(&unresolved.join(", ")), YELLOW, now);
             }
         }
-        Err(e) => app.toast(format!("Could not save: {e}"), RED, now),
+        Err(e) => app.toast(i18n::set_save_failed(&e.to_string()), RED, now),
     }
 }
 

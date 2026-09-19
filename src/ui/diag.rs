@@ -6,6 +6,7 @@ use eframe::egui;
 
 use super::{App, Job, FG, FG_DIM, GREEN, RED, YELLOW};
 use crate::diagnose::{self, Severity};
+use crate::i18n;
 
 fn severity_colour(s: Severity) -> egui::Color32 {
     match s {
@@ -19,7 +20,7 @@ fn severity_colour(s: Severity) -> egui::Color32 {
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!app.scanning, egui::Button::new("Run full scan").fill(super::ACCENT))
+            .add_enabled(!app.scanning, egui::Button::new(i18n::diag_btn_scan()).fill(super::ACCENT))
             .clicked()
         {
             start_scan(app);
@@ -34,11 +35,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     if app.findings.is_empty() {
         ui.label(
-            egui::RichText::new(
-                "No scan yet. The scan measures the link to your router, latency and loss to the \
-                 internet, DNS behaviour, Wi-Fi quality, MTU, TCP settings and the recorded \
-                 outage history.",
-            )
+            egui::RichText::new(i18n::diag_no_scan_yet())
             .size(13.0)
             .color(FG_DIM),
         );
@@ -83,8 +80,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 match app.selected_finding.and_then(|i| app.findings.get(i)).cloned() {
                     None => {
                         ui.label(
-                            egui::RichText::new("Select a finding to see what it means.")
-                                .color(FG_DIM),
+                            egui::RichText::new(i18n::diag_select_finding()).color(FG_DIM),
                         );
                     }
                     Some(f) => {
@@ -104,7 +100,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         }
                         if let Some(id) = &f.tweak_id {
                             ui.add_space(10.0);
-                            if ui.button("Fix this").clicked() {
+                            if ui.button(i18n::diag_btn_fix()).clicked() {
                                 app.tab = super::Tab::Optimise;
                                 app.refresh_tweaks();
                                 app.selected_tweak =
@@ -120,7 +116,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 fn start_scan(app: &mut App) {
     app.scanning = true;
     app.scan_progress = 0.0;
-    app.scan_label = "Starting…".into();
+    app.scan_label = i18n::diag_scan_starting().into();
 
     let tx = app.tx.clone();
     let store = Arc::clone(&app.store);

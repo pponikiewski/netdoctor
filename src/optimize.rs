@@ -27,8 +27,8 @@ pub enum Risk {
 impl Risk {
     pub fn label(&self) -> &'static str {
         match self {
-            Risk::Low => "low",
-            Risk::Medium => "medium",
+            Risk::Low => crate::i18n::risk_low(),
+            Risk::Medium => crate::i18n::risk_medium(),
         }
     }
 }
@@ -98,7 +98,7 @@ pub fn has_snapshot(id: &str) -> bool {
 /// cannot happen.
 pub fn apply(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
     if tweak.needs_admin() && !is_elevated() {
-        return Err(anyhow!("This change requires administrator rights."));
+        return Err(anyhow!(crate::i18n::tw_needs_admin()));
     }
     let state = tweak.read(net);
     let mut snaps = load_snapshots();
@@ -110,11 +110,11 @@ pub fn apply(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
 
 pub fn revert(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
     if tweak.needs_admin() && !is_elevated() {
-        return Err(anyhow!("Reverting requires administrator rights."));
+        return Err(anyhow!(crate::i18n::tw_revert_needs_admin()));
     }
     let snaps = load_snapshots();
     let Some(snapshot) = snaps.get(tweak.id()) else {
-        return Err(anyhow!("No saved state for this change — nothing to revert to."));
+        return Err(anyhow!(crate::i18n::tw_no_snapshot()));
     };
     let msg = tweak.revert(net, snapshot)?;
     let mut snaps = load_snapshots();
@@ -208,14 +208,13 @@ impl Tweak for AdapterPowerSaving {
         "adapter_power"
     }
     fn title(&self) -> &'static str {
-        "Stop Windows powering down the network adapter"
+        crate::i18n::tw_power_title()
     }
     fn what(&self) -> &'static str {
-        "Clears \"Allow the computer to turn off this device to save power\" for the adapter."
+        crate::i18n::tw_power_what()
     }
     fn why(&self) -> &'static str {
-        "The most common cause of connections dropping \"for no reason\" on laptops. Windows \
-         suspends the card when idle and waking it takes long enough for sessions to die."
+        crate::i18n::tw_power_why()
     }
     fn risk(&self) -> Risk {
         Risk::Low
@@ -226,43 +225,41 @@ impl Tweak for AdapterPowerSaving {
 
     fn read(&self, net: &NetState) -> State {
         let Some(key) = adapter_class_key(net) else {
-            return State::new("adapter not found in the registry", None, Value::Null);
+            return State::new(crate::i18n::tw_power_no_adapter(), None, Value::Null);
         };
         match winreg::read_dword(Root::LocalMachine, &key, "PnPCapabilities") {
             Ok(Some(v)) if v & PNP_DISABLE_POWER_DOWN == PNP_DISABLE_POWER_DOWN => State::new(
-                format!("disabled (PnPCapabilities={v})"),
+                crate::i18n::tw_power_off_detail(v),
                 Some(true),
                 json!({ "key": key, "value": v }),
             ),
             Ok(current) => State::new(
                 match current {
-                    Some(v) => format!("enabled — Windows may suspend the card (PnPCapabilities={v})"),
-                    None => "enabled — Windows may suspend the card (value not set)".to_string(),
+                    Some(v) => crate::i18n::tw_power_on_detail(v),
+                    None => crate::i18n::tw_power_on_unset().to_string(),
                 },
                 Some(false),
                 json!({ "key": key, "value": current }),
             ),
-            Err(e) => State::new(format!("cannot read: {e}"), None, Value::Null),
+            Err(e) => State::new(crate::i18n::tw_cannot_read(&e.to_string()), None, Value::Null),
         }
     }
 
     fn apply(&self, net: &NetState) -> Result<String> {
-        let key = adapter_class_key(net).ok_or_else(|| anyhow!("adapter key not found"))?;
+        let key = adapter_class_key(net).ok_or_else(|| anyhow!(crate::i18n::tw_no_adapter_key()))?;
         winreg::write_dword(Root::LocalMachine, &key, "PnPCapabilities", PNP_DISABLE_POWER_DOWN)?;
-        Ok("Power management disabled for the adapter. Takes effect after a restart \
-            (or disabling and re-enabling the adapter)."
-            .into())
+        Ok(crate::i18n::tw_power_applied().into())
     }
 
     fn revert(&self, _net: &NetState, snapshot: &Value) -> Result<String> {
-        let key = snapshot["key"].as_str().ok_or_else(|| anyhow!("snapshot has no key"))?;
+        let key = snapshot["key"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
         match snapshot["value"].as_u64() {
             Some(v) => {
                 winreg::write_dword(Root::LocalMachine, key, "PnPCapabilities", v as u32)?
             }
             None => winreg::delete_value(Root::LocalMachine, key, "PnPCapabilities")?,
         }
-        Ok("Previous value restored. Takes effect after a restart.".into())
+        Ok(crate::i18n::tw_power_reverted().into())
     }
 }
 
@@ -280,15 +277,13 @@ impl Tweak for WlanPowerPlan {
         "wlan_power_plan"
     }
     fn title(&self) -> &'static str {
-        "Wi-Fi radio at maximum performance in the power plan"
+        crate::i18n::tw_wlan_title()
     }
     fn what(&self) -> &'static str {
-        "Sets Wireless Adapter Settings → Power Saving Mode to Maximum Performance, on both \
-         mains and battery."
+        crate::i18n::tw_wlan_what()
     }
     fn why(&self) -> &'static str {
-        "A second, independent throttle. Even with driver power management off, the power plan \
-         can still cut transmit power and cause drops."
+        crate::i18n::tw_wlan_why()
     }
     fn risk(&self) -> Risk {
         Risk::Low
@@ -298,21 +293,23 @@ impl Tweak for WlanPowerPlan {
         let out = match run("powercfg", &["/query", "SCHEME_CURRENT", SUB_WIRELESS, SETTING_POWER_SAVING])
         {
             Ok(t) => t,
-            Err(e) => return State::new(format!("cannot read: {e}"), None, Value::Null),
+            Err(e) => {
+                return State::new(crate::i18n::tw_cannot_read(&e.to_string()), None, Value::Null)
+            }
         };
-        let ac = extract_hex(&out, "Current AC Power Setting Index");
-        let dc = extract_hex(&out, "Current DC Power Setting Index");
+        let ac = extract_index(&out, AC_INDEX_LABELS, 0);
+        let dc = extract_index(&out, DC_INDEX_LABELS, 1);
         let (Some(ac), Some(dc)) = (ac, dc) else {
-            return State::new("setting not present in this power plan", None, Value::Null);
+            return State::new(crate::i18n::tw_wlan_absent(), None, Value::Null);
         };
         let name = |v: u32| match v {
-            0 => "max performance",
-            1 => "low saving",
-            2 => "medium saving",
-            _ => "max saving",
+            0 => crate::i18n::tw_wlan_max_perf(),
+            1 => crate::i18n::tw_wlan_low_save(),
+            2 => crate::i18n::tw_wlan_med_save(),
+            _ => crate::i18n::tw_wlan_max_save(),
         };
         State::new(
-            format!("mains: {} / battery: {}", name(ac), name(dc)),
+            crate::i18n::tw_wlan_state(name(ac), name(dc)),
             Some(ac == 0 && dc == 0),
             json!({ "ac": ac, "dc": dc }),
         )
@@ -320,14 +317,14 @@ impl Tweak for WlanPowerPlan {
 
     fn apply(&self, _net: &NetState) -> Result<String> {
         set_power_indices(0, 0)?;
-        Ok("Wi-Fi radio set to maximum performance on mains and battery.".into())
+        Ok(crate::i18n::tw_wlan_applied().into())
     }
 
     fn revert(&self, _net: &NetState, snapshot: &Value) -> Result<String> {
         let ac = snapshot["ac"].as_u64().unwrap_or(0) as u32;
         let dc = snapshot["dc"].as_u64().unwrap_or(3) as u32;
         set_power_indices(ac, dc)?;
-        Ok("Previous power plan values restored.".into())
+        Ok(crate::i18n::tw_wlan_reverted().into())
     }
 }
 
@@ -338,10 +335,52 @@ fn set_power_indices(ac: u32, dc: u32) -> Result<()> {
     Ok(())
 }
 
-fn extract_hex(text: &str, label: &str) -> Option<u32> {
-    let line = text.lines().find(|l| l.contains(label))?;
+// powercfg and netsh localise their output, so matching a single English
+// label silently returns None on a Polish Windows and the tweak reports
+// "cannot read" forever. Each helper below knows the labels for the languages
+// we ship and falls back to a structural rule that holds whatever the locale.
+
+const AC_INDEX_LABELS: &[&str] = &["Current AC Power Setting Index", "prądem zmiennym"];
+const DC_INDEX_LABELS: &[&str] = &["Current DC Power Setting Index", "prądem stałym"];
+const AUTOTUNE_LABELS: &[&str] = &["Auto-Tuning Level", "automatycznego dostrajania"];
+
+fn find_labelled_line<'a>(text: &'a str, labels: &[&str]) -> Option<&'a str> {
+    text.lines().find(|l| labels.iter().any(|label| l.contains(label)))
+}
+
+fn parse_hex(line: &str) -> Option<u32> {
     let hex = line.split("0x").nth(1)?.trim();
     u32::from_str_radix(hex, 16).ok()
+}
+
+/// Map a possibly translated auto-tuning level onto the keyword `netsh set`
+/// accepts. Unrecognised input falls back to `normal`, which is the value
+/// Windows itself defaults to.
+fn canonical_autotune_level(value: &str) -> &'static str {
+    let v = value.to_lowercase();
+    if v.starts_with("normal") {
+        "normal"
+    } else if v.starts_with("disabled") || v.starts_with("wyłącz") {
+        "disabled"
+    } else if v.starts_with("highly") || v.starts_with("wysoce") {
+        "highlyrestricted"
+    } else if v.starts_with("restricted") || v.starts_with("ogranicz") {
+        "restricted"
+    } else if v.starts_with("experimental") || v.starts_with("eksperyment") {
+        "experimental"
+    } else {
+        "normal"
+    }
+}
+
+/// A powercfg setting index. `ordinal` is the fallback: powercfg prints the AC
+/// index before the DC one in every language, so position identifies them even
+/// when the label does not match.
+fn extract_index(text: &str, labels: &[&str], ordinal: usize) -> Option<u32> {
+    if let Some(v) = find_labelled_line(text, labels).and_then(parse_hex) {
+        return Some(v);
+    }
+    text.lines().filter_map(parse_hex).nth(ordinal)
 }
 
 // ---------------------------------------------------------------------------
@@ -355,14 +394,13 @@ impl Tweak for FastDns {
         "fast_dns"
     }
     fn title(&self) -> &'static str {
-        "Fast, independent DNS servers"
+        crate::i18n::tw_dns_title()
     }
     fn what(&self) -> &'static str {
-        "Sets 1.1.1.1 and 8.8.8.8 on the active adapter instead of the DHCP-supplied servers."
+        crate::i18n::tw_dns_what()
     }
     fn why(&self) -> &'static str {
-        "When the router is the only resolver, its hiccup looks exactly like \"the internet is \
-         down\": pings by IP work, but nothing loads."
+        crate::i18n::tw_dns_why()
     }
     fn risk(&self) -> Risk {
         Risk::Low
@@ -372,12 +410,12 @@ impl Tweak for FastDns {
         let current: Vec<String> = net.dns_servers.iter().map(|d| d.to_string()).collect();
         let good = ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9"];
         let mut text = if current.is_empty() {
-            "none / from DHCP".to_string()
+            crate::i18n::tw_dns_none().to_string()
         } else {
             current.join(", ")
         };
         if net.dns_is_router_only() {
-            text.push_str("  (router only — single point of failure)");
+            text.push_str(crate::i18n::tw_dns_router_only_note());
         }
         let optimal = current.iter().any(|d| good.contains(&d.as_str()));
         State::new(text, Some(optimal), json!({ "servers": current }))
@@ -388,7 +426,7 @@ impl Tweak for FastDns {
         run("netsh", &["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "source=static", "address=1.1.1.1", "register=primary", "validate=no"])?;
         run("netsh", &["interface", "ipv4", "add", "dnsservers", &format!("name={name}"), "address=8.8.8.8", "index=2", "validate=no"])?;
         let _ = run("ipconfig", &["/flushdns"]);
-        Ok("DNS set to 1.1.1.1 and 8.8.8.8.".into())
+        Ok(crate::i18n::tw_dns_applied().into())
     }
 
     fn revert(&self, net: &NetState, snapshot: &Value) -> Result<String> {
@@ -401,14 +439,14 @@ impl Tweak for FastDns {
         if servers.is_empty() {
             run("netsh", &["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "source=dhcp"])?;
             let _ = run("ipconfig", &["/flushdns"]);
-            return Ok("DNS returned to DHCP.".into());
+            return Ok(crate::i18n::tw_dns_reverted_dhcp().into());
         }
         run("netsh", &["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "source=static", &format!("address={}", servers[0]), "register=primary", "validate=no"])?;
         for (i, s) in servers.iter().skip(1).enumerate() {
             let _ = run("netsh", &["interface", "ipv4", "add", "dnsservers", &format!("name={name}"), &format!("address={s}"), &format!("index={}", i + 2), "validate=no"]);
         }
         let _ = run("ipconfig", &["/flushdns"]);
-        Ok("Previous DNS servers restored.".into())
+        Ok(crate::i18n::tw_dns_reverted().into())
     }
 }
 
@@ -423,14 +461,13 @@ impl Tweak for TcpAutotuning {
         "tcp_autotuning"
     }
     fn title(&self) -> &'static str {
-        "TCP receive window auto-tuning = normal"
+        crate::i18n::tw_autotune_title()
     }
     fn what(&self) -> &'static str {
         "netsh int tcp set global autotuninglevel=normal"
     }
     fn why(&self) -> &'static str {
-        "\"Ping boost\" guides tell people to disable this, which cripples throughput on any \
-         fast link. Normal is the correct value; this undoes that damage."
+        crate::i18n::tw_autotune_why()
     }
     fn risk(&self) -> Risk {
         Risk::Low
@@ -439,24 +476,30 @@ impl Tweak for TcpAutotuning {
     fn read(&self, _net: &NetState) -> State {
         let out = match run("netsh", &["int", "tcp", "show", "global"]) {
             Ok(t) => t,
-            Err(e) => return State::new(format!("cannot read: {e}"), None, Value::Null),
+            Err(e) => {
+                return State::new(crate::i18n::tw_cannot_read(&e.to_string()), None, Value::Null)
+            }
         };
-        let Some(line) = out.lines().find(|l| l.contains("Auto-Tuning Level")) else {
-            return State::new("cannot read", None, Value::Null);
+        let Some(line) = find_labelled_line(&out, AUTOTUNE_LABELS) else {
+            return State::new(crate::i18n::tw_state_unreadable(), None, Value::Null);
         };
         let value = line.split(':').nth(1).unwrap_or("").trim().to_lowercase();
-        State::new(value.clone(), Some(value == "normal"), json!({ "level": value }))
+        // netsh translates the value as well as the label, so the snapshot
+        // stores the canonical English keyword: that is the only spelling
+        // `netsh set` accepts when reverting.
+        let level = canonical_autotune_level(&value);
+        State::new(value, Some(level == "normal"), json!({ "level": level }))
     }
 
     fn apply(&self, _net: &NetState) -> Result<String> {
         run("netsh", &["int", "tcp", "set", "global", "autotuninglevel=normal"])?;
-        Ok("Auto-tuning set to normal.".into())
+        Ok(crate::i18n::tw_autotune_applied().into())
     }
 
     fn revert(&self, _net: &NetState, snapshot: &Value) -> Result<String> {
         let level = snapshot["level"].as_str().unwrap_or("normal");
         run("netsh", &["int", "tcp", "set", "global", &format!("autotuninglevel={level}")])?;
-        Ok(format!("Auto-tuning restored to {level}."))
+        Ok(crate::i18n::tw_autotune_reverted(level))
     }
 }
 
@@ -482,14 +525,13 @@ impl Tweak for NagleOff {
         "nagle_off"
     }
     fn title(&self) -> &'static str {
-        "Disable Nagle's algorithm (for games)"
+        crate::i18n::tw_nagle_title()
     }
     fn what(&self) -> &'static str {
-        "Writes TcpAckFrequency=1 and TCPNoDelay=1 for the active interface."
+        crate::i18n::tw_nagle_what()
     }
     fn why(&self) -> &'static str {
-        "Windows buffers small packets and delays acknowledgements. In twitch games that is a \
-         few to a dozen extra milliseconds. It makes no difference to downloads."
+        crate::i18n::tw_nagle_why()
     }
     fn risk(&self) -> Risk {
         Risk::Medium
@@ -500,14 +542,14 @@ impl Tweak for NagleOff {
 
     fn read(&self, net: &NetState) -> State {
         let Some(key) = Self::key(net) else {
-            return State::new("adapter GUID unknown", None, Value::Null);
+            return State::new(crate::i18n::tw_nagle_no_guid(), None, Value::Null);
         };
         let ack = winreg::read_dword(Root::LocalMachine, &key, "TcpAckFrequency").ok().flatten();
         let nodelay = winreg::read_dword(Root::LocalMachine, &key, "TCPNoDelay").ok().flatten();
         let text = format!(
             "TcpAckFrequency={}, TCPNoDelay={}",
-            ack.map(|v| v.to_string()).unwrap_or_else(|| "not set".into()),
-            nodelay.map(|v| v.to_string()).unwrap_or_else(|| "not set".into())
+            ack.map(|v| v.to_string()).unwrap_or_else(|| crate::i18n::tw_not_set().into()),
+            nodelay.map(|v| v.to_string()).unwrap_or_else(|| crate::i18n::tw_not_set().into())
         );
         State::new(
             text,
@@ -517,21 +559,21 @@ impl Tweak for NagleOff {
     }
 
     fn apply(&self, net: &NetState) -> Result<String> {
-        let key = Self::key(net).ok_or_else(|| anyhow!("adapter GUID unknown"))?;
+        let key = Self::key(net).ok_or_else(|| anyhow!(crate::i18n::tw_nagle_no_guid()))?;
         winreg::write_dword(Root::LocalMachine, &key, "TcpAckFrequency", 1)?;
         winreg::write_dword(Root::LocalMachine, &key, "TCPNoDelay", 1)?;
-        Ok("Nagle disabled. Requires a restart.".into())
+        Ok(crate::i18n::tw_nagle_applied().into())
     }
 
     fn revert(&self, _net: &NetState, snapshot: &Value) -> Result<String> {
-        let key = snapshot["key"].as_str().ok_or_else(|| anyhow!("snapshot has no key"))?;
+        let key = snapshot["key"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
         for (name, field) in [("TcpAckFrequency", "ack"), ("TCPNoDelay", "nodelay")] {
             match snapshot[field].as_u64() {
                 Some(v) => winreg::write_dword(Root::LocalMachine, key, name, v as u32)?,
                 None => winreg::delete_value(Root::LocalMachine, key, name)?,
             }
         }
-        Ok("Previous state restored. Requires a restart.".into())
+        Ok(crate::i18n::tw_nagle_reverted().into())
     }
 }
 
@@ -549,14 +591,13 @@ impl Tweak for NetworkThrottling {
         "net_throttling"
     }
     fn title(&self) -> &'static str {
-        "Lift the multimedia packet throttle"
+        crate::i18n::tw_throttle_title()
     }
     fn what(&self) -> &'static str {
         "NetworkThrottlingIndex = 0xffffffff, SystemResponsiveness = 10."
     }
     fn why(&self) -> &'static str {
-        "Windows caps network traffic at roughly 10k packets/s while any multimedia playback is \
-         running. Gaming with a stream or music on shows this up as lag."
+        crate::i18n::tw_throttle_why()
     }
     fn risk(&self) -> Risk {
         Risk::Medium
@@ -574,8 +615,10 @@ impl Tweak for NetworkThrottling {
             .flatten();
         let text = format!(
             "NetworkThrottlingIndex={}, SystemResponsiveness={}",
-            nti.map(|v| format!("0x{v:x}")).unwrap_or_else(|| "default (10)".into()),
-            sr.map(|v| v.to_string()).unwrap_or_else(|| "default (20)".into())
+            nti.map(|v| format!("0x{v:x}"))
+                .unwrap_or_else(|| crate::i18n::tw_throttle_default_10().into()),
+            sr.map(|v| v.to_string())
+                .unwrap_or_else(|| crate::i18n::tw_throttle_default_20().into())
         );
         State::new(text, Some(nti == Some(0xFFFF_FFFF)), json!({ "nti": nti, "sr": sr }))
     }
@@ -583,7 +626,7 @@ impl Tweak for NetworkThrottling {
     fn apply(&self, _net: &NetState) -> Result<String> {
         winreg::write_dword(Root::LocalMachine, MM_PROFILE, "NetworkThrottlingIndex", 0xFFFF_FFFF)?;
         winreg::write_dword(Root::LocalMachine, MM_PROFILE, "SystemResponsiveness", 10)?;
-        Ok("Throttle lifted. Requires a restart.".into())
+        Ok(crate::i18n::tw_throttle_applied().into())
     }
 
     fn revert(&self, _net: &NetState, snapshot: &Value) -> Result<String> {
@@ -595,7 +638,7 @@ impl Tweak for NetworkThrottling {
                 None => winreg::delete_value(Root::LocalMachine, MM_PROFILE, name)?,
             }
         }
-        Ok("Defaults restored. Requires a restart.".into())
+        Ok(crate::i18n::tw_throttle_reverted().into())
     }
 }
 
@@ -644,15 +687,13 @@ impl Tweak for MtuFix {
         "mtu"
     }
     fn title(&self) -> &'static str {
-        "Correct the adapter MTU"
+        crate::i18n::tw_mtu_title()
     }
     fn what(&self) -> &'static str {
-        "Sets MTU to the largest size that survives a fragmentation test (usually 1500, or 1492 \
-         on PPPoE)."
+        crate::i18n::tw_mtu_what()
     }
     fn why(&self) -> &'static str {
-        "An MTU that is too large means packets get dropped somewhere along the path. The \
-         symptom is pages that never finish loading while ping works fine."
+        crate::i18n::tw_mtu_why()
     }
     fn risk(&self) -> Risk {
         Risk::Medium
@@ -660,22 +701,22 @@ impl Tweak for MtuFix {
 
     fn read(&self, net: &NetState) -> State {
         match Self::current(net) {
-            Some(mtu) => State::new(format!("MTU = {mtu}"), None, json!({ "mtu": mtu })),
-            None => State::new("MTU unknown", None, Value::Null),
+            Some(mtu) => State::new(crate::i18n::tw_mtu_state(mtu), None, json!({ "mtu": mtu })),
+            None => State::new(crate::i18n::tw_mtu_unknown(), None, Value::Null),
         }
     }
 
     fn apply(&self, net: &NetState) -> Result<String> {
         let best = Self::probe_best_mtu(std::net::Ipv4Addr::new(1, 1, 1, 1))
-            .ok_or_else(|| anyhow!("MTU probe produced no result (is DF-flagged ICMP blocked?)"))?;
+            .ok_or_else(|| anyhow!(crate::i18n::tw_mtu_probe_failed()))?;
         run("netsh", &["interface", "ipv4", "set", "subinterface", &net.adapter_name, &format!("mtu={best}"), "store=persistent"])?;
-        Ok(format!("MTU set to {best}."))
+        Ok(crate::i18n::tw_mtu_applied(best))
     }
 
     fn revert(&self, net: &NetState, snapshot: &Value) -> Result<String> {
         let mtu = snapshot["mtu"].as_u64().unwrap_or(1500);
         run("netsh", &["interface", "ipv4", "set", "subinterface", &net.adapter_name, &format!("mtu={mtu}"), "store=persistent"])?;
-        Ok(format!("MTU restored to {mtu}."))
+        Ok(crate::i18n::tw_mtu_reverted(mtu))
     }
 }
 
@@ -690,14 +731,13 @@ impl Tweak for StackReset {
         "stack_reset"
     }
     fn title(&self) -> &'static str {
-        "Reset the network stack (repair action)"
+        crate::i18n::tw_reset_title()
     }
     fn what(&self) -> &'static str {
         "ipconfig /flushdns, /release, /renew, netsh winsock reset, netsh int ip reset."
     }
     fn why(&self) -> &'static str {
-        "For when the connection has already died and will not come back. Clears broken \
-         Winsock/IP state that otherwise persists until a reboot."
+        crate::i18n::tw_reset_why()
     }
     fn risk(&self) -> Risk {
         Risk::Medium
@@ -710,7 +750,7 @@ impl Tweak for StackReset {
     }
 
     fn read(&self, _net: &NetState) -> State {
-        State::new("one-off action — nothing is permanently changed", None, Value::Null)
+        State::new(crate::i18n::tw_reset_state(), None, Value::Null)
     }
 
     fn apply(&self, _net: &NetState) -> Result<String> {
@@ -725,15 +765,15 @@ impl Tweak for StackReset {
         for (prog, args) in steps {
             let label = args.join(" ");
             done.push(match run(prog, args) {
-                Ok(_) => format!("{label} ok"),
-                Err(_) => format!("{label} failed"),
+                Ok(_) => format!("{label} {}", crate::i18n::tw_reset_step_ok()),
+                Err(_) => format!("{label} {}", crate::i18n::tw_reset_step_failed()),
             });
         }
-        Ok(format!("Ran: {}. A restart is recommended.", done.join(", ")))
+        Ok(crate::i18n::tw_reset_done(&done.join(", ")))
     }
 
     fn revert(&self, _net: &NetState, _snapshot: &Value) -> Result<String> {
-        Err(anyhow!("This action cannot be undone."))
+        Err(anyhow!(crate::i18n::tw_reset_irreversible()))
     }
 }
 
@@ -787,9 +827,10 @@ mod tests {
         // stack_reset is never snapshotted, so this exercises the guard
         // without depending on the user's real snapshot file.
         let net = NetState::default();
+        let _guard = crate::i18n::test_lock();
         let err = revert(&StackReset, &net).unwrap_err().to_string();
         assert!(
-            err.contains("administrator") || err.contains("No saved state"),
+            err == crate::i18n::tw_revert_needs_admin() || err == crate::i18n::tw_no_snapshot(),
             "unexpected message: {err}"
         );
     }
@@ -798,8 +839,27 @@ mod tests {
     fn power_plan_index_parsing() {
         let sample = "  Current AC Power Setting Index: 0x00000000\n  \
                       Current DC Power Setting Index: 0x00000003\n";
-        assert_eq!(extract_hex(sample, "Current AC Power Setting Index"), Some(0));
-        assert_eq!(extract_hex(sample, "Current DC Power Setting Index"), Some(3));
-        assert_eq!(extract_hex(sample, "Nonexistent"), None);
+        assert_eq!(extract_index(sample, AC_INDEX_LABELS, 0), Some(0));
+        assert_eq!(extract_index(sample, DC_INDEX_LABELS, 1), Some(3));
+        assert_eq!(extract_index("nothing here", AC_INDEX_LABELS, 0), None);
+    }
+
+    #[test]
+    fn power_plan_index_survives_an_unknown_locale() {
+        // A label we do not ship a translation for: the ordinal fallback has
+        // to carry it, because powercfg always prints AC before DC.
+        let sample = "  Index podesetavanja AC: 0x00000000\n  \
+                      Index podesetavanja DC: 0x00000002\n";
+        assert_eq!(extract_index(sample, AC_INDEX_LABELS, 0), Some(0));
+        assert_eq!(extract_index(sample, DC_INDEX_LABELS, 1), Some(2));
+    }
+
+    #[test]
+    fn autotuning_level_normalises_to_what_netsh_accepts() {
+        assert_eq!(canonical_autotune_level("normal"), "normal");
+        assert_eq!(canonical_autotune_level("normalny"), "normal");
+        assert_eq!(canonical_autotune_level("wyłączone"), "disabled");
+        assert_eq!(canonical_autotune_level("highly restricted"), "highlyrestricted");
+        assert_eq!(canonical_autotune_level("something else"), "normal");
     }
 }

@@ -4,6 +4,7 @@ use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints, VLine};
 
 use super::{latency_colour, stat_card, App, Job, ACCENT, FG_DIM, GREEN, RED, SERIES_COLOURS, YELLOW};
+use crate::i18n;
 use crate::probe::icmp;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -20,7 +21,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if !note.is_empty() {
                 note.push(' ');
             }
-            note.push_str("The card just roamed to a different access point.");
+            note.push_str(i18n::live_roamed());
         }
         egui::Frame::none()
             .fill(super::BG2)
@@ -41,7 +42,7 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
             continue;
         }
         let label = match t.key.as_str() {
-            "gateway" => "Router".to_string(),
+            "gateway" => i18n::word_router().to_string(),
             _ => t.label.clone(),
         };
         series.push((label, SERIES_COLOURS[i % SERIES_COLOURS.len()], data));
@@ -64,7 +65,7 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
             // x is seconds relative to now, so label it as age.
             let back = -mark.value;
             if back < 1.0 {
-                "now".to_string()
+                i18n::live_x_now().to_string()
             } else if back < 90.0 {
                 format!("-{back:.0}s")
             } else {
@@ -112,7 +113,7 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
                     let tip = match (&sample.rtt_ms, &sample.error) {
                         (Some(rtt), _) => format!("{label}: {rtt:.2} ms"),
                         (None, Some(err)) => format!("{label}: {err}"),
-                        (None, None) => format!("{label}: no data"),
+                        (None, None) => format!("{label}: {}", i18n::live_no_data()),
                     };
                     resp.on_hover_text(tip);
                 }
@@ -121,7 +122,7 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new("red line = lost packet").size(11.0).color(FG_DIM),
+                egui::RichText::new(i18n::live_red_line()).size(11.0).color(FG_DIM),
             );
         });
     });
@@ -136,12 +137,12 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
         match cf.avg {
             Some(avg) => stat_card(
                 ui,
-                "Latency (1.1.1.1)",
+                i18n::live_card_latency(),
                 &format!("{avg:.0} ms"),
-                &format!("min {:.0} / max {:.0} (5 min)", cf.min.unwrap_or(0.0), cf.max.unwrap_or(0.0)),
+                &i18n::live_minmax(cf.min.unwrap_or(0.0), cf.max.unwrap_or(0.0)),
                 latency_colour(avg, s),
             ),
-            None => stat_card(ui, "Latency (1.1.1.1)", "—", "no data yet", FG_DIM),
+            None => stat_card(ui, i18n::live_card_latency(), "—", i18n::live_card_latency_sub_none(), FG_DIM),
         }
 
         match cf.jitter {
@@ -153,9 +154,9 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
                 } else {
                     RED
                 };
-                stat_card(ui, "Jitter", &format!("{j:.1} ms"), "swing between packets", colour)
+                stat_card(ui, i18n::live_card_jitter(), &format!("{j:.1} ms"), i18n::live_card_jitter_sub(), colour)
             }
-            None => stat_card(ui, "Jitter", "—", "", FG_DIM),
+            None => stat_card(ui, i18n::live_card_jitter(), "—", "", FG_DIM),
         }
 
         let loss_colour = if cf.loss_pct < s.loss_good_pct {
@@ -165,45 +166,57 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
         } else {
             RED
         };
-        stat_card(ui, "Packet loss", &format!("{:.1}%", cf.loss_pct), "last 5 minutes", loss_colour);
+        stat_card(
+            ui,
+            i18n::live_card_loss(),
+            &format!("{:.1}%", cf.loss_pct),
+            i18n::live_card_loss_sub(),
+            loss_colour,
+        );
 
         match gw.avg {
             Some(avg) => stat_card(
                 ui,
-                "Router latency",
+                i18n::live_card_router(),
                 &format!("{avg:.1} ms"),
-                &format!("loss {:.1}%", gw.loss_pct),
+                &i18n::live_router_loss(gw.loss_pct),
                 if avg < 10.0 { GREEN } else { YELLOW },
             ),
-            None => stat_card(ui, "Router latency", "—", "not answering", RED),
+            None => stat_card(ui, i18n::live_card_router(), "—", i18n::live_card_router_none(), RED),
         }
 
         if !app.last.dns_error.is_empty() {
-            stat_card(ui, "DNS", "error", &app.last.dns_error, RED);
+            stat_card(ui, i18n::live_card_dns(), i18n::live_card_dns_err(), &app.last.dns_error, RED);
         } else {
             match app.last.dns_ms {
                 Some(ms) => stat_card(
                     ui,
-                    "DNS",
+                    i18n::live_card_dns(),
                     &format!("{ms:.0} ms"),
-                    "name resolution",
+                    i18n::live_card_dns_sub(),
                     if ms < 60.0 { GREEN } else if ms < 150.0 { YELLOW } else { RED },
                 ),
-                None => stat_card(ui, "DNS", "—", "", FG_DIM),
+                None => stat_card(ui, i18n::live_card_dns(), "—", "", FG_DIM),
             }
         }
 
         let events = app.store.events_since(24.0 * 3600.0);
         if events.is_empty() {
-            stat_card(ui, "Uninterrupted", "24 h+", "no outages logged", GREEN);
+            stat_card(
+                ui,
+                i18n::live_card_uninterrupted(),
+                i18n::live_card_uninterrupted_val(),
+                i18n::live_card_uninterrupted_sub(),
+                GREEN,
+            );
         } else {
             let last = events.iter().map(|e| e.ts_start).fold(f64::NEG_INFINITY, f64::max);
             let mins = (crate::store::now() - last) / 60.0;
             stat_card(
                 ui,
-                "Since last outage",
+                i18n::live_card_since_outage(),
                 &format!("{mins:.0} min"),
-                &format!("{} in 24 h", events.len()),
+                &i18n::live_outages_24h(events.len()),
                 if events.len() < 3 { YELLOW } else { RED },
             );
         }
@@ -213,16 +226,17 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
 fn controls(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let paused = app.monitor.is_paused();
-        if ui.button(if paused { "Resume monitor" } else { "Pause monitor" }).clicked() {
+        let btn = if paused { i18n::live_btn_resume() } else { i18n::live_btn_pause() };
+        if ui.button(btn).clicked() {
             app.monitor.set_paused(!paused);
         }
 
         if ui
-            .add_enabled(!app.tracing, egui::Button::new("Traceroute to 1.1.1.1"))
+            .add_enabled(!app.tracing, egui::Button::new(i18n::live_btn_trace()))
             .clicked()
         {
             app.tracing = true;
-            app.trace = vec!["Tracing route…".into()];
+            app.trace = vec![i18n::live_tracing().into()];
             let tx = app.tx.clone();
             std::thread::spawn(move || {
                 let hops = icmp::traceroute(std::net::Ipv4Addr::new(1, 1, 1, 1), 20, 1000);
@@ -239,22 +253,22 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
                     })
                     .collect();
                 lines.push(String::new());
-                lines.push("Hop 1 is your router. If latency only climbs further out,".into());
-                lines.push("the problem is on the provider's side, not yours.".into());
+                lines.push(i18n::live_trace_note_1().into());
+                lines.push(i18n::live_trace_note_2().into());
                 let _ = tx.send(Job::Traceroute(lines));
             });
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Save report…").clicked() {
+            if ui.button(i18n::live_btn_report()).clicked() {
                 match super::report::save(app) {
                     Ok(path) => {
                         let now = ui.input(|i| i.time);
-                        app.toast(format!("Report saved to {path}"), GREEN, now);
+                        app.toast(i18n::live_report_saved(&path), GREEN, now);
                     }
                     Err(e) => {
                         let now = ui.input(|i| i.time);
-                        app.toast(format!("Could not save: {e}"), RED, now);
+                        app.toast(i18n::set_save_failed(&e.to_string()), RED, now);
                     }
                 }
             }

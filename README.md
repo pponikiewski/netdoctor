@@ -40,6 +40,26 @@ netdoctor.exe --help
 Diagnostics need no elevation. Applying changes does; the app offers to relaunch
 itself when you ask it to apply one.
 
+## Language
+
+English and Polish. On first run the app follows the Windows UI language; the
+Settings tab has a picker that switches everything immediately, including the
+exported report. The choice is remembered in `settings.json`.
+
+Both languages are compiled into the binary as `&'static str`, so a lookup is a
+branch and nothing is loaded at runtime. Adding a third means adding a column to
+the table in [`src/i18n.rs`](src/i18n.rs) — a missing translation is a compile
+error, not a string that silently falls back to English.
+
+Technical vocabulary stays in English inside Polish sentences (bufferbloat,
+jitter, MTU, TCP autotuning, Nagle). That is how the terms are actually used,
+and it keeps them searchable.
+
+Note that `powercfg` and `netsh` translate *their* output too, so the code that
+reads them matches a set of known labels and falls back to a structural rule —
+position for power indices, stem matching for auto-tuning levels — rather than
+one English label that would silently fail everywhere else.
+
 ## Tabs
 
 - **Live** — latency plot with a time axis and gaps where packets were lost,

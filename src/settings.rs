@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::{self, Lang};
+
 pub const APP_NAME: &str = "NetDoctor";
 pub const DNS_TEST_HOST: &str = "example.com";
 
@@ -49,6 +51,10 @@ pub struct Settings {
     pub notify_on_outage: bool,
     pub start_minimised: bool,
     pub keep_days: i64,
+
+    /// `None` until the user picks one, which lets the first run follow the
+    /// Windows UI language without freezing that choice in the file.
+    pub lang: Option<Lang>,
 }
 
 impl Default for Settings {
@@ -71,6 +77,8 @@ impl Default for Settings {
             notify_on_outage: true,
             start_minimised: false,
             keep_days: 14,
+
+            lang: None,
         }
     }
 }
@@ -106,6 +114,11 @@ impl Settings {
         Ok(())
     }
 
+    /// The language to run in: the user's choice, or what Windows suggests.
+    pub fn effective_lang(&self) -> Lang {
+        self.lang.unwrap_or_else(i18n::detect)
+    }
+
     pub fn interval(&self) -> std::time::Duration {
         std::time::Duration::from_millis(self.probe_interval_ms.max(300))
     }
@@ -116,13 +129,13 @@ impl Settings {
         let mut out = vec![
             Target {
                 key: "gateway".into(),
-                label: "Router".into(),
+                label: i18n::word_router().into(),
                 host: None,
                 scope: Scope::Lan,
             },
             Target {
                 key: "dns_isp".into(),
-                label: "ISP resolver".into(),
+                label: i18n::word_isp_resolver().into(),
                 host: None,
                 scope: Scope::Isp,
             },
@@ -184,6 +197,27 @@ mod tests {
         assert!(s.ping_ok_ms < s.ping_bad_ms);
         assert!(s.jitter_good_ms < s.jitter_ok_ms);
         assert_eq!(s.targets().len(), 4);
+    }
+
+    #[test]
+    fn the_language_choice_survives_a_round_trip() {
+        let mut s = Settings::default();
+        assert_eq!(s.lang, None, "a fresh install must follow Windows, not a hard-coded default");
+
+        s.lang = Some(Lang::Pl);
+        let text = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.lang, Some(Lang::Pl));
+        assert_eq!(back.effective_lang(), Lang::Pl);
+    }
+
+    #[test]
+    fn a_settings_file_from_an_older_build_still_loads() {
+        // Written before `lang` existed: it must default to None so the user
+        // gets their Windows language rather than an error or English.
+        let json = r#"{"ping_ok_ms": 45.0}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.lang, None);
     }
 
     #[test]

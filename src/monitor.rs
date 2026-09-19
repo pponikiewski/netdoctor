@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 
+use crate::i18n;
 use crate::probe::icmp::{PingResult, Pinger};
 use crate::probe::netstate::{self, Medium, NetState};
 use crate::settings::{Scope, Settings, DNS_TEST_HOST};
@@ -34,12 +35,12 @@ pub enum Status {
 impl Status {
     pub fn headline(&self) -> &'static str {
         match self {
-            Status::Ok => "Connection healthy",
-            Status::Degraded => "Connection unstable",
-            Status::DnsFail => "Internet reachable, but name resolution is failing",
-            Status::IspDown => "Router answers, internet does not — WAN/ISP problem",
-            Status::LanDown => "Router not answering — problem between PC and router",
-            Status::AdapterDown => "Network adapter disconnected",
+            Status::Ok => i18n::mon_ok(),
+            Status::Degraded => i18n::mon_degraded(),
+            Status::DnsFail => i18n::mon_dns_fail(),
+            Status::IspDown => i18n::mon_isp_down(),
+            Status::LanDown => i18n::mon_lan_down(),
+            Status::AdapterDown => i18n::mon_adapter_down(),
         }
     }
 
@@ -396,7 +397,7 @@ fn classify(
         if !dns_error.is_empty() {
             return (
                 Status::DnsFail,
-                format!("Ping by IP works, name resolution does not: {dns_error}"),
+                i18n::mon_dns_detail(dns_error),
             );
         }
         return quality_verdict(results, settings, store);
@@ -406,24 +407,23 @@ fn classify(
     match gw {
         Some(true) => (
             Status::IspDown,
-            format!(
-                "Router at {} answers, no internet host does.",
-                net.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into())
+            i18n::mon_isp_detail(
+                &net.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into()),
             ),
         ),
         Some(false) => {
             if net.medium == Medium::Wifi && !netstate::wifi_associated() {
                 (
                     Status::AdapterDown,
-                    "Wi-Fi card reports it is no longer associated with the network.".into(),
+                    i18n::mon_wifi_deassociated().into(),
                 )
             } else {
-                (Status::LanDown, "Neither the router nor the internet responded.".into())
+                (Status::LanDown, i18n::mon_nothing_responded().into())
             }
         }
         None => (
             Status::AdapterDown,
-            "No default gateway — this machine has no route to the network.".into(),
+            i18n::mon_no_gateway().into(),
         ),
     }
 }
@@ -444,19 +444,19 @@ fn quality_verdict(
     if stats.loss_pct > settings.loss_ok_pct {
         return (
             Status::Degraded,
-            format!("{:.1}% packet loss over the last minute.", stats.loss_pct),
+            i18n::mon_loss_detail(stats.loss_pct),
         );
     }
     if let Some(j) = stats.jitter {
         if j > settings.jitter_ok_ms * 2.0 {
             return (
                 Status::Degraded,
-                format!("Jitter {j:.0} ms — latency is swinging, which shows up as lag in games."),
+                i18n::mon_jitter_detail(j),
             );
         }
     }
     if worst.is_finite() && worst > settings.ping_bad_ms {
-        return (Status::Degraded, format!("Ping {worst:.0} ms — above the playable threshold."));
+        return (Status::Degraded, i18n::mon_ping_detail(worst));
     }
     (Status::Ok, String::new())
 }
@@ -571,7 +571,11 @@ mod tests {
         let (status, note) =
             classify(&r, &targets(), &wifi_state(), "", &Settings::default(), &store);
         assert_eq!(status, Status::Degraded);
-        assert!(note.contains("packet loss"));
+        assert!(note.contains(if crate::i18n::current() == crate::i18n::Lang::Pl {
+            "utraconych pakietów"
+        } else {
+            "packet loss"
+        }));
     }
 
     #[test]

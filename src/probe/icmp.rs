@@ -46,10 +46,10 @@ pub enum PingError {
 impl PingError {
     pub fn describe(&self) -> String {
         match self {
-            PingError::Unreachable => "host unreachable".into(),
-            PingError::TimedOut => "no reply".into(),
-            PingError::NoRoute => "no route — adapter offline?".into(),
-            PingError::Api(e) => format!("probe failed: {e}"),
+            PingError::Unreachable => crate::i18n::ping_unreachable().into(),
+            PingError::TimedOut => crate::i18n::ping_timeout().into(),
+            PingError::NoRoute => crate::i18n::ping_no_route().into(),
+            PingError::Api(e) => crate::i18n::ping_api_failed(&e.to_string()),
         }
     }
 }

@@ -6,6 +6,7 @@
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
+use crate::i18n;
 use crate::probe::icmp;
 use crate::probe::netstate::{Medium, NetState};
 use crate::settings::Settings;
@@ -22,10 +23,10 @@ pub enum Severity {
 impl Severity {
     pub fn label(&self) -> &'static str {
         match self {
-            Severity::Critical => "CRITICAL",
-            Severity::Warn => "WARNING",
-            Severity::Info => "INFO",
-            Severity::Good => "OK",
+            Severity::Critical => crate::i18n::sev_critical(),
+            Severity::Warn => crate::i18n::sev_warning(),
+            Severity::Info => crate::i18n::sev_info(),
+            Severity::Good => crate::i18n::sev_ok(),
         }
     }
 }
@@ -78,15 +79,15 @@ pub fn scan(
     progress: Option<Progress>,
 ) -> Vec<Finding> {
     let steps: Vec<(&str, fn(&NetState, &Store, &Settings) -> Vec<Finding>)> = vec![
-        ("Checking adapter and medium", check_medium),
-        ("Checking Wi-Fi quality", check_wifi),
-        ("Checking adapter power management", check_power),
-        ("Checking DNS configuration", check_dns),
-        ("Measuring the link to the router", check_local_link),
-        ("Measuring internet latency", check_internet),
-        ("Checking MTU", check_mtu),
-        ("Checking TCP settings", check_tcp),
-        ("Reviewing outage history", check_history),
+        (i18n::step_medium(), check_medium),
+        (i18n::step_wifi(), check_wifi),
+        (i18n::step_power(), check_power),
+        (i18n::step_dns(), check_dns),
+        (i18n::step_link(), check_local_link),
+        (i18n::step_internet(), check_internet),
+        (i18n::step_mtu(), check_mtu),
+        (i18n::step_tcp(), check_tcp),
+        (i18n::step_history(), check_history),
     ];
 
     let total = steps.len() as f32;
@@ -98,7 +99,7 @@ pub fn scan(
         out.extend(f(net, store, settings));
     }
     if let Some(p) = &progress {
-        p("Done", 1.0);
+        p(i18n::step_done(), 1.0);
     }
 
     // Worst first, stable within a severity so related findings stay together.
@@ -110,16 +111,12 @@ pub fn summarise(findings: &[Finding]) -> String {
     let crit: Vec<_> = findings.iter().filter(|f| f.severity == Severity::Critical).collect();
     let warn: Vec<_> = findings.iter().filter(|f| f.severity == Severity::Warn).collect();
     if let Some(first) = crit.first() {
-        return format!("{} serious problem(s) found. Most important: {}", crit.len(), first.title);
+        return i18n::scan_critical(crit.len(), &first.title);
     }
     if let Some(first) = warn.first() {
-        return format!(
-            "No failures, but {} thing(s) could be improved. Most important: {}",
-            warn.len(),
-            first.title
-        );
+        return i18n::scan_warnings(warn.len(), &first.title);
     }
-    "The network looks healthy — nothing needs attention.".into()
+    i18n::scan_all_healthy().into()
 }
 
 // ---------------------------------------------------------------------------
@@ -128,33 +125,27 @@ fn check_medium(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     if net.adapter_name.is_empty() {
         return vec![Finding::new(
             "medium",
-            "No active connection",
+            i18n::f_no_connection(),
             Severity::Critical,
-            "No adapter holds a default route.",
+            i18n::f_no_connection_detail(),
         )
-        .advise("Check the cable, or turn Wi-Fi on.")];
+        .advise(i18n::f_no_connection_advice())];
     }
     match net.medium {
         Medium::Ethernet => vec![Finding::new(
             "medium",
-            "Wired connection",
+            i18n::f_wired(),
             Severity::Good,
-            format!("{}, {} Mbps", net.adapter_name, net.link_speed_mbps),
+            i18n::f_wired_detail(&net.adapter_name, net.link_speed_mbps),
         )
-        .advise("The best possible starting point for latency.")],
+        .advise(i18n::f_wired_advice())],
         _ => vec![Finding::new(
             "medium",
-            "Connected over Wi-Fi",
+            i18n::f_wifi(),
             Severity::Info,
-            format!(
-                "{} — {}, {} Mbps link rate",
-                net.adapter_name, net.ssid, net.link_speed_mbps
-            ),
+            i18n::f_wifi_detail(&net.adapter_name, &net.ssid, net.link_speed_mbps),
         )
-        .advise(
-            "Wi-Fi always has higher jitter than a cable and is vulnerable to interference. \
-             If the drops happen mostly while gaming, a cable removes several causes at once.",
-        )],
+        .advise(i18n::f_wifi_advice())],
     }
 }
 
@@ -170,31 +161,29 @@ fn check_wifi(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
         .rssi_dbm
         .map(|r| format!(", {r} dBm"))
         .unwrap_or_default();
-    let detail = format!(
-        "Band {band}, channel {}, {}{rssi}, {} Mbps receive",
-        net.channel.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
-        net.phy,
-        net.rx_mbps.unwrap_or(0)
+    let detail = i18n::f_wifi_quality_detail(
+        band,
+        &net.channel.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+        &net.phy,
+        &rssi,
+        net.rx_mbps.unwrap_or(0),
     );
 
     let mut out = Vec::new();
     if sig < 45 {
         out.push(
-            Finding::new("signal", format!("Weak Wi-Fi signal ({sig}%)"), Severity::Critical, detail.clone())
-                .advise(
-                    "At this level the card drops frames and will periodically disconnect. Move \
-                     closer, reposition the router, or switch to 2.4 GHz for range at the cost of speed.",
-                ),
+            Finding::new("signal", i18n::f_signal_weak(sig), Severity::Critical, detail.clone())
+                .advise(i18n::f_signal_weak_advice()),
         );
     } else if sig < 65 {
         out.push(
-            Finding::new("signal", format!("Mediocre Wi-Fi signal ({sig}%)"), Severity::Warn, detail.clone())
-                .advise("Fine for browsing, but latency will spike under load."),
+            Finding::new("signal", i18n::f_signal_mid(sig), Severity::Warn, detail.clone())
+                .advise(i18n::f_signal_mid_advice()),
         );
     } else {
         out.push(Finding::new(
             "signal",
-            format!("Wi-Fi signal is good ({sig}%)"),
+            i18n::f_signal_good(sig),
             Severity::Good,
             detail.clone(),
         ));
@@ -202,11 +191,8 @@ fn check_wifi(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
 
     if band == "2.4 GHz" {
         out.push(
-            Finding::new("band", "Running on the 2.4 GHz band", Severity::Warn, detail)
-                .advise(
-                    "2.4 GHz is shared with microwaves, Bluetooth and every neighbour. If the \
-                     router offers 5 GHz, connect to that SSID instead.",
-                ),
+            Finding::new("band", i18n::f_band_24(), Severity::Warn, detail)
+                .advise(i18n::f_band_24_advice()),
         );
     }
     out
@@ -218,24 +204,21 @@ fn check_power(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     match state.optimal {
         Some(false) => vec![Finding::new(
             "power",
-            "Windows is allowed to power down the network adapter",
+            i18n::f_power_bad(),
             Severity::Critical,
             state.text,
         )
-        .advise(
-            "This is the most common cause of drops \"out of nowhere\" on a laptop: the card \
-             suspends while idle and takes seconds to come back. Fix it on the Optimise tab.",
-        )
+        .advise(i18n::f_power_bad_advice())
         .fixed_by("adapter_power")],
         Some(true) => vec![Finding::new(
             "power",
-            "Adapter power saving is disabled",
+            i18n::f_power_good(),
             Severity::Good,
             state.text,
         )],
         None => vec![Finding::new(
             "power",
-            "Could not read adapter power management",
+            i18n::f_power_unknown(),
             Severity::Info,
             state.text,
         )],
@@ -247,7 +230,7 @@ fn check_dns(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     use crate::settings::DNS_TEST_HOST;
 
     let servers = if net.dns_servers.is_empty() {
-        "from DHCP".to_string()
+        i18n::f_dns_from_dhcp().to_string()
     } else {
         net.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     };
@@ -256,34 +239,31 @@ fn check_dns(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     let (ms, err) = dns_lookup_ms(DNS_TEST_HOST);
     match (ms, err.is_empty()) {
         (_, false) => out.push(
-            Finding::new("dns_resolve", "Name resolution is failing", Severity::Critical, err)
-                .advise(
-                    "Pings by IP may work while nothing loads in a browser. Switch to 1.1.1.1 on \
-                     the Optimise tab.",
-                )
+            Finding::new("dns_resolve", i18n::f_dns_failing(), Severity::Critical, err)
+                .advise(i18n::f_dns_failing_advice())
                 .fixed_by("fast_dns"),
         ),
         (Some(ms), true) if ms > 150.0 => out.push(
             Finding::new(
                 "dns_slow",
-                format!("Slow DNS ({ms:.0} ms)"),
+                i18n::f_dns_slow(ms),
                 Severity::Warn,
-                format!("Servers: {servers}"),
+                i18n::f_dns_servers(&servers),
             )
-            .advise("Every new connection waits on this, which is why pages seem to stall before loading.")
+            .advise(i18n::f_dns_slow_advice())
             .fixed_by("fast_dns"),
         ),
         (Some(ms), true) => out.push(Finding::new(
             "dns_ok",
-            format!("DNS responds quickly ({ms:.0} ms)"),
+            i18n::f_dns_ok(ms),
             Severity::Good,
-            format!("Servers: {servers}"),
+            i18n::f_dns_servers(&servers),
         )),
         (None, true) => out.push(Finding::new(
             "dns_unknown",
-            "DNS timing unavailable",
+            i18n::f_dns_unknown(),
             Severity::Info,
-            format!("Servers: {servers}"),
+            i18n::f_dns_servers(&servers),
         )),
     }
 
@@ -291,14 +271,11 @@ fn check_dns(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
         out.push(
             Finding::new(
                 "dns_router",
-                "The router is the only DNS server",
+                i18n::f_dns_router_only(),
                 Severity::Warn,
-                format!("DNS: {servers}"),
+                i18n::f_dns_servers(&servers),
             )
-            .advise(
-                "When the router stalls or reboots this looks exactly like an internet outage. \
-                 Adding 1.1.1.1 as a second resolver removes that single point of failure.",
-            )
+            .advise(i18n::f_dns_router_only_advice())
             .fixed_by("fast_dns"),
         );
     }
@@ -309,11 +286,11 @@ fn check_local_link(net: &NetState, _s: &Store, cfg: &Settings) -> Vec<Finding> 
     let Some(gw) = net.gateway else {
         return vec![Finding::new(
             "gateway",
-            "No default gateway",
+            i18n::f_no_gateway(),
             Severity::Critical,
-            "This machine has no route to the network.",
+            i18n::f_no_gateway_detail(),
         )
-        .advise("Check DHCP on the router.")];
+        .advise(i18n::f_no_gateway_advice())];
     };
 
     let samples = icmp::ping_series(gw, 10, cfg.ping_timeout_ms);
@@ -323,31 +300,27 @@ fn check_local_link(net: &NetState, _s: &Store, cfg: &Settings) -> Vec<Finding> 
     if rtts.is_empty() {
         return vec![Finding::new(
             "gateway",
-            "The router is not answering",
+            i18n::f_router_silent(),
             Severity::Critical,
-            format!("10/10 packets lost to {gw}."),
+            i18n::f_router_silent_detail(&gw.to_string()),
         )
-        .advise("The problem is between this PC and the router, not at the ISP.")];
+        .advise(i18n::f_router_silent_advice())];
     }
 
-    let detail = format!(
-        "avg {:.1} ms, min {:.1}, max {:.1}, jitter {:.1} ms, loss {:.0}%",
+    let detail = i18n::f_stats_line(
         stats.avg.unwrap_or(0.0),
         stats.min.unwrap_or(0.0),
         stats.max.unwrap_or(0.0),
         stats.jitter.unwrap_or(0.0),
-        stats.loss_pct
+        stats.loss_pct,
     );
 
     if stats.loss_pct > 0.0 || stats.avg.unwrap_or(0.0) > 15.0 || stats.jitter.unwrap_or(0.0) > 10.0
     {
-        vec![Finding::new("gateway", "The link to the router is unstable", Severity::Warn, detail)
-            .advise(
-                "A ping to your own router should be under 5 ms with no loss. This points at the \
-                 PC-to-router hop — Wi-Fi, cabling, or an overloaded router — not at the ISP.",
-            )]
+        vec![Finding::new("gateway", i18n::f_link_unstable(), Severity::Warn, detail)
+            .advise(i18n::f_link_unstable_advice())]
     } else {
-        vec![Finding::new("gateway", "The link to the router is healthy", Severity::Good, detail)]
+        vec![Finding::new("gateway", i18n::f_link_healthy(), Severity::Good, detail)]
     }
 }
 
@@ -360,21 +333,22 @@ fn check_internet(_net: &NetState, _s: &Store, cfg: &Settings) -> Vec<Finding> {
     if rtts.is_empty() {
         return vec![Finding::new(
             "internet",
-            "No response from the internet",
+            i18n::f_net_silent(),
             Severity::Critical,
-            "15/15 packets lost to 1.1.1.1.",
+            i18n::f_net_silent_detail(),
         )
-        .advise("If the router still answers, the fault is on the WAN/ISP side.")];
+        .advise(i18n::f_net_silent_advice())];
     }
 
     let avg = stats.avg.unwrap_or(0.0);
     let jitter = stats.jitter.unwrap_or(0.0);
     let spread = stats.max.unwrap_or(0.0) - stats.min.unwrap_or(0.0);
-    let detail = format!(
-        "avg {avg:.1} ms, min {:.1}, max {:.1}, jitter {jitter:.1} ms, loss {:.0}%",
+    let detail = i18n::f_stats_line(
+        avg,
         stats.min.unwrap_or(0.0),
         stats.max.unwrap_or(0.0),
-        stats.loss_pct
+        jitter,
+        stats.loss_pct,
     );
 
     let mut out = Vec::new();
@@ -382,35 +356,29 @@ fn check_internet(_net: &NetState, _s: &Store, cfg: &Settings) -> Vec<Finding> {
         out.push(
             Finding::new(
                 "loss",
-                format!("Packet loss {:.0}%", stats.loss_pct),
+                i18n::f_loss(stats.loss_pct),
                 Severity::Critical,
                 detail.clone(),
             )
-            .advise(
-                "Above 2% games start to stutter and TCP throughput collapses. Check the router \
-                 link first — if that is clean, the problem is further upstream.",
-            ),
+            .advise(i18n::f_loss_advice()),
         );
     }
     if jitter > cfg.jitter_ok_ms {
         out.push(
-            Finding::new("jitter", format!("High jitter ({jitter:.0} ms)"), Severity::Warn, detail.clone())
-                .advise(format!(
-                    "Latency swings by {spread:.0} ms between packets. This is what \"lagging \
-                     despite a good ping\" actually is — typical of Wi-Fi and of a saturated link."
-                )),
+            Finding::new("jitter", i18n::f_jitter_high(jitter), Severity::Warn, detail.clone())
+                .advise(i18n::f_jitter_high_advice(spread)),
         );
     }
     if avg > cfg.ping_bad_ms {
         out.push(
-            Finding::new("ping", format!("High latency ({avg:.0} ms)"), Severity::Warn, detail.clone())
-                .advise("Run a traceroute to see which hop the delay appears at."),
+            Finding::new("ping", i18n::f_ping_high(avg), Severity::Warn, detail.clone())
+                .advise(i18n::f_ping_high_advice()),
         );
     }
     if out.is_empty() {
         out.push(Finding::new(
             "internet",
-            format!("Internet latency is normal ({avg:.0} ms)"),
+            i18n::f_net_ok(avg),
             Severity::Good,
             detail,
         ));
@@ -425,30 +393,26 @@ fn check_mtu(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     let Some(best) = MtuFix::probe_best_mtu(Ipv4Addr::new(1, 1, 1, 1)) else {
         return vec![Finding::new(
             "mtu",
-            "Could not measure MTU",
+            i18n::f_mtu_unmeasured(),
             Severity::Info,
-            "The test needs ICMP with the don't-fragment flag, which some networks block.",
+            i18n::f_mtu_unmeasured_detail(),
         )];
     };
 
     match current {
         Some(cur) if best < cur => vec![Finding::new(
             "mtu",
-            "MTU is larger than the path supports",
+            i18n::f_mtu_too_large(),
             Severity::Warn,
-            format!("Configured {cur}, but only {best} passes without fragmentation."),
+            i18n::f_mtu_too_large_detail(cur, best),
         )
-        .advise(format!(
-            "Packets above {best} get dropped along the way. The symptom is that ping works but \
-             some pages never finish loading. Note that some paths rate-limit the probe, so it is \
-             worth re-running this before changing anything."
-        ))
+        .advise(i18n::f_mtu_too_large_advice(best))
         .fixed_by("mtu")],
         _ => vec![Finding::new(
             "mtu",
-            format!("MTU looks correct ({})", current.unwrap_or(best)),
+            i18n::f_mtu_ok(current.unwrap_or(best)),
             Severity::Good,
-            format!("Largest unfragmented packet corresponds to MTU {best}."),
+            i18n::f_mtu_ok_detail(best),
         )],
     }
 }
@@ -457,8 +421,8 @@ fn check_tcp(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     use crate::optimize::{NetworkThrottling, TcpAutotuning, Tweak};
     let mut out = Vec::new();
     for (tweak, good) in [
-        (&TcpAutotuning as &dyn Tweak, "TCP auto-tuning is set correctly"),
-        (&NetworkThrottling as &dyn Tweak, "Multimedia packet throttle is lifted"),
+        (&TcpAutotuning as &dyn Tweak, i18n::f_tcp_autotuning_ok()),
+        (&NetworkThrottling as &dyn Tweak, i18n::f_throttle_ok()),
     ] {
         let state = tweak.read(net);
         match state.optimal {
@@ -479,9 +443,9 @@ fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding
     if events.is_empty() {
         return vec![Finding::new(
             "history",
-            "No outages recorded in the last 24 hours",
+            i18n::f_hist_none(),
             Severity::Good,
-            "The monitor logs every interruption — leave it running to catch the next one.",
+            i18n::f_hist_none_detail(),
         )];
     }
 
@@ -497,23 +461,11 @@ fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding
 
     for (scope, items) in scopes {
         let (title, advice) = match scope.as_str() {
-            "lan" => (
-                "Drops between this PC and the router",
-                "The culprit is Wi-Fi, the adapter, or the router itself. Start with adapter \
-                 power management and a driver update.",
-            ),
-            "adapter" => (
-                "The adapter lost its network association",
-                "The card disconnected from the SSID. That is the driver, power saving, or too \
-                 weak a signal.",
-            ),
-            "isp" => (
-                "Drops on the WAN/ISP side",
-                "The router answered but the internet did not. No Windows setting fixes this — \
-                 it is evidence for a support ticket. Show them these timestamps.",
-            ),
-            "dns" => ("DNS failures", "The link was up but names would not resolve. Changing DNS fixes this."),
-            _ => ("Periods of degraded quality", "The connection worked, but with lag and loss."),
+            "lan" => (i18n::f_hist_lan(), i18n::f_hist_lan_advice()),
+            "adapter" => (i18n::f_hist_adapter(), i18n::f_hist_adapter_advice()),
+            "isp" => (i18n::f_hist_isp(), i18n::f_hist_isp_advice()),
+            "dns" => (i18n::f_hist_dns(), i18n::f_hist_dns_advice()),
+            _ => (i18n::f_hist_other(), i18n::f_hist_other_advice()),
         };
 
         let durations: Vec<f64> = items.iter().filter_map(|e| e.duration_s()).collect();
@@ -531,9 +483,9 @@ fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding
         out.push(
             Finding::new(
                 &format!("hist_{scope}"),
-                format!("{title} — {}× in the last 24 h", items.len()),
+                i18n::f_hist_title(title, items.len()),
                 if items.len() >= 3 { Severity::Critical } else { Severity::Warn },
-                format!("Average duration {avg:.0} s. Most recent: {}", times.join(", ")),
+                i18n::f_hist_detail(avg, &times.join(", ")),
             )
             .advise(advice),
         );

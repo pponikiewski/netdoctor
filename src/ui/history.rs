@@ -4,13 +4,14 @@ use eframe::egui;
 
 use super::{App, FG, FG_DIM, GREEN, RED, YELLOW};
 use crate::diagnose::format_datetime;
+use crate::i18n;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let day = app.store.events_since(24.0 * 3600.0);
 
     if day.is_empty() {
         ui.label(
-            egui::RichText::new("No outages in the last 24 hours.")
+            egui::RichText::new(i18n::hist_none_24h())
                 .size(16.0)
                 .strong()
                 .color(GREEN),
@@ -22,17 +23,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         let worst = counts.iter().max_by_key(|(_, n)| **n).map(|(s, _)| *s).unwrap_or("");
         let where_text = match worst {
-            "lan" => "between this PC and the router",
-            "adapter" => "on the network adapter",
-            "isp" => "on the provider side",
-            "dns" => "in DNS",
-            _ => "as degraded quality",
+            "lan" => i18n::hist_where_lan(),
+            "adapter" => i18n::hist_where_adapter(),
+            "isp" => i18n::hist_where_isp(),
+            "dns" => i18n::hist_where_dns(),
+            _ => i18n::hist_where_other(),
         };
         ui.label(
-            egui::RichText::new(format!(
-                "{} outage(s) in the last 24 hours, mostly {where_text}.",
-                day.len()
-            ))
+            egui::RichText::new(i18n::hist_summary(day.len(), where_text))
             .size(16.0)
             .strong()
             .color(RED),
@@ -41,11 +39,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     ui.add_space(4.0);
     ui.label(
-        egui::RichText::new(
-            "Each entry records the connection state at that moment — signal, channel, access \
-             point and whether the router was still answering. That last detail is what decides \
-             whether it was your laptop or your provider.",
-        )
+        egui::RichText::new(i18n::hist_blurb())
         .size(12.0)
         .color(FG_DIM),
     );
@@ -53,7 +47,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     let events = app.store.recent_events(300);
     if events.is_empty() {
-        ui.label(egui::RichText::new("Nothing logged yet.").color(FG_DIM));
+        ui.label(egui::RichText::new(i18n::hist_nothing_logged()).color(FG_DIM));
         return;
     }
 
@@ -63,7 +57,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             .striped(true)
             .spacing([16.0, 5.0])
             .show(ui, |ui| {
-                for h in ["Started", "Duration", "Kind", "Detail"] {
+                for h in [
+                    i18n::hist_col_started(),
+                    i18n::hist_col_duration(),
+                    i18n::hist_col_kind(),
+                    i18n::hist_col_detail(),
+                ] {
                     ui.label(egui::RichText::new(h).size(11.0).color(FG_DIM));
                 }
                 ui.end_row();
@@ -82,12 +81,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     ui.label(
                         egui::RichText::new(match e.duration_s() {
                             Some(d) => format!("{d:.0} s"),
-                            None => "ongoing".into(),
+                            None => i18n::hist_ongoing().into(),
                         })
                         .size(11.0)
                         .color(colour),
                     );
-                    ui.label(egui::RichText::new(&e.kind).size(11.0).color(colour));
+                    ui.label(egui::RichText::new(i18n::event_kind(&e.kind)).size(11.0).color(colour));
                     ui.label(egui::RichText::new(&e.detail).size(11.0).color(FG_DIM));
                     ui.end_row();
                 }

@@ -127,7 +127,7 @@ impl App {
             findings: Vec::new(),
             selected_finding: None,
             scanning: false,
-            scan_label: "A full scan takes about 30 seconds.".into(),
+            scan_label: crate::i18n::diag_scan_hint().into(),
             scan_progress: 0.0,
             bloat: BloatResult::default(),
             bloat_running: false,
@@ -175,7 +175,7 @@ impl App {
                     self.findings = findings;
                     self.selected_finding = None;
                     self.scanning = false;
-                    self.scan_label = "Scan complete.".into();
+                    self.scan_label = crate::i18n::diag_scan_done().into();
                     self.scan_progress = 1.0;
                 }
                 Job::BloatProgress(label, frac) => {
@@ -185,7 +185,7 @@ impl App {
                 Job::BloatDone(res) => {
                     self.bloat = *res;
                     self.bloat_running = false;
-                    self.bloat_label = "Test complete.".into();
+                    self.bloat_label = crate::i18n::bloat_test_done().into();
                     self.bloat_progress = 1.0;
                     self.monitor.set_paused(false);
                 }
@@ -218,7 +218,7 @@ impl App {
             } else if self.last_status != Status::Ok {
                 let secs = self.outage_started.map(|s| snap.ts - s).unwrap_or(0.0);
                 self.toast(
-                    format!("Connection restored after {secs:.0} s. See the History tab."),
+                    crate::i18n::toast_restored(secs),
                     GREEN,
                     now,
                 );
@@ -251,12 +251,12 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     for (tab, label) in [
-                        (Tab::Live, "Live"),
-                        (Tab::Diagnose, "Diagnose"),
-                        (Tab::Bloat, "Load test"),
-                        (Tab::Optimise, "Optimise"),
-                        (Tab::History, "Outage history"),
-                        (Tab::Settings, "Settings"),
+                        (Tab::Live, crate::i18n::tab_live()),
+                        (Tab::Diagnose, crate::i18n::tab_diagnose()),
+                        (Tab::Bloat, crate::i18n::tab_bloat()),
+                        (Tab::Optimise, crate::i18n::tab_optimise()),
+                        (Tab::History, crate::i18n::tab_history()),
+                        (Tab::Settings, crate::i18n::tab_settings()),
                     ] {
                         let selected = self.tab == tab;
                         if ui.selectable_label(selected, egui::RichText::new(label).size(14.0)).clicked() {
@@ -278,7 +278,7 @@ impl eframe::App for App {
                         ui.horizontal(|ui| {
                             ui.colored_label(colour, "●");
                             ui.colored_label(FG, text);
-                            if ui.button("Dismiss").clicked() {
+                            if ui.button(crate::i18n::btn_dismiss()).clicked() {
                                 self.toast = None;
                             }
                         });
@@ -318,9 +318,9 @@ impl App {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.elevated {
-                    ui.label(egui::RichText::new("administrator").size(11.0).color(GREEN));
+                    ui.label(egui::RichText::new(crate::i18n::hdr_administrator()).size(11.0).color(GREEN));
                 } else {
-                    if ui.button("Restart as administrator").clicked() {
+                    if ui.button(crate::i18n::hdr_restart_elevated()).clicked() {
                         match crate::autostart::relaunch_elevated() {
                             Ok(()) => std::process::exit(0),
                             Err(e) => {
@@ -330,7 +330,7 @@ impl App {
                         }
                     }
                     ui.label(
-                        egui::RichText::new("standard mode — changes need elevation")
+                        egui::RichText::new(crate::i18n::hdr_standard_mode())
                             .size(11.0)
                             .color(FG_DIM),
                     );
@@ -342,26 +342,24 @@ impl App {
     fn connection_line(&self) -> String {
         let n = &self.net;
         if n.adapter_name.is_empty() {
-            return "No active adapter.".into();
+            return crate::i18n::hdr_no_adapter().into();
         }
         match n.medium {
-            crate::probe::netstate::Medium::Wifi => format!(
-                "{} · {} · signal {}%{} · channel {} ({}) · {} Mbps · gateway {}",
-                n.adapter_name,
+            crate::probe::netstate::Medium::Wifi => crate::i18n::conn_line_wifi(
+                &n.adapter_name,
                 if n.ssid.is_empty() { "?" } else { &n.ssid },
                 n.signal_pct.unwrap_or(0),
-                n.rssi_dbm.map(|r| format!(" ({r} dBm)")).unwrap_or_default(),
-                n.channel.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
-                n.phy,
+                &n.rssi_dbm.map(|r| format!(" ({r} dBm)")).unwrap_or_default(),
+                &n.channel.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+                &n.phy,
                 n.rx_mbps.unwrap_or(0),
-                n.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into()),
+                &n.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into()),
             ),
-            _ => format!(
-                "{} · {} Mbps · gateway {} · DNS {}",
-                n.adapter_name,
+            _ => crate::i18n::conn_line_wired(
+                &n.adapter_name,
                 n.link_speed_mbps,
-                n.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into()),
-                n.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
+                &n.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into()),
+                &n.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", "),
             ),
         }
     }
