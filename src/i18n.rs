@@ -171,7 +171,6 @@ poprosisz.";
     set_fails_hint =>
         "Guards against logging a single dropped packet as an outage.",
         "Chroni przed zapisaniem pojedynczego zgubionego pakietu jako awarii.";
-    set_chart_width => "Chart width (samples)", "Szerokość wykresu (próbki)";
     set_keep_days => "Days of history to keep", "Ile dni historii przechowywać";
 
     set_targets_hint =>
@@ -335,6 +334,66 @@ poprosisz.";
     hist_leadup_rssi => "Signal (dBm)", "Sygnał (dBm)";
     hist_leadup_rtt => "Router (ms)", "Router (ms)";
     hist_tweaks_heading => "Changes applied shortly before", "Zmiany zastosowane krótko przed";
+    // -----------------------------------------------------------------------
+    // the per-hop path
+    // -----------------------------------------------------------------------
+    live_path_heading => "Where the loss starts", "Gdzie zaczyna się strata";
+    live_path_waiting =>
+        "Walking the path and measuring each hop. The first figures arrive in about a minute.",
+        "Sprawdzam ścieżkę i mierzę każdy skok. Pierwsze liczby za mniej więcej minutę.";
+    live_path_clean =>
+        "Nothing on the path is losing packets or adding delay.",
+        "Nic na ścieżce nie gubi pakietów ani nie dokłada opóźnienia.";
+    live_path_note =>
+        "A hop that shows loss while the hops behind it do not is rate-limiting its own replies, \
+         not dropping your traffic. Only loss that continues to the end of the path is counted.",
+        "Skok, który pokazuje stratę, podczas gdy skoki za nim nie, ogranicza tempo własnych \
+         odpowiedzi, a nie gubi twojego ruchu. Liczy się tylko strata, która trwa do końca \
+         ścieżki.";
+    live_trace_heading => "Traceroute to 1.1.1.1", "Traceroute do 1.1.1.1";
+    live_trace_empty =>
+        "Not run yet. It walks the whole route once, including the hops the \
+         continuous measurement on the left leaves out.",
+        "Jeszcze nieuruchomiony. Przechodzi całą trasę raz, także te skoki, \
+         które pomija ciągły pomiar po lewej.";
+    live_scale_ok => "good", "dobre";
+    live_axis_unit => "milliseconds", "milisekundy";
+    live_range_label => "window", "okno";
+    live_smooth => "trend", "trend";
+    live_smooth_hint =>
+        "Draw each slice's average instead of its range. Reads the shape of an hour; hides the \
+         individual spikes, which the count below still reports.",
+        "Rysuj średnią każdego wycinka zamiast jego rozpiętości. Pokazuje kształt godziny; ukrywa \
+         pojedyncze skoki, o których i tak mówi licznik poniżej.";
+    live_series_toggle => "click to hide this line", "kliknij, żeby ukryć tę linię";
+    live_hover_lost => "no reply", "brak odpowiedzi";
+    live_hover_hint =>
+        "point at it to read every probe at that moment",
+        "najedź, żeby odczytać każdą sondę z tej chwili";
+    live_hover_spike =>
+        "a spike hit several targets at once here",
+        "w tym miejscu skok dotknął kilku celów naraz";
+    live_scale_bad => "poor", "słabe";
+    live_path_col_hop => "Hop", "Skok";
+    live_path_col_addr => "Address", "Adres";
+    live_path_col_owner => "Whose", "Czyje";
+    live_path_col_loss => "Loss", "Strata";
+    live_path_col_avg => "Average", "Średnia";
+    // A hop that answered the walk but drops every probe addressed to it.
+    // Common, harmless, and nothing like the same thing as losing packets.
+    path_no_answer => "does not answer", "nie odpowiada";
+    path_owner_gateway => "your router", "twój router";
+    path_owner_local => "your network", "twoja sieć";
+    path_owner_edge => "provider edge", "brzeg dostawcy";
+    path_owner_internet => "beyond the provider", "za dostawcą";
+
+    hist_log_heading => "What Windows wrote down", "Co zapisał Windows";
+    hist_log_loading => "Reading the event log…", "Czytam dziennik zdarzeń…";
+    hist_log_none =>
+        "The Windows event log has nothing from this period. Either nothing on this machine \
+         faulted, or the channels that would have said so are turned off.",
+        "Dziennik zdarzeń Windows nie ma nic z tego okresu. Albo nic w tym komputerze nie \
+         zawiodło, albo kanały, które by to zgłosiły, są wyłączone.";
     hist_leadup_axis =>
         "seconds relative to the start of the outage",
         "sekundy względem początku awarii";
@@ -739,6 +798,7 @@ poprosisz.";
     rep_sec_connection => "CONNECTION", "POŁĄCZENIE";
     rep_sec_measurements => "MEASUREMENTS (last hour)", "POMIARY (ostatnia godzina)";
     rep_sec_outages => "OUTAGES (last 24 hours)", "AWARIE (ostatnie 24 godziny)";
+    rep_sec_path => "PATH, HOP BY HOP", "ŚCIEŻKA, SKOK PO SKOKU";
     rep_sec_bloat => "LATENCY UNDER LOAD (bufferbloat)", "OPÓŹNIENIE POD OBCIĄŻENIEM (bufferbloat)";
     rep_sec_diagnosis => "DIAGNOSIS", "DIAGNOZA";
     rep_sec_changes => "SETTINGS CHANGES", "ZMIANY USTAWIEŃ";
@@ -1973,6 +2033,46 @@ pub fn cause_title(code: &str) -> String {
         "time_pattern" => ("It happens at the same hour", "Zdarza się o tej samej godzinie"),
         "no_evidence" => ("No evidence was recorded", "Nie zapisano dowodów"),
         "unclear" => ("No single cause stands out", "Żadna przyczyna się nie wyróżnia"),
+
+        // Read out of the Windows event log rather than inferred from probes.
+        "log_sleep" => ("The machine was asleep", "Komputer spał"),
+        "log_resume" => (
+            "The connection was still coming back from sleep",
+            "Połączenie wracało jeszcze po uśpieniu",
+        ),
+        "log_driver_fault" => (
+            "The adapter driver logged an error",
+            "Sterownik karty zapisał błąd",
+        ),
+        "log_wlan_inactivity" => (
+            "The access point dropped an idle card",
+            "Access point odrzucił bezczynną kartę",
+        ),
+        "log_wlan_auth" => (
+            "Authentication with the access point failed",
+            "Uwierzytelnianie z access pointem nie powiodło się",
+        ),
+        "log_wlan_ap_rejected" => (
+            "The access point turned the card away",
+            "Access point odmówił karcie",
+        ),
+        "log_wlan_deauth" => (
+            "Windows recorded the wireless disconnect",
+            "Windows zapisał rozłączenie Wi-Fi",
+        ),
+        "log_dhcp" => ("The DHCP lease failed", "Dzierżawa DHCP nie powiodła się"),
+        "log_duplicate_ip" => (
+            "Another device has the same address",
+            "Inne urządzenie ma ten sam adres",
+        ),
+        "log_link_down" => (
+            "Windows saw the interface go down",
+            "Windows zobaczył wyłączenie interfejsu",
+        ),
+        "log_clean_isp" => (
+            "Nothing went wrong on this machine",
+            "Po stronie tego komputera nic się nie zepsuło",
+        ),
         other => return other.to_string(),
     };
     pick(en, pl)
@@ -2114,6 +2214,103 @@ pub fn cause_advice(code: &str) -> String {
              the place to look for what changes each time.",
             "Zapisany stan nie wskazuje jednej przyczyny. Jeśli się powtórzy, przebieg poniżej \
              jest miejscem, w którym warto szukać tego, co za każdym razem się zmienia.",
+        ),
+
+        "log_sleep" => (
+            "Nothing was wrong with the network: the computer suspended and the monitor kept \
+             counting. If you did not expect it to sleep, the sleep timer in the power plan is the \
+             setting to look at, not anything in here.",
+            "Z siecią nie było nic nie tak: komputer się uśpił, a monitor dalej liczył. Jeśli nie \
+             spodziewałeś się uśpienia, popatrz na licznik uśpienia w planie zasilania, a nie na \
+             cokolwiek tutaj.",
+        ),
+        "log_resume" => (
+            "After waking, the radio has to re-associate and the DHCP lease has to be confirmed, \
+             and that takes a few seconds during which nothing answers. An outage that fills \
+             exactly that gap is the resume sequence working, not failing.",
+            "Po wybudzeniu radio musi się ponownie powiązać, a dzierżawa DHCP potwierdzić — to \
+             kilka sekund, w których nic nie odpowiada. Awaria wypełniająca dokładnie tę lukę to \
+             działająca sekwencja wybudzenia, a nie jej błąd.",
+        ),
+        "log_driver_fault" => (
+            "The driver failed on its own and Windows wrote it down, so this is not a router or a \
+             provider problem. Update the adapter driver from the vendor rather than through \
+             Windows Update, which usually keeps an older one. Resetting the network stack clears \
+             the state a fault leaves behind.",
+            "Sterownik zawiódł sam z siebie i Windows to zapisał, więc to nie problem routera ani \
+             dostawcy. Zaktualizuj sterownik karty od producenta, a nie przez Windows Update, \
+             który zwykle trzyma starszy. Reset stosu sieciowego czyści stan, który zostaje po \
+             takiej usterce.",
+        ),
+        "log_wlan_inactivity" => (
+            "The access point stopped hearing from a card that Windows had quietly powered down, \
+             so it disassociated it. This is the textbook cause of a link that dies while the \
+             machine sits idle and revives the moment you touch it — turn off the adapter's power \
+             saving and the power plan's, both.",
+            "Access point przestał słyszeć kartę, którą Windows po cichu wyłączył, więc ją \
+             rozłączył. To podręcznikowa przyczyna łącza, które umiera, gdy komputer stoi \
+             bezczynnie, i ożywa, gdy tylko go dotkniesz — wyłącz oszczędzanie energii karty i \
+             planu zasilania, oba.",
+        ),
+        "log_wlan_auth" => (
+            "The card reached the access point and was not let in. That is the key or the \
+             credentials, not the signal: a changed Wi-Fi password, a profile holding the old one, \
+             or a router rotating keys faster than the card follows. Forget the network and \
+             reconnect to rebuild the profile.",
+            "Karta dotarła do access pointa i nie została wpuszczona. To klucz albo poświadczenia, \
+             nie sygnał: zmienione hasło Wi-Fi, profil trzymający stare, albo router rotujący \
+             klucze szybciej, niż karta nadąża. Zapomnij sieć i połącz się ponownie, żeby \
+             odbudować profil.",
+        ),
+        "log_wlan_ap_rejected" => (
+            "The access point refused the card rather than losing it — usually because it had no \
+             capacity left. Check how many devices are associated, and whether a guest network or \
+             a mesh node is holding slots it does not need.",
+            "Access point odmówił karcie, zamiast ją zgubić — zwykle dlatego, że nie miał wolnych \
+             miejsc. Sprawdź, ile urządzeń jest powiązanych i czy sieć gościnna albo węzeł mesh \
+             nie trzyma miejsc, których nie potrzebuje.",
+        ),
+        "log_wlan_deauth" => (
+            "Windows recorded the disconnect itself, so the link really was torn down rather than \
+             merely going quiet. The reason code above is what to quote if you take this to the \
+             router's vendor or your provider.",
+            "Windows sam zapisał rozłączenie, więc łącze naprawdę zostało zerwane, a nie tylko \
+             ucichło. Kod przyczyny powyżej jest tym, co warto zacytować, idąc z tym do \
+             producenta routera albo do dostawcy.",
+        ),
+        "log_dhcp" => (
+            "The adapter could not get an address from the router. Until it has one, nothing \
+             routes, however good the signal is. Restart the router's DHCP server or check that \
+             its address pool is not exhausted — a full pool fails exactly like this, and only for \
+             whichever device asks last.",
+            "Karta nie mogła dostać adresu od routera. Dopóki go nie ma, nic się nie routuje, \
+             niezależnie od jakości sygnału. Zrestartuj serwer DHCP routera albo sprawdź, czy jego \
+             pula adresów się nie wyczerpała — pełna pula zawodzi dokładnie w ten sposób i tylko \
+             dla tego urządzenia, które pyta jako ostatnie.",
+        ),
+        "log_duplicate_ip" => (
+            "Two devices are claiming one address, so replies go to whichever answers first. It is \
+             almost always a static address set by hand inside the router's DHCP range. Move it \
+             outside the pool, or hand it out as a reservation instead.",
+            "Dwa urządzenia zgłaszają jeden adres, więc odpowiedzi trafiają do tego, które \
+             odpowie pierwsze. Prawie zawsze to adres statyczny ustawiony ręcznie wewnątrz zakresu \
+             DHCP routera. Przenieś go poza pulę albo rozdawaj jako rezerwację.",
+        ),
+        "log_link_down" => (
+            "The interface itself went down — the OS saw it, so this is the adapter, its driver, \
+             its cable or its power state, and not anything beyond the router.",
+            "Sam interfejs padł — system to zobaczył, więc chodzi o kartę, jej sterownik, kabel \
+             albo stan zasilania, a nie o cokolwiek za routerem.",
+        ),
+        "log_clean_isp" => (
+            "The Windows log has entries from this period and none of them is a fault here: no \
+             sleep, no driver error, no disconnect, no DHCP failure. Together with the router \
+             answering throughout, that puts the outage past your own equipment — which is exactly \
+             the case a provider has to answer.",
+            "Dziennik Windows ma wpisy z tego okresu i żaden z nich nie jest usterką tutaj: brak \
+             uśpienia, brak błędu sterownika, brak rozłączenia, brak awarii DHCP. Razem z \
+             routerem odpowiadającym przez cały czas stawia to awarię za twoim sprzętem — a to \
+             dokładnie ten przypadek, na który dostawca musi odpowiedzieć.",
         ),
         _ => ("", ""),
     };
@@ -2292,6 +2489,245 @@ pub fn ev_unclear() -> String {
         "the recorded state matches no single pattern",
         "zapisany stan nie pasuje do żadnego pojedynczego wzorca",
     )
+}
+
+// ---------------------------------------------------------------------------
+// the per-hop path
+// ---------------------------------------------------------------------------
+
+/// A chart window's name on its button.
+pub fn range_name(secs: f64) -> String {
+    if secs < 3600.0 {
+        format!("{} min", (secs / 60.0).round() as i64)
+    } else {
+        pick("1 h", "1 godz")
+    }
+}
+
+/// The moment the pointer is over, as a clock time and an age.
+pub fn live_hover_when(clock: &str, secs_ago: f64) -> String {
+    let ago = if secs_ago < 90.0 {
+        format!("{secs_ago:.0} s")
+    } else {
+        format!("{:.0} min", secs_ago / 60.0)
+    };
+    match current() {
+        Lang::En => format!("{clock}  ({ago} ago)"),
+        Lang::Pl => format!("{clock}  ({ago} temu)"),
+    }
+}
+
+/// Said under the plot when the scale was capped to keep the normal range
+/// readable. A chart that quietly drops its outliers is lying; one that says
+/// how many it put off the top is not.
+pub fn live_above_scale(n: usize, top: f64) -> String {
+    match current() {
+        Lang::En => format!("{n} above {top:.0} ms, off the top"),
+        Lang::Pl => format!("{n} powyżej {top:.0} ms, poza skalą"),
+    }
+}
+
+pub fn path_owner(owner: crate::probe::path::Owner) -> &'static str {
+    use crate::probe::path::Owner as O;
+    match owner {
+        O::Gateway => path_owner_gateway(),
+        O::Local => path_owner_local(),
+        O::Edge => path_owner_edge(),
+        O::Internet => path_owner_internet(),
+    }
+}
+
+/// The headline when a hop is dropping packets all the way to the end.
+pub fn path_blame_loss(ttl: u32, addr: &str, loss: f64, owner: &str) -> String {
+    match current() {
+        Lang::En => {
+            format!("Loss starts at hop {ttl}, {addr} — {loss:.0}% and it carries ({owner}).")
+        }
+        Lang::Pl => {
+            format!("Strata zaczyna się na skoku {ttl}, {addr} — {loss:.0}% i niesie się dalej ({owner}).")
+        }
+    }
+}
+
+/// The headline when nothing is lost but one hop is where the time goes.
+pub fn path_blame_delay(ttl: u32, addr: &str, added: f64, owner: &str) -> String {
+    match current() {
+        Lang::En => {
+            format!("Hop {ttl}, {addr} adds {added:.0} ms and everything behind it carries that delay ({owner}).")
+        }
+        Lang::Pl => {
+            format!("Skok {ttl}, {addr} dokłada {added:.0} ms i wszystko za nim niesie to opóźnienie ({owner}).")
+        }
+    }
+}
+
+/// What to do about it, which depends entirely on whose equipment it is.
+pub fn path_blame_advice(mine: bool) -> &'static str {
+    match (current(), mine) {
+        (Lang::En, true) => {
+            "That hop is your own equipment, so this one is fixable here: the router, a second \
+             router behind it, or the link between them."
+        }
+        (Lang::Pl, true) => {
+            "Ten skok to twój własny sprzęt, więc da się to naprawić u siebie: router, drugi \
+             router za nim albo łącze między nimi."
+        }
+        (Lang::En, false) => {
+            "That hop is past your equipment. Quote the hop number, the address and this loss \
+             figure to the provider — it is the one form of evidence a support line cannot \
+             answer with \"restart the router\"."
+        }
+        (Lang::Pl, false) => {
+            "Ten skok jest za twoim sprzętem. Podaj dostawcy numer skoku, adres i tę wartość \
+             straty — to jedyny rodzaj dowodu, na który infolinia nie odpowie „zrestartuj \
+             router”."
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// the Windows event log
+// ---------------------------------------------------------------------------
+
+/// Where a log line sits relative to the start of the outage. Read as part of
+/// an evidence sentence, so it names no subject of its own.
+pub fn clock_offset(secs: f64) -> String {
+    let v = secs.round() as i64;
+    if v == 0 {
+        return pick("in the same second", "w tej samej sekundzie");
+    }
+    let amount = if v.abs() >= 90 {
+        format!("{} min", (v.abs() as f64 / 60.0).round() as i64)
+    } else {
+        format!("{} s", v.abs())
+    };
+    match (current(), v < 0) {
+        (Lang::En, true) => format!("{amount} before it started"),
+        (Lang::En, false) => format!("{amount} after it started"),
+        (Lang::Pl, true) => format!("{amount} przed jej początkiem"),
+        (Lang::Pl, false) => format!("{amount} po jej początku"),
+    }
+}
+
+/// An 802.11 disconnect reason in words. Codes outside the named set keep
+/// their number: a support line will ask for the number anyway, and inventing
+/// a sentence for an unknown code would be worse than admitting the gap.
+pub fn wlan_reason(code: u32) -> String {
+    let (en, pl) = match code {
+        1 => ("unspecified", "nieokreślony"),
+        2 => ("the previous authentication was no longer valid", "poprzednie uwierzytelnienie przestało być ważne"),
+        3 => ("the station is leaving the network", "stacja opuszcza sieć"),
+        4 => ("disassociated for inactivity", "rozłączenie z powodu bezczynności"),
+        5 => ("the access point had no capacity left", "access point nie miał już wolnych miejsc"),
+        6 | 7 => ("a frame arrived from an unassociated station", "nadeszła ramka od niepowiązanej stacji"),
+        8 => ("the station is leaving the BSS", "stacja opuszcza BSS"),
+        15 => ("the four-way handshake timed out", "four-way handshake przekroczył czas"),
+        23 => ("802.1X authentication failed", "uwierzytelnianie 802.1X nie powiodło się"),
+        other => return pick(&format!("reason {other}"), &format!("powód {other}")),
+    };
+    pick(en, pl)
+}
+
+pub fn ev_log_sleep(at: &str) -> String {
+    match current() {
+        Lang::En => format!("Windows logged the machine going to sleep {at}"),
+        Lang::Pl => format!("Windows zapisał uśpienie komputera {at}"),
+    }
+}
+
+pub fn ev_log_resume(at: &str) -> String {
+    match current() {
+        Lang::En => format!("Windows logged the machine waking {at}"),
+        Lang::Pl => format!("Windows zapisał wybudzenie komputera {at}"),
+    }
+}
+
+pub fn ev_log_driver(provider: &str, id: u32, at: &str) -> String {
+    match current() {
+        Lang::En => format!("the driver {provider} logged error {id} {at}"),
+        Lang::Pl => format!("sterownik {provider} zapisał błąd {id} {at}"),
+    }
+}
+
+pub fn ev_log_wlan_reason(code: u32, at: &str) -> String {
+    let reason = wlan_reason(code);
+    match current() {
+        Lang::En => format!("Windows logged the disconnect {at}: {reason} (802.11 reason {code})"),
+        Lang::Pl => format!("Windows zapisał rozłączenie {at}: {reason} (802.11, kod {code})"),
+    }
+}
+
+pub fn ev_log_wlan_plain(at: &str) -> String {
+    match current() {
+        Lang::En => format!("Windows logged the wireless disconnect {at}, without a reason code"),
+        Lang::Pl => format!("Windows zapisał rozłączenie Wi-Fi {at}, bez kodu przyczyny"),
+    }
+}
+
+pub fn ev_log_wlan_auth(id: u32, at: &str) -> String {
+    match current() {
+        Lang::En => format!("WLAN-AutoConfig logged event {id} {at}: the association was refused"),
+        Lang::Pl => format!("WLAN-AutoConfig zapisał zdarzenie {id} {at}: odmowa powiązania"),
+    }
+}
+
+pub fn ev_log_dhcp(at: &str) -> String {
+    match current() {
+        Lang::En => format!("the DHCP client failed to obtain or renew a lease {at}"),
+        Lang::Pl => format!("klient DHCP nie uzyskał ani nie odnowił dzierżawy {at}"),
+    }
+}
+
+pub fn ev_log_duplicate_ip(at: &str) -> String {
+    match current() {
+        Lang::En => format!("TCP/IP logged a duplicate address on this network {at}"),
+        Lang::Pl => format!("TCP/IP zapisał zduplikowany adres w tej sieci {at}"),
+    }
+}
+
+pub fn ev_log_link_down(at: &str) -> String {
+    match current() {
+        Lang::En => format!("Windows logged the network interface going down {at}"),
+        Lang::Pl => format!("Windows zapisał wyłączenie interfejsu sieciowego {at}"),
+    }
+}
+
+pub fn ev_log_clean(lines: usize) -> String {
+    match current() {
+        Lang::En => format!(
+            "{lines} log entries around this outage and not one of them a fault on this machine"
+        ),
+        Lang::Pl => format!(
+            "{lines} wpisów w dzienniku wokół tej awarii i ani jeden z nich to usterka tego komputera"
+        ),
+    }
+}
+
+/// One-word label for a log line's meaning, for the raw list under the causes.
+pub fn log_kind(kind: crate::probe::eventlog::Kind) -> &'static str {
+    use crate::probe::eventlog::Kind as K;
+    match (current(), kind) {
+        (Lang::En, K::Sleep) => "sleep",
+        (Lang::Pl, K::Sleep) => "uśpienie",
+        (Lang::En, K::Resume) => "wake",
+        (Lang::Pl, K::Resume) => "wybudzenie",
+        (Lang::En, K::WlanDisconnect) => "Wi-Fi disconnect",
+        (Lang::Pl, K::WlanDisconnect) => "rozłączenie Wi-Fi",
+        (Lang::En, K::WlanAuthFail) => "Wi-Fi refused",
+        (Lang::Pl, K::WlanAuthFail) => "odmowa Wi-Fi",
+        (Lang::En, K::WlanConnect) => "Wi-Fi connected",
+        (Lang::Pl, K::WlanConnect) => "połączenie Wi-Fi",
+        (Lang::En, K::LinkDown) => "interface down",
+        (Lang::Pl, K::LinkDown) => "interfejs w dół",
+        (Lang::En, K::LinkUp) => "interface up",
+        (Lang::Pl, K::LinkUp) => "interfejs w górę",
+        (Lang::En, K::DhcpFail) => "DHCP failure",
+        (Lang::Pl, K::DhcpFail) => "błąd DHCP",
+        (Lang::En, K::DuplicateIp) => "duplicate address",
+        (Lang::Pl, K::DuplicateIp) => "zduplikowany adres",
+        (Lang::En, K::DriverFault) => "driver error",
+        (Lang::Pl, K::DriverFault) => "błąd sterownika",
+    }
 }
 
 /// Heading over the cause panel, naming the outage being explained.

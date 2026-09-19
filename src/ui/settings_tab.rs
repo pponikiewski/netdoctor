@@ -7,86 +7,18 @@ use crate::i18n;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.columns(2, |cols| {
-            let left = &mut cols[0];
-            section(left, i18n::set_sec_probing(), |ui| {
-                num_u64(ui, i18n::set_interval(), &mut app.draft.probe_interval_ms);
-                hint(ui, i18n::set_interval_hint());
-                num_u32(ui, i18n::set_ping_timeout(), &mut app.draft.ping_timeout_ms);
-                num_u32(ui, i18n::set_fails_before_alarm(), &mut app.draft.outage_after_fails);
-                hint(ui, i18n::set_fails_hint());
-                num_usize(ui, i18n::set_chart_width(), &mut app.draft.history_points);
-                num_i64(ui, i18n::set_keep_days(), &mut app.draft.keep_days);
+        // Side by side when there is room, stacked when there is not. A
+        // labelled number field squeezed into a third of a narrow window is a
+        // field whose label and value stop fitting on one line.
+        if super::is_narrow(ui) {
+            probing_and_targets(app, ui);
+            language_thresholds_behaviour(app, ui);
+        } else {
+            ui.columns(2, |cols| {
+                probing_and_targets(app, &mut cols[0]);
+                language_thresholds_behaviour(app, &mut cols[1]);
             });
-
-            section(left, i18n::set_sec_targets(), |ui| {
-                hint(ui, i18n::set_targets_hint());
-                ui.add(
-                    egui::TextEdit::multiline(&mut app.draft_targets)
-                        .desired_rows(4)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::TextStyle::Monospace),
-                );
-            });
-
-            let right = &mut cols[1];
-            section(right, i18n::set_language(), |ui| {
-                // Applied on click rather than on save: a language picker that
-                // needs a second confirmation is hard to undo once the labels
-                // are in a language you cannot read.
-                let mut chosen = app.draft.effective_lang();
-                ui.horizontal(|ui| {
-                    for lang in i18n::Lang::ALL {
-                        if ui
-                            .selectable_label(chosen == lang, lang.native_name())
-                            .clicked()
-                        {
-                            chosen = lang;
-                        }
-                    }
-                });
-                if chosen != app.draft.effective_lang() {
-                    app.draft.lang = Some(chosen);
-                    app.settings.lang = Some(chosen);
-                    i18n::set(chosen);
-                    let _ = app.settings.save();
-                }
-                hint(ui, i18n::set_language_hint());
-            });
-
-            section(right, i18n::set_sec_thresholds(), |ui| {
-                num_f64(ui, i18n::set_lat_good(), &mut app.draft.ping_ok_ms);
-                num_f64(ui, i18n::set_lat_bad(), &mut app.draft.ping_bad_ms);
-                num_f64(ui, i18n::set_jitter_good(), &mut app.draft.jitter_good_ms);
-                num_f64(ui, i18n::set_jitter_ok(), &mut app.draft.jitter_ok_ms);
-                num_f64(ui, i18n::set_loss_ok(), &mut app.draft.loss_ok_pct);
-            });
-
-            section(right, i18n::set_sec_behaviour(), |ui| {
-                ui.checkbox(&mut app.draft.notify_on_outage, i18n::set_notify());
-                ui.checkbox(&mut app.draft.start_minimised, i18n::set_start_min());
-
-                let mut autostart = app.autostart_on;
-                if ui.checkbox(&mut autostart, i18n::set_autostart()).changed() {
-                    let now = ui.input(|i| i.time);
-                    match crate::autostart::set(autostart) {
-                        Ok(msg) => {
-                            app.autostart_on = autostart;
-                            app.toast(msg, GREEN, now);
-                        }
-                        Err(e) => app.toast(e.to_string(), RED, now),
-                    }
-                }
-                hint(ui, i18n::set_autostart_hint());
-                if crate::autostart::is_stale() {
-                    ui.label(
-                        egui::RichText::new(i18n::set_autostart_stale())
-                        .size(T_META)
-                        .color(YELLOW),
-                    );
-                }
-            });
-        });
+        }
 
         ui.add_space(S_MD);
         ui.horizontal(|ui| {
@@ -102,6 +34,81 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// How often the app probes, and what it probes.
+fn probing_and_targets(app: &mut App, ui: &mut egui::Ui) {
+    section(ui, i18n::set_sec_probing(), |ui| {
+        num_u64(ui, i18n::set_interval(), &mut app.draft.probe_interval_ms);
+        hint(ui, i18n::set_interval_hint());
+        num_u32(ui, i18n::set_ping_timeout(), &mut app.draft.ping_timeout_ms);
+        num_u32(ui, i18n::set_fails_before_alarm(), &mut app.draft.outage_after_fails);
+        hint(ui, i18n::set_fails_hint());
+        num_i64(ui, i18n::set_keep_days(), &mut app.draft.keep_days);
+    });
+
+    section(ui, i18n::set_sec_targets(), |ui| {
+        hint(ui, i18n::set_targets_hint());
+        ui.add(
+            egui::TextEdit::multiline(&mut app.draft_targets)
+                .desired_rows(4)
+                .desired_width(f32::INFINITY)
+                .font(egui::TextStyle::Monospace),
+        );
+    });
+}
+
+/// The choices that are about the app rather than about the measurement.
+fn language_thresholds_behaviour(app: &mut App, ui: &mut egui::Ui) {
+    section(ui, i18n::set_language(), |ui| {
+        // Applied on click rather than on save: a language picker that needs
+        // a second confirmation is hard to undo once the labels are in a
+        // language you cannot read.
+        let mut chosen = app.draft.effective_lang();
+        ui.horizontal(|ui| {
+            for lang in i18n::Lang::ALL {
+                if ui.selectable_label(chosen == lang, lang.native_name()).clicked() {
+                    chosen = lang;
+                }
+            }
+        });
+        if chosen != app.draft.effective_lang() {
+            app.draft.lang = Some(chosen);
+            app.settings.lang = Some(chosen);
+            i18n::set(chosen);
+            let _ = app.settings.save();
+        }
+        hint(ui, i18n::set_language_hint());
+    });
+
+    section(ui, i18n::set_sec_thresholds(), |ui| {
+        num_f64(ui, i18n::set_lat_good(), &mut app.draft.ping_ok_ms);
+        num_f64(ui, i18n::set_lat_bad(), &mut app.draft.ping_bad_ms);
+        num_f64(ui, i18n::set_jitter_good(), &mut app.draft.jitter_good_ms);
+        num_f64(ui, i18n::set_jitter_ok(), &mut app.draft.jitter_ok_ms);
+        num_f64(ui, i18n::set_loss_ok(), &mut app.draft.loss_ok_pct);
+    });
+
+    section(ui, i18n::set_sec_behaviour(), |ui| {
+        ui.checkbox(&mut app.draft.notify_on_outage, i18n::set_notify());
+        ui.checkbox(&mut app.draft.start_minimised, i18n::set_start_min());
+
+        let mut autostart = app.autostart_on;
+        if ui.checkbox(&mut autostart, i18n::set_autostart()).changed() {
+            let now = ui.input(|i| i.time);
+            match crate::autostart::set(autostart) {
+                Ok(msg) => {
+                    app.autostart_on = autostart;
+                    app.toast(msg, GREEN, now);
+                }
+                Err(e) => app.toast(e.to_string(), RED, now),
+            }
+        }
+        hint(ui, i18n::set_autostart_hint());
+        if crate::autostart::is_stale() {
+            ui.label(egui::RichText::new(i18n::set_autostart_stale()).size(T_META).color(YELLOW));
+        }
+    });
+}
+
 fn save(app: &mut App, ui: &mut egui::Ui) {
     let now = ui.input(|i| i.time);
 
@@ -113,7 +120,6 @@ fn save(app: &mut App, ui: &mut egui::Ui) {
         app.toast(i18n::set_err_thresholds(), RED, now);
         return;
     }
-    app.draft.history_points = app.draft.history_points.max(30);
 
     app.draft.extra_targets = app
         .draft_targets
@@ -186,12 +192,6 @@ fn num_u64(ui: &mut egui::Ui, label: &str, value: &mut u64) {
 fn num_u32(ui: &mut egui::Ui, label: &str, value: &mut u32) {
     row(ui, label, |ui| {
         ui.add(egui::DragValue::new(value).speed(1));
-    });
-}
-
-fn num_usize(ui: &mut egui::Ui, label: &str, value: &mut usize) {
-    row(ui, label, |ui| {
-        ui.add(egui::DragValue::new(value).speed(10));
     });
 }
 

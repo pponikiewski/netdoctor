@@ -46,6 +46,51 @@ The rules live in [`src/cause.rs`](src/cause.rs) and are plain enough to argue
 with: every verdict shows its evidence, so a wrong one is visibly wrong rather
 than merely unhelpful.
 
+## What Windows already wrote down
+
+Every probe in the app so far *infers*: it pings, watches a trend, and argues
+from it. Meanwhile the operating system was recording what actually happened —
+that the access point deauthenticated the card and with which 802.11 reason
+code, that the adapter driver faulted, that the machine suspended, that the
+DHCP lease could not be renewed — and nothing read it back.
+
+Selecting an outage now reads it back. Two channels are queried around the
+outage's own time span, `System` and `Microsoft-Windows-WLAN-AutoConfig/Operational`,
+and the lines that mean something become verdicts of their own, ahead of every
+inferred one. A log line is not a deduction from latency: it is the OS naming
+the event. Reason 4 on a disconnect — *disassociated for inactivity* — says the
+access point dropped a card Windows had quietly powered down, which is the
+textbook cause of a link that dies while the machine sits idle, and it points
+straight at the tweak that fixes it.
+
+The rendered message text is never matched on, because `wevtutil` translates
+it; only structured fields are read. Silence is evidence too: a WAN outage with
+log entries around it and not one of them a fault on this machine is precisely
+the case a provider has to answer. It is claimed only when the log had
+something to say at all, since "quiet" and "unavailable" look identical from
+here. See [`src/probe/eventlog.rs`](src/probe/eventlog.rs).
+
+## Which hop it starts at
+
+"It is the ISP" is a claim, and the provider's first move is to blame the
+Wi-Fi. What settles it is a per-hop measurement. The path to a fixed anchor is
+walked every few minutes and every hop on it is then pinged directly on a slow
+cadence, continuously — the picture `mtr` draws, kept up rather than run once
+after the fact, because the outage worth measuring is never happening while you
+are typing the command. Each hop is labelled with whose it is: the router, the
+private stretch behind it that is still the household's own kit, the provider's
+edge, the networks beyond.
+
+The reading that matters is not "which hop shows loss". A router showing 60%
+while everything behind it shows none is rate-limiting the replies it generates
+itself — a configuration choice, not a fault, and forwarded traffic never
+touches that path. A hop is blamed only when the loss *carries* to the end, and
+a hop that has never once answered a probe addressed to it is reported as not
+answering rather than as losing everything. The verdict is therefore rarer than
+the red figures in the table, which is the point. It also lands in the exported
+report, where it is the paragraph a support line cannot answer with "restart
+the router". See [`src/probe/path.rs`](src/probe/path.rs).
+
 ## Running it
 
 ```text
@@ -80,10 +125,18 @@ one English label that would silently fail everywhere else.
 
 ## Tabs
 
-- **Live** — latency plot with a time axis and gaps where packets were lost,
-  headline figures (latency, jitter, loss, DNS, time since the last outage),
-  traceroute, report export. Hovering a legend entry shows that probe's current
-  state.
+- **Live** — latency plot over a window you pick, from a minute to an hour,
+  read from the database rather than from memory so it covers more than this
+  run. Pointing at it reads out every probe at that instant, with no delay
+  before the figures appear. Clicking a name in the legend takes that line
+  away, which is the only way to follow one of four crossing lines. *Trend*
+  swaps each slice's range for its average: the first is what happened, the
+  second is the shape of an hour, and neither is readable as the other.
+  A break in a line is a break in the measurement, and it is only marked in
+  red when probes were sent and went unanswered — time the app spent closed
+  leaves a gap and no accusation. Below it: headline figures (latency,
+  jitter, loss, DNS, time since the last outage), the path hop by hop with a
+  verdict on which one the trouble starts at, traceroute, report export.
 - **Diagnose** — nine checks: adapter and medium, Wi-Fi quality and band,
   adapter power management, DNS, the link to the router, internet latency and
   loss, MTU, TCP settings, and the recorded outage history. Each finding
@@ -99,7 +152,8 @@ one English label that would silently fail everywhere else.
   looking like a failure. Plus a scan of the surrounding Wi-Fi that works
   out which channel to ask the router for.
 - **Outage history** — when, how long, whose fault, and on selecting an entry,
-  why: cause, evidence, the lead-up plotted, and a route to the fix.
+  why: cause, evidence, what Windows logged around it, the lead-up plotted, and
+  a route to the fix.
 - **Settings** — probe cadence, thresholds, extra ping targets (your game
   server, for instance), autostart.
 

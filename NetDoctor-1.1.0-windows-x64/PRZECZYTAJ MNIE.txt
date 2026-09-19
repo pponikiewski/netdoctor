@@ -1,0 +1,137 @@
+NetDoctor 1.1.0
+===============
+
+Program sprawdza, gdzie dokładnie urywa się Twoje połączenie z internetem.
+
+Kiedy "internet nie działa", z poziomu Windowsa wszystko wygląda tak samo.
+A śpiąca karta Wi-Fi i padłe łącze u dostawcy to dwa zupełnie różne problemy,
+które naprawia się inaczej. NetDoctor pinguje jednocześnie router i kilka
+serwerów w internecie, i po tym, które z nich przestają odpowiadać, rozpoznaje
+po czyjej stronie leży wina.
+
+
+JAK URUCHOMIĆ
+-------------
+
+1. Rozpakuj archiwum (kliknij prawym > Wyodrębnij wszystkie).
+2. Kliknij dwukrotnie netdoctor.exe.
+
+Nie ma instalatora. Nie trzeba niczego doinstalowywać. To jeden plik.
+
+Windows może przy pierwszym uruchomieniu pokazać niebieskie okno
+"System Windows ochronił Twój komputer". Dzieje się tak z każdym programem
+bez podpisu cyfrowego. Kliknij "Więcej informacji", potem "Uruchom mimo to".
+
+Program mówi po polsku i po angielsku. Przy pierwszym uruchomieniu wybiera
+język Windowsa; przełącznik jest w zakładce Ustawienia.
+
+
+OD CZEGO ZACZĄĆ
+---------------
+
+Zakładka "Diagnostyka", przycisk skanowania. Dziewięć testów, każdy sam
+tłumaczy, co znalazł. To zajmuje kilkanaście sekund i zwykle od razu wskazuje
+problem.
+
+Zakładka "Test obciążeniowy" — jeśli ping masz dobry, a mimo to gry albo
+rozmowy się tną. Ten test obciąża łącze i mierzy, o ile rośnie wtedy
+opóźnienie. Bardzo często to jest właśnie ta odpowiedź, której szukasz.
+
+
+ZAKŁADKA "NA ŻYWO"
+------------------
+
+Wykres opóźnienia w oknie, które sam wybierasz: od minuty do godziny.
+Najedź na niego myszą, a odczytasz wszystkie sondy z tej jednej chwili.
+Kliknięcie nazwy w legendzie chowa daną linię — inaczej czterech
+przecinających się linii nie da się śledzić. Przycisk "trend" zamienia
+rozpiętość każdego wycinka na jego średnią: pierwsze pokazuje, co się
+działo, drugie — kształt całej godziny.
+
+Przerwa w linii to przerwa w pomiarze. Na czerwono zaznaczane są tylko te
+przerwy, za które odpowiada łącze: pakiety wysłane i bez odpowiedzi. Czas,
+gdy program był wyłączony, zostawia lukę i nikogo o nic nie oskarża.
+
+Pod wykresem: "Gdzie zaczyna się strata". Program co kilka minut przechodzi
+trasę do internetu i potem stale pinguje każdy skok po drodze. Każdy skok
+ma podpisane, czyj jest: Twój router, Twoja sieć, brzeg dostawcy, dalej.
+
+Uwaga na jedną rzecz, bo prawie wszyscy czytają to źle: skok, który pokazuje
+stratę, podczas gdy skoki za nim jej nie pokazują, NIE gubi Twojego ruchu.
+On tylko ogranicza tempo własnych odpowiedzi — to ustawienie, nie usterka.
+Program obwinia skok wyłącznie wtedy, gdy strata niesie się do końca trasy.
+Dlatego werdykt pojawia się rzadziej niż czerwone liczby w tabeli.
+
+Jeśli werdykt wskaże skok za Twoim sprzętem, podaj dostawcy numer skoku,
+adres i wartość straty. To jedyny rodzaj dowodu, na który infolinia nie
+odpowie "zrestartuj router". Wszystko to trafia też do raportu, który
+zapiszesz przyciskiem "Zapisz raport...".
+
+
+JEŚLI INTERNET URYWA SIĘ CO JAKIŚ CZAS
+--------------------------------------
+
+Zerwanie zostanie zapisane tylko wtedy, gdy program działa w momencie awarii.
+Więc jeśli problem pojawia się losowo, zostaw NetDoctora włączonego — w tle,
+zminimalizowanego. Każde zerwanie ląduje w zakładce "Historia awarii" razem
+ze stanem łącza z tej sekundy: siła sygnału, kanał, punkt dostępowy i to, czy
+router jeszcze odpowiadał.
+
+Po kliknięciu wpisu program pokazuje, dlaczego do tego doszło — w tym to, co
+sam Windows zapisał w Dzienniku zdarzeń w tamtej chwili: uśpienie komputera,
+błąd sterownika karty, rozłączenie Wi-Fi wraz z kodem przyczyny, nieudaną
+dzierżawę DHCP. To nie jest wnioskowanie z opóźnień, tylko system nazywający
+zdarzenie po imieniu.
+
+Dzięki temu nad ranem da się powiedzieć, co się stało o trzeciej w nocy. I to
+jest materiał, z którym można iść do dostawcy internetu — zamiast "mam słaby
+internet" masz konkretne godziny i dowody.
+
+W Ustawieniach można włączyć start razem z Windowsem.
+
+
+ZMIANY W USTAWIENIACH SYSTEMU
+-----------------------------
+
+Zakładka "Optymalizacja" potrafi poprawić kilka ustawień Windowsa, które
+najczęściej psują połączenie — na przykład usypianie karty sieciowej dla
+oszczędzania energii, typowe na laptopach.
+
+Każda zmiana ma opisany poziom ryzyka. Przed każdą zapisywany jest poprzedni
+stan, więc przycisk Cofnij przywraca dokładnie to, co było — także po
+restarcie komputera. Przycisk od zmian bezpiecznych rusza wyłącznie rzeczy
+odwracalne.
+
+Sama diagnostyka nie wymaga uprawnień administratora. Dopiero wprowadzanie
+zmian tak — program sam zaproponuje wtedy ponowne uruchomienie.
+
+
+PRYWATNOŚĆ
+----------
+
+Program nie wysyła nigdzie żadnych danych. Pinguje router i kilka publicznych
+serwerów, i tyle. Wszystko zapisuje lokalnie w:
+
+    %LOCALAPPDATA%\NetDoctor\
+
+(Wklej to w pasek adresu Eksplorera plików.) Dane starsze niż 14 dni kasują
+się same.
+
+Raport zapisywany przyciskiem "Zapisz raport..." zawiera nazwę Twojej sieci
+Wi-Fi, adres routera i adresy skoków u dostawcy. Zerknij na niego, zanim
+wyślesz go komuś obcemu.
+
+
+CZEGO NIE POTRAFI
+-----------------
+
+- Tylko Windows.
+- Tylko IPv4.
+- Interfejs rysuje się przez OpenGL. Na zwykłym komputerze to nie problem,
+  ale na maszynie wirtualnej albo przez zdalny pulpit bez akceleracji okno
+  może się nie otworzyć.
+- Test MTU opiera się na pakietach, które część sieci celowo ogranicza.
+  Jeśli wynik wygląda dziwnie, powtórz go przed wyciąganiem wniosków.
+- Skoki na trasie, które w ogóle nie odpowiadają na ping, są oznaczone jako
+  "nie odpowiada" i pomijane w ocenie. Nie da się zmierzyć routera, który
+  nie chce odpowiadać — i dobrze, żeby program tego nie udawał.

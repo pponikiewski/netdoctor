@@ -142,6 +142,10 @@ pub enum Job {
     BloatDone(Box<BloatResult>),
     Traceroute(Vec<String>),
     AirDone(Box<crate::probe::airscan::AirScan>),
+    /// The Windows event log around one outage, keyed by that outage's row id
+    /// so a slow read landing after the user moved on is discarded, not shown
+    /// under the wrong entry.
+    SysLog(i64, Vec<crate::probe::eventlog::SysEvent>),
 }
 
 pub struct App {
@@ -177,6 +181,15 @@ pub struct App {
     pub trace: Vec<String>,
     pub tracing: bool,
 
+    /// How far back the live chart looks, in seconds.
+    pub chart_range_s: f64,
+    /// Whether the chart draws each slice's range or its mean.
+    pub chart_smooth: bool,
+    /// Target keys the user has switched off in the chart legend.
+    pub hidden_series: std::collections::HashSet<String>,
+    /// The chart's samples, reduced and kept between frames.
+    pub chart_cache: Option<live::ChartCache>,
+
     pub tweak_states: Vec<(String, String, Option<bool>)>,
     pub selected_tweak: Option<usize>,
 
@@ -191,6 +204,11 @@ pub struct App {
     pub show_unavailable: bool,
     /// Row id of the outage whose cause panel is open, if any.
     pub selected_outage: Option<i64>,
+    /// The event log read for one outage, kept so opening an entry launches
+    /// `wevtutil` once rather than on every frame it stays open.
+    pub syslog: Option<(i64, Vec<crate::probe::eventlog::SysEvent>)>,
+    /// The outage a read is currently running for.
+    pub syslog_pending: Option<i64>,
     pub elevated: bool,
     pub autostart_on: bool,
 
@@ -231,12 +249,18 @@ impl App {
             bloat_progress: 0.0,
             trace: Vec::new(),
             tracing: false,
+            chart_range_s: 300.0,
+            chart_smooth: false,
+            hidden_series: std::collections::HashSet::new(),
+            chart_cache: None,
             tweak_states: Vec::new(),
             selected_tweak: None,
             air: Default::default(),
             air_scanning: false,
             show_unavailable: true,
             selected_outage: None,
+            syslog: None,
+            syslog_pending: None,
             elevated: crate::optimize::is_elevated(),
             autostart_on: crate::autostart::is_enabled(),
             toast: None,
@@ -304,6 +328,12 @@ impl App {
                     self.trace = lines;
                     self.tracing = false;
                 }
+                Job::SysLog(id, events) => {
+                    if self.syslog_pending == Some(id) {
+                        self.syslog_pending = None;
+                        self.syslog = Some((id, events));
+                    }
+                }
             }
         }
     }
@@ -364,7 +394,11 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("tabs")
             .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(GUTTER, 0.0)))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                // Wrapped, not a plain row: six tab names in a narrow window
+                // run past the right edge, and the ones that fall off are
+                // Outage history and Settings -- navigation that vanishes
+                // rather than moving is navigation that looks missing.
+                ui.horizontal_wrapped(|ui| {
                     for (tab, label) in [
                         (Tab::Live, crate::i18n::tab_live()),
                         (Tab::Diagnose, crate::i18n::tab_diagnose()),
@@ -459,30 +493,51 @@ impl eframe::App for App {
 impl App {
     fn header(&mut self, ui: &mut egui::Ui) {
         let status = self.last.status;
-        ui.horizontal(|ui| {
+
+        // The right-hand block's width is reserved before the left block is
+        // drawn, and the left block is then held to what is left.
+        //
+        // Laid out the other way round — a `vertical` inside a `horizontal`,
+        // followed by a right-to-left layout — the facts row takes the whole
+        // header width to wrap in, because nothing has told it otherwise, and
+        // the elevation note is then painted straight over the end of it. Two
+        // pieces of text on the same pixels is not a spacing problem that a
+        // bit more padding fixes; it is two layouts each believing they own
+        // the same space.
+        let reserved = if self.elevated { 140.0 } else { 300.0 };
+
+        ui.horizontal_top(|ui| {
+            ui.add_space(2.0);
             status_dot(ui, status_colour(status), 7.0);
             ui.add_space(S_XS);
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new(status.headline())
-                        .size(T_LEAD)
-                        .strong()
-                        .color(FG),
-                );
-                ui.add_space(S_XS * 0.5);
-                let facts = self.connection_facts();
-                if facts.is_empty() {
-                    ui.label(
-                        egui::RichText::new(crate::i18n::hdr_no_adapter())
-                            .size(T_BODY)
-                            .color(FG_DIM),
-                    );
-                } else {
-                    connection_row(ui, &facts);
-                }
-            });
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let left_w = (ui.available_width() - reserved).max(220.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(left_w, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.set_max_width(left_w);
+                    ui.label(
+                        egui::RichText::new(status.headline())
+                            .size(T_LEAD)
+                            .strong()
+                            .color(FG),
+                    );
+                    ui.add_space(S_XS * 0.5);
+                    let facts = self.connection_facts();
+                    if facts.is_empty() {
+                        ui.label(
+                            egui::RichText::new(crate::i18n::hdr_no_adapter())
+                                .size(T_BODY)
+                                .color(FG_DIM),
+                        );
+                    } else {
+                        connection_row(ui, &facts);
+                    }
+                },
+            );
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 if self.elevated {
                     ui.label(egui::RichText::new(crate::i18n::hdr_administrator()).size(T_META).color(GREEN));
                 } else {
@@ -670,16 +725,70 @@ fn connection_row(ui: &mut egui::Ui, facts: &[Fact]) {
                 );
             }
 
-            if !fact.label.is_empty() {
-                ui.label(egui::RichText::new(fact.label).size(T_MICRO).color(FG_DIM));
-            }
+            // One widget per fact, not two.
+            //
+            // A wrapping row breaks between widgets, so a label and its value
+            // drawn separately are two things the layout is free to put on
+            // different lines -- and it did, leaving "adapter" at the end of
+            // one line and "Wi-Fi" alone at the start of the next. Composing
+            // both runs into a single laid-out job makes the pair atomic:
+            // the row can wrap around it but never through it.
+            let mut job = egui::text::LayoutJob::default();
+            let gap = if fact.label.is_empty() {
+                0.0
+            } else {
+                append(&mut job, 0.0, fact.label, T_MICRO, FG_DIM, false);
+                // The gap goes in as the value's leading space rather than as
+                // a run containing a space character: a whitespace-only run
+                // between two runs of different fonts collapsed to nothing,
+                // and "karta" ran straight into "Wi-Fi".
+                S_XS
+            };
             // Monospaced, like every other measurement in the app: these
             // refresh as the link changes, and proportional digits make the
             // whole row shuffle sideways when one of them does.
-            let text = figure(&fact.value, T_META, fact.colour);
-            ui.label(if fact.label.is_empty() { text.strong() } else { text });
+            append(&mut job, gap, &fact.value, T_META, fact.colour, true);
+            ui.label(job);
         }
     });
+}
+
+/// Adds one run to a fact's layout job, in the app's own type scale.
+fn append(
+    job: &mut egui::text::LayoutJob,
+    leading_space: f32,
+    text: &str,
+    size: f32,
+    colour: egui::Color32,
+    monospace: bool,
+) {
+    let family = if monospace {
+        egui::FontFamily::Monospace
+    } else {
+        egui::FontFamily::Proportional
+    };
+    job.append(
+        text,
+        leading_space,
+        egui::TextFormat {
+            font_id: egui::FontId::new(size, family),
+            color: colour,
+            ..Default::default()
+        },
+    );
+}
+
+/// Below this width a row of things laid out side by side stops fitting and
+/// has to wrap or stack instead.
+///
+/// One number, shared, because a layout that breaks at a different width in
+/// each tab reads as a bug rather than as a design. It is measured against
+/// the width actually available for content, not the window, so a panel
+/// inside a panel gets the same treatment.
+pub const NARROW: f32 = 860.0;
+
+pub fn is_narrow(ui: &egui::Ui) -> bool {
+    ui.available_width() < NARROW
 }
 
 /// Small stat card used on the live and load-test tabs.

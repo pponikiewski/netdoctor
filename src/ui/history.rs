@@ -14,6 +14,7 @@ use crate::cause::{self, Cause, Confidence};
 use crate::diagnose::format_datetime;
 use crate::i18n;
 use crate::monitor::LeadSample;
+use crate::probe::eventlog::SysEvent;
 use crate::store::Event;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -161,7 +162,12 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
     // Changes applied in the hour before the outage: the correlation the app
     // has always had the data for and never drawn.
     let tweaks = app.store.tweaks_between(event.ts_start - 3600.0, event.ts_start);
-    let causes = cause::analyse(event, events, &tweaks);
+    request_log(app, event);
+    let log = match &app.syslog {
+        Some((id, events)) if *id == event.id => events.clone(),
+        _ => Vec::new(),
+    };
+    let causes = cause::analyse(event, events, &tweaks, &log);
 
     ui.label(egui::RichText::new(i18n::hist_cause_heading()).size(T_BODY).strong().color(FG_DIM));
     ui.add_space(S_XS);
@@ -190,19 +196,106 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
     }
 
     ui.add_space(S_MD);
+    system_log(app, ui, event, &log);
+
+    ui.add_space(S_MD);
     lead_up(app, ui, event);
 
     ui.add_space(S_MD);
-    ui.columns(2, |cols| {
-        state_block(&mut cols[0], i18n::hist_state_heading(), event.context_json());
-        let recovery = event.context_end_json();
-        if recovery.is_some() {
-            state_block(&mut cols[1], i18n::hist_recovery_heading(), recovery);
-        } else {
-            cols[1].label(
-                egui::RichText::new(i18n::hist_recovery_heading()).size(T_BODY).strong().color(FG_DIM),
+    // Failure state and recovery state are meant to be compared, so they sit
+    // side by side wherever the window allows it. Where it does not, one
+    // above the other still compares; two columns of truncated values does
+    // not.
+    let recovery = event.context_end_json();
+    let failed_on = |ui: &mut egui::Ui| {
+        state_block(ui, i18n::hist_state_heading(), event.context_json());
+    };
+    let came_back_into = |ui: &mut egui::Ui| match recovery.clone() {
+        Some(state) => state_block(ui, i18n::hist_recovery_heading(), Some(state)),
+        None => {
+            ui.label(
+                egui::RichText::new(i18n::hist_recovery_heading())
+                    .size(T_BODY)
+                    .strong()
+                    .color(FG_DIM),
             );
-            cols[1].label(egui::RichText::new(i18n::hist_no_recovery()).size(T_META).color(YELLOW));
+            ui.label(egui::RichText::new(i18n::hist_no_recovery()).size(T_META).color(YELLOW));
+        }
+    };
+
+    if super::is_narrow(ui) {
+        failed_on(ui);
+        ui.add_space(S_MD);
+        came_back_into(ui);
+    } else {
+        ui.columns(2, |cols| {
+            failed_on(&mut cols[0]);
+            came_back_into(&mut cols[1]);
+        });
+    }
+}
+
+/// How much of the log around an outage is worth reading. Two minutes before
+/// covers a suspend or a driver fault that preceded the first missed ping, and
+/// a minute after catches the line that explains the recovery.
+const LOG_BEFORE_S: f64 = 120.0;
+const LOG_AFTER_S: f64 = 60.0;
+
+/// Starts the event log read for a newly selected outage, at most once.
+///
+/// `wevtutil` is a process launch and a few hundred milliseconds, which is
+/// nothing once and unbearable sixty times a second, so the result is cached
+/// against the row id and a read already running is left alone.
+fn request_log(app: &mut App, event: &Event) {
+    let already = matches!(&app.syslog, Some((id, _)) if *id == event.id);
+    if already || app.syslog_pending == Some(event.id) {
+        return;
+    }
+
+    app.syslog_pending = Some(event.id);
+    let id = event.id;
+    let from = event.ts_start - LOG_BEFORE_S;
+    let to = event.ts_end.unwrap_or_else(crate::store::now) + LOG_AFTER_S;
+    let tx = app.tx.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(super::Job::SysLog(id, crate::probe::eventlog::window(from, to)));
+    });
+}
+
+/// The log lines themselves, under the verdicts they produced.
+///
+/// The causes above are this module's reading of these lines; showing the
+/// lines as well is what makes that reading checkable. Ordinary transitions
+/// stay in the list next to the faults, because "the machine woke here" is
+/// often the line that makes the rest make sense.
+fn system_log(app: &App, ui: &mut egui::Ui, event: &Event, log: &[SysEvent]) {
+    ui.label(egui::RichText::new(i18n::hist_log_heading()).size(T_BODY).strong().color(FG_DIM));
+
+    if app.syslog_pending == Some(event.id) {
+        ui.label(egui::RichText::new(i18n::hist_log_loading()).size(T_META).color(FG_DIM));
+        return;
+    }
+    if log.is_empty() {
+        ui.label(egui::RichText::new(i18n::hist_log_none()).size(T_META).color(FG_DIM));
+        return;
+    }
+
+    ui.add_space(S_XS);
+    egui::Grid::new("system_log").num_columns(4).spacing([14.0, 3.0]).show(ui, |ui| {
+        for e in log {
+            let colour = if e.kind.is_fault() { YELLOW } else { FG_DIM };
+            ui.label(figure(i18n::clock_offset(e.offset_from(event.ts_start)), T_META, FG_DIM));
+            ui.label(egui::RichText::new(i18n::log_kind(e.kind)).size(T_META).color(colour));
+            ui.label(
+                egui::RichText::new(format!("{} ({})", e.provider, e.id))
+                    .size(T_META)
+                    .monospace()
+                    .color(FG_DIM),
+            );
+            // The provider's own fields — the SSID it dropped, the reason it
+            // gave. This is the part a support call can be read from.
+            ui.label(egui::RichText::new(&e.detail).size(T_META).monospace().color(FG_DIM));
+            ui.end_row();
         }
     });
 }

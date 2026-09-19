@@ -1248,7 +1248,7 @@ fn local_utc_offset_secs() -> i64 {
 }
 
 /// Howard Hinnant's days-from-civil, inverted. Avoids a date dependency.
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
+pub fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);

@@ -96,6 +96,45 @@ pub fn build(app: &App) -> String {
         );
     }
 
+    // The hop table is the part of this report a provider cannot wave away,
+    // so it goes in ahead of the outage list: the outages say something broke,
+    // this says where.
+    let path = app.monitor.path();
+    if !path.hops.is_empty() {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "{}", i18n::rep_sec_path());
+        for h in &path.hops {
+            // A silent hop is reported as silent. Printing "100% loss" next
+            // to a router that simply does not answer echoes would be the
+            // most alarming line in a document meant to be trusted.
+            let measured = if h.silent {
+                i18n::path_no_answer().to_string()
+            } else {
+                format!(
+                    "{:>5.0}% loss  {}",
+                    h.loss_pct,
+                    h.avg_ms.map(|v| format!("{v:.0} ms")).unwrap_or_else(|| "-".into())
+                )
+            };
+            let _ = writeln!(
+                out,
+                "  {:>2}  {:<16} {:<20} {}",
+                h.ttl,
+                h.addr,
+                i18n::path_owner(h.owner),
+                measured
+            );
+        }
+        if let Some(b) = &path.blame {
+            let owner = i18n::path_owner(b.owner);
+            let line = match b.added_ms {
+                Some(added) => i18n::path_blame_delay(b.ttl, &b.addr.to_string(), added, owner),
+                None => i18n::path_blame_loss(b.ttl, &b.addr.to_string(), b.loss_pct, owner),
+            };
+            let _ = writeln!(out, "  -> {line}");
+        }
+    }
+
     let _ = writeln!(out);
     let _ = writeln!(out, "{}", i18n::rep_sec_outages());
     let events = app.store.events_since(24.0 * 3600.0);

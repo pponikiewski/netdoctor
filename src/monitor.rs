@@ -19,6 +19,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use crate::i18n;
 use crate::probe::icmp::{PingResult, Pinger};
 use crate::probe::netstate::{self, Medium, NetState};
+use crate::probe::path::{self, PathReading};
 use crate::settings::{Scope, Settings, DNS_TEST_HOST};
 use crate::store::{self, Store};
 
@@ -314,10 +315,16 @@ fn context_json(snap: &Snapshot, lead: &VecDeque<LeadSample>, roamed_recently: b
 }
 
 pub struct Shared {
-    pub history: Mutex<HashMap<String, Series>>,
     pub last: Mutex<Snapshot>,
     pub paused: AtomicBool,
     pub settings: Mutex<Settings>,
+    /// The per-hop picture, maintained by its own thread — see
+    /// [`crate::probe::path`] and `run_path`.
+    pub path: Mutex<PathReading>,
+    /// The current default gateway, published for the path thread. It is read
+    /// on the sweep cadence and changes when the machine moves between
+    /// networks, which is exactly when the path has to be walked again.
+    pub gateway: Mutex<Option<Ipv4Addr>>,
 }
 
 pub struct Monitor {
@@ -325,15 +332,17 @@ pub struct Monitor {
     pub rx: Receiver<Snapshot>,
     stop: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
+    path_handle: Option<thread::JoinHandle<()>>,
 }
 
 impl Monitor {
     pub fn start(store: Arc<Store>, settings: Settings) -> Monitor {
         let shared = Arc::new(Shared {
-            history: Mutex::new(HashMap::new()),
             last: Mutex::new(Snapshot::default()),
             paused: AtomicBool::new(false),
             settings: Mutex::new(settings),
+            path: Mutex::new(PathReading::default()),
+            gateway: Mutex::new(None),
         });
         let stop = Arc::new(AtomicBool::new(false));
         // Bounded so a stalled UI cannot grow the queue without limit; the
@@ -349,7 +358,20 @@ impl Monitor {
                 .expect("spawn monitor thread")
         };
 
-        Monitor { shared, rx, stop, handle: Some(handle) }
+        // The path lives on its own thread rather than inside the sweep. A
+        // walk is a dozen sequential probes and a hop that never answers
+        // costs a full timeout, so folding it into the sweep would stall the
+        // one measurement that has to keep its cadence to mean anything.
+        let path_handle = {
+            let shared = Arc::clone(&shared);
+            let stop = Arc::clone(&stop);
+            thread::Builder::new()
+                .name("netdoctor-path".into())
+                .spawn(move || run_path(shared, stop))
+                .expect("spawn path thread")
+        };
+
+        Monitor { shared, rx, stop, handle: Some(handle), path_handle: Some(path_handle) }
     }
 
     pub fn set_paused(&self, paused: bool) {
@@ -362,27 +384,11 @@ impl Monitor {
 
     pub fn update_settings(&self, s: Settings) {
         *self.shared.settings.lock().unwrap() = s;
-        // Targets may have gone away; drop series that no longer exist.
-        let keep: Vec<String> = self
-            .shared
-            .settings
-            .lock()
-            .unwrap()
-            .targets()
-            .iter()
-            .map(|t| t.key.clone())
-            .collect();
-        self.shared.history.lock().unwrap().retain(|k, _| keep.contains(k));
     }
 
-    pub fn series(&self, key: &str) -> Series {
-        self.shared
-            .history
-            .lock()
-            .unwrap()
-            .get(key)
-            .cloned()
-            .unwrap_or_default()
+    /// The per-hop table and its verdict, as the path thread last left them.
+    pub fn path(&self) -> PathReading {
+        self.shared.path.lock().unwrap().clone()
     }
 
 }
@@ -390,7 +396,7 @@ impl Monitor {
 impl Drop for Monitor {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.handle.take() {
+        for h in [self.handle.take(), self.path_handle.take()].into_iter().flatten() {
             let _ = h.join();
         }
     }
@@ -423,6 +429,73 @@ fn resolve_targets(settings: &Settings, net: &NetState) -> Vec<Resolved> {
         }
     }
     out
+}
+
+/// Where the path is walked to. The same anchor the diagnostic scan uses, so
+/// the two never disagree about which route was measured.
+const PATH_ANCHOR: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
+
+/// How often the path is walked again. Routes change, but not every minute,
+/// and a walk costs a dozen probes.
+const PATH_REFRESH_S: f64 = 300.0;
+
+/// Seconds between per-hop probes. Slower than the sweep on purpose: this
+/// measurement is about where a fault sits, not about catching the instant it
+/// starts, and a dozen extra pings a second is traffic a router may start
+/// rate-limiting — which would show up as loss the path module then has to
+/// explain away.
+const HOP_INTERVAL_S: u64 = 5;
+
+/// Keeps the per-hop picture current, independently of the sweep.
+///
+/// Walking the path and probing its hops are both slow and both bursty. Run
+/// inside the sweep they would drag the interval around; run here they cost
+/// the sweep nothing and the hop figures simply lag a few seconds behind,
+/// which is what they measure anyway.
+fn run_path(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
+    let Ok(pinger) = Pinger::new() else {
+        return;
+    };
+    let mut tracker = path::Tracker::default();
+    let mut last_gateway: Option<Ipv4Addr> = None;
+
+    while !stop.load(Ordering::Relaxed) {
+        if shared.paused.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(200));
+            continue;
+        }
+
+        let timeout = shared.settings.lock().unwrap().ping_timeout_ms;
+        let gateway = *shared.gateway.lock().unwrap();
+        let now = store::now();
+
+        // A new gateway means a different network, and every hop behind it
+        // belongs to the old one. Keeping the old path would report a route
+        // this machine is no longer on.
+        let moved = gateway != last_gateway;
+        if moved || tracker.path_age(now) > PATH_REFRESH_S {
+            last_gateway = gateway;
+            let walked = path::discover(PATH_ANCHOR, gateway, timeout);
+            if moved || !walked.hops.is_empty() {
+                tracker.set_path(walked);
+            }
+        }
+
+        if !tracker.is_empty() {
+            tracker.probe(&pinger, timeout);
+            *shared.path.lock().unwrap() = tracker.reading();
+        } else {
+            *shared.path.lock().unwrap() = PathReading::default();
+        }
+
+        // Sleep in slices so stopping the app does not wait out the interval.
+        for _ in 0..HOP_INTERVAL_S * 5 {
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+    }
 }
 
 fn run_loop(
@@ -466,6 +539,7 @@ fn run_loop(
                 net = fresh;
             }
             next_state_refresh = Instant::now() + Duration::from_secs(5);
+            *shared.gateway.lock().unwrap() = net.gateway;
         }
 
         if sweep % 10 == 0 {
@@ -493,20 +567,12 @@ fn run_loop(
             results.insert(t.key.clone(), sample);
         }
 
-        {
-            let mut hist = shared.history.lock().unwrap();
-            for t in &targets {
-                let entry = hist.entry(t.key.clone()).or_default();
-                let rtt = results.get(&t.key).and_then(|s| s.rtt_ms);
-                entry.push((ts, rtt));
-                let limit = settings.history_points.max(30);
-                if entry.len() > limit {
-                    let excess = entry.len() - limit;
-                    entry.drain(0..excess);
-                }
-            }
-        }
-
+        // Straight to the database. The sweep used to also keep a ring of
+        // recent points per target for the chart to read; the chart now asks
+        // the database for whatever window it is showing, which is the only
+        // way a window longer than the ring -- or one that predates this
+        // process -- can be drawn at all. Two copies of the same samples,
+        // one of them capped at an arbitrary count, was one too many.
         let _ = store.add_samples(&rows);
 
         let roamed = !net.bssid.is_empty() && !last_bssid.is_empty() && net.bssid != last_bssid;

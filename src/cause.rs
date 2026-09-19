@@ -18,6 +18,7 @@
 
 use crate::i18n;
 use crate::monitor::LeadSample;
+use crate::probe::eventlog::{Kind, SysEvent};
 use crate::store::{Event, TweakLogRow};
 
 /// How much the evidence supports the cause. This is about the strength of the
@@ -176,8 +177,14 @@ impl Evidence {
 const TWEAK_SUSPECT_WINDOW_S: f64 = 20.0 * 60.0;
 
 /// Reads an outage. `history` is other outages for recurrence, `tweaks` are
-/// changes applied shortly before this one.
-pub fn analyse(event: &Event, history: &[Event], tweaks: &[TweakLogRow]) -> Vec<Cause> {
+/// changes applied shortly before this one, and `log` is what Windows itself
+/// wrote down around it — see [`crate::probe::eventlog`].
+pub fn analyse(
+    event: &Event,
+    history: &[Event],
+    tweaks: &[TweakLogRow],
+    log: &[SysEvent],
+) -> Vec<Cause> {
     let mut out = Vec::new();
 
     // A change applied minutes earlier outranks every signal reading: if the
@@ -197,10 +204,18 @@ pub fn analyse(event: &Event, history: &[Event], tweaks: &[TweakLogRow]) -> Vec<
         out.push(cause);
     }
 
+    // What the OS recorded outranks what the probes inferred, so it is read
+    // before any of the signal rules — and before the evidence check below,
+    // because a row too old to carry a context can still be explained by the
+    // log, which was written by someone else and is still there.
+    log_rules(event, log, &mut out);
+
     let Some(ev) = Evidence::from_event(event) else {
-        // Rows written before the app read its own context back, or a failed
-        // serialisation. Saying so is more useful than guessing.
-        out.push(Cause::new("no_evidence", Confidence::Possible, i18n::ev_none()));
+        if out.is_empty() {
+            // Rows written before the app read its own context back, or a
+            // failed serialisation. Saying so is more useful than guessing.
+            out.push(Cause::new("no_evidence", Confidence::Possible, i18n::ev_none()));
+        }
         return out;
     };
 
@@ -229,6 +244,123 @@ pub fn analyse(event: &Event, history: &[Event], tweaks: &[TweakLogRow]) -> Vec<
     // runs from most specific to most general.
     out.sort_by_key(|c| std::cmp::Reverse(c.confidence));
     out
+}
+
+/// How far before an outage a suspend still explains it. A machine that went
+/// to sleep does not have a network problem, and three minutes is long enough
+/// to cover the gap between the last sweep and the log line.
+const SLEEP_WINDOW_S: f64 = 180.0;
+
+/// Verdicts read straight out of the Windows event log.
+///
+/// Everything else in this module argues from a latency series. These do not
+/// argue: the operating system recorded the event, named it, and in the
+/// wireless case wrote down the 802.11 reason code for it. That is why they
+/// come back `Certain` where the mapping is unambiguous, and why they are
+/// produced before the inference rules rather than alongside them.
+fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
+    let t0 = event.ts_start;
+    let at = |e: &SysEvent| i18n::clock_offset(e.offset_from(t0));
+
+    if let Some(e) = log
+        .iter()
+        .find(|e| e.kind == Kind::Sleep && (-SLEEP_WINDOW_S..=5.0).contains(&e.offset_from(t0)))
+    {
+        out.push(Cause::new("log_sleep", Confidence::Certain, i18n::ev_log_sleep(&at(e))));
+    } else if let Some(e) = log
+        .iter()
+        .find(|e| e.kind == Kind::Resume && (-30.0..=90.0).contains(&e.offset_from(t0)))
+    {
+        // Waking is not sleeping: the radio has to re-associate and the DHCP
+        // lease has to be confirmed, and an outage that fills exactly that gap
+        // is the resume sequence, not a fault in it.
+        out.push(Cause::new("log_resume", Confidence::Likely, i18n::ev_log_resume(&at(e))));
+    }
+
+    if let Some(e) = log.iter().find(|e| e.kind == Kind::DriverFault) {
+        out.push(
+            Cause::new(
+                "log_driver_fault",
+                Confidence::Certain,
+                i18n::ev_log_driver(&e.provider, e.id, &at(e)),
+            )
+            .with_fix("stack_reset"),
+        );
+    }
+
+    if let Some(e) = log.iter().find(|e| e.kind == Kind::WlanDisconnect) {
+        out.push(wlan_disconnect_cause(e, &at(e)));
+    } else if let Some(e) = log.iter().find(|e| e.kind == Kind::WlanAuthFail) {
+        out.push(Cause::new(
+            "log_wlan_auth",
+            Confidence::Certain,
+            i18n::ev_log_wlan_auth(e.id, &at(e)),
+        ));
+    }
+
+    if let Some(e) = log.iter().find(|e| e.kind == Kind::DhcpFail) {
+        out.push(Cause::new("log_dhcp", Confidence::Certain, i18n::ev_log_dhcp(&at(e))));
+    }
+
+    if let Some(e) = log.iter().find(|e| e.kind == Kind::DuplicateIp) {
+        out.push(Cause::new(
+            "log_duplicate_ip",
+            Confidence::Certain,
+            i18n::ev_log_duplicate_ip(&at(e)),
+        ));
+    }
+
+    // The interface going down is only news when nothing more specific
+    // already said why it did.
+    if out.is_empty() {
+        if let Some(e) = log.iter().find(|e| e.kind == Kind::LinkDown) {
+            out.push(Cause::new(
+                "log_link_down",
+                Confidence::Likely,
+                i18n::ev_log_link_down(&at(e)),
+            ));
+        }
+    }
+
+    // A quiet log during a WAN outage is evidence too, and it is the evidence
+    // a provider argues against hardest: nothing on this machine went wrong.
+    // It is only worth saying when the log had something to say at all —
+    // "empty" and "unavailable" look identical from here.
+    if event.scope == "isp" && !log.is_empty() && !log.iter().any(|e| e.kind.is_fault()) {
+        out.push(Cause::new("log_clean_isp", Confidence::Likely, i18n::ev_log_clean(log.len())));
+    }
+}
+
+/// 802.11 reason codes worth naming. The rest are shown as their number: an
+/// honest "reason 71" beats a confident wrong sentence, and the number is what
+/// a support line will ask for anyway.
+fn wlan_disconnect_cause(e: &SysEvent, at: &str) -> Cause {
+    match e.reason {
+        // Disassociated due to inactivity. The access point stopped hearing
+        // from a card that Windows had quietly powered down, which is the
+        // single most common cause of "it drops when I leave it alone".
+        Some(4) => Cause::new(
+            "log_wlan_inactivity",
+            Confidence::Certain,
+            i18n::ev_log_wlan_reason(4, at),
+        )
+        .with_fix("adapter_power"),
+        // Handshake and key failures: the credentials or the key rotation,
+        // not the radio.
+        Some(r @ (2 | 15 | 23)) => {
+            Cause::new("log_wlan_auth", Confidence::Certain, i18n::ev_log_wlan_reason(r, at))
+        }
+        // The access point turned us away rather than losing us.
+        Some(r @ (5 | 6 | 7)) => Cause::new(
+            "log_wlan_ap_rejected",
+            Confidence::Certain,
+            i18n::ev_log_wlan_reason(r, at),
+        ),
+        Some(r) => {
+            Cause::new("log_wlan_deauth", Confidence::Likely, i18n::ev_log_wlan_reason(r, at))
+        }
+        None => Cause::new("log_wlan_deauth", Confidence::Likely, i18n::ev_log_wlan_plain(at)),
+    }
 }
 
 fn adapter_rules(ev: &Evidence, out: &mut Vec<Cause>) {
@@ -444,7 +576,7 @@ mod tests {
                 (4.0, -71, true), (5.0, -78, true), (6.0, -83, true),
             ]),
         });
-        let causes = analyse(&event("lan", ctx, 40.0), &[], &[]);
+        let causes = analyse(&event("lan", ctx, 40.0), &[], &[], &[]);
         assert_eq!(causes[0].code, "signal_fade");
         assert_eq!(causes[0].confidence, Confidence::Certain);
         assert!(!causes.iter().any(|c| c.code == "router_side"));
@@ -459,7 +591,7 @@ mod tests {
                 (4.0, -49, true), (5.0, -48, true), (6.0, -48, true),
             ]),
         });
-        let causes = analyse(&event("lan", ctx, 30.0), &[], &[]);
+        let causes = analyse(&event("lan", ctx, 30.0), &[], &[], &[]);
         assert!(causes.iter().any(|c| c.code == "router_side"));
         assert!(!causes.iter().any(|c| c.code == "signal_fade"));
     }
@@ -473,7 +605,7 @@ mod tests {
                 (4.0, -50, true), (5.0, -52, true), (6.0, -50, true),
             ]),
         });
-        let causes = analyse(&event("lan", ctx, 30.0), &[], &[]);
+        let causes = analyse(&event("lan", ctx, 30.0), &[], &[], &[]);
         assert!(causes.iter().any(|c| c.code == "airtime_24ghz"));
     }
 
@@ -486,7 +618,7 @@ mod tests {
                 (4.0, -53, true), (5.0, -52, false), (6.0, -52, false),
             ]),
         });
-        let causes = analyse(&event("adapter", ctx, 90.0), &[], &[]);
+        let causes = analyse(&event("adapter", ctx, 90.0), &[], &[], &[]);
         let power = causes.iter().find(|c| c.code == "adapter_powered_down").unwrap();
         assert_eq!(power.fix_tweak, Some("adapter_power"));
     }
@@ -506,12 +638,12 @@ mod tests {
             action: "apply".into(),
             result: "ok".into(),
         }];
-        let causes = analyse(&event("lan", ctx.clone(), 40.0), &[], &tweaks);
+        let causes = analyse(&event("lan", ctx.clone(), 40.0), &[], &tweaks, &[]);
         let tweak = causes.iter().find(|c| c.code == "after_tweak").unwrap();
         assert_eq!(tweak.fix_tweak, Some("mtu"));
         // A change from an hour earlier is no longer a suspect.
         let stale = vec![TweakLogRow { ts: 1_000.0 - 3_600.0, ..tweaks[0].clone() }];
-        assert!(!analyse(&event("lan", ctx.clone(), 40.0), &[], &stale)
+        assert!(!analyse(&event("lan", ctx.clone(), 40.0), &[], &stale, &[])
             .iter()
             .any(|c| c.code == "after_tweak"));
     }
@@ -519,7 +651,7 @@ mod tests {
     #[test]
     fn dns_served_only_by_the_router_gets_the_resolver_fix() {
         let ctx = serde_json::json!({ "dns_is_router_only": true, "dns_error": "timeout" });
-        let causes = analyse(&event("dns", ctx, 15.0), &[], &[]);
+        let causes = analyse(&event("dns", ctx, 15.0), &[], &[], &[]);
         assert_eq!(causes[0].code, "dns_router_only");
         assert_eq!(causes[0].fix_tweak, Some("fast_dns"));
     }
@@ -528,7 +660,7 @@ mod tests {
     fn an_old_row_without_context_says_so_instead_of_guessing() {
         let mut e = event("lan", serde_json::json!({}), 20.0);
         e.context = String::new();
-        let causes = analyse(&e, &[], &[]);
+        let causes = analyse(&e, &[], &[], &[]);
         assert_eq!(causes.len(), 1);
         assert_eq!(causes[0].code, "no_evidence");
     }
@@ -542,7 +674,7 @@ mod tests {
             "adapter": "WiFi", "ssid": "home", "bssid": "c8:7f:54:b0:15:44",
             "channel": 108, "rssi_dbm": -61, "signal_pct": 78,
         });
-        let causes = analyse(&event("internet", ctx, 94.0), &[], &[]);
+        let causes = analyse(&event("internet", ctx, 94.0), &[], &[], &[]);
         assert_eq!(causes.len(), 1);
         assert_eq!(causes[0].code, "no_evidence");
     }
@@ -556,7 +688,7 @@ mod tests {
                 e
             })
             .collect();
-        let causes = analyse(&hist[0], &hist, &[]);
+        let causes = analyse(&hist[0], &hist, &[], &[]);
         assert!(causes.iter().any(|c| c.code == "isp_pattern"));
         assert!(causes.iter().any(|c| c.code == "time_pattern"));
     }
@@ -571,7 +703,134 @@ mod tests {
                 (4.0, -50, true), (5.0, -51, true), (6.0, -50, true),
             ]),
         });
-        let causes = analyse(&event("lan", ctx, 30.0), &[], &[]);
+        let causes = analyse(&event("lan", ctx, 30.0), &[], &[], &[]);
         assert!(!causes.iter().any(|c| c.code == "signal_fade"));
+    }
+
+    // -----------------------------------------------------------------------
+    // what the OS wrote down
+    // -----------------------------------------------------------------------
+
+    /// A log line at `offset` seconds from the start of the test outage.
+    fn log(kind: Kind, offset: f64, reason: Option<u32>) -> SysEvent {
+        SysEvent {
+            ts: 1_000.0 + offset,
+            provider: "Microsoft-Windows-WLAN-AutoConfig".into(),
+            id: 8003,
+            kind,
+            reason,
+            detail: String::new(),
+        }
+    }
+
+    fn wifi_ctx() -> serde_json::Value {
+        serde_json::json!({
+            "medium": "Wi-Fi", "rssi_dbm": -48, "channel": 44, "up": true,
+            "lead_up": lead(&[
+                (1.0, -47, true), (2.0, -48, true), (3.0, -47, true),
+                (4.0, -49, true), (5.0, -48, true), (6.0, -48, true),
+            ]),
+        })
+    }
+
+    #[test]
+    fn a_logged_inactivity_deauth_beats_every_inferred_verdict() {
+        // Without the log this is the "steady strong signal, blame the router"
+        // case. The log says the access point dropped an idle card, which is a
+        // different fault with a different fix.
+        let entries = [log(Kind::WlanDisconnect, -2.0, Some(4))];
+        let causes = analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &entries);
+
+        assert_eq!(causes[0].code, "log_wlan_inactivity");
+        assert_eq!(causes[0].confidence, Confidence::Certain);
+        assert_eq!(causes[0].fix_tweak, Some("adapter_power"));
+        assert!(
+            causes[0].evidence.contains('4'),
+            "the reason code belongs in the evidence: {}",
+            causes[0].evidence
+        );
+    }
+
+    #[test]
+    fn an_unnamed_reason_code_is_reported_rather_than_invented() {
+        let entries = [log(Kind::WlanDisconnect, -1.0, Some(71))];
+        let causes = analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &entries);
+        let c = causes.iter().find(|c| c.code == "log_wlan_deauth").expect("still a verdict");
+        assert_eq!(c.confidence, Confidence::Likely, "an unmapped code is weaker evidence");
+        assert!(c.evidence.contains("71"));
+    }
+
+    #[test]
+    fn a_suspend_explains_the_outage_and_a_wake_does_not_pretend_to() {
+        let slept = [log(Kind::Sleep, -12.0, None)];
+        let causes = analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &slept);
+        assert_eq!(causes[0].code, "log_sleep");
+
+        // A sleep from an hour earlier is not this outage's explanation.
+        let stale = [log(Kind::Sleep, -3_600.0, None)];
+        assert!(!analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &stale)
+            .iter()
+            .any(|c| c.code == "log_sleep"));
+    }
+
+    #[test]
+    fn a_driver_fault_routes_to_the_stack_reset() {
+        let mut e = log(Kind::DriverFault, -3.0, None);
+        e.provider = "Netwtw10".into();
+        e.id = 5002;
+        let causes = analyse(&event("adapter", wifi_ctx(), 30.0), &[], &[], &[e]);
+
+        let c = causes.iter().find(|c| c.code == "log_driver_fault").unwrap();
+        assert_eq!(c.fix_tweak, Some("stack_reset"));
+        assert!(c.evidence.contains("Netwtw10") && c.evidence.contains("5002"));
+    }
+
+    #[test]
+    fn an_interface_drop_only_speaks_when_nothing_more_specific_did() {
+        let bare = [log(Kind::LinkDown, 0.0, None)];
+        assert!(analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &bare)
+            .iter()
+            .any(|c| c.code == "log_link_down"));
+
+        // Next to a disconnect that names its reason, "the interface went
+        // down" is a restatement, not a second finding.
+        let both = [log(Kind::WlanDisconnect, -1.0, Some(4)), log(Kind::LinkDown, 0.0, None)];
+        assert!(!analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &both)
+            .iter()
+            .any(|c| c.code == "log_link_down"));
+    }
+
+    #[test]
+    fn a_quiet_log_during_a_wan_outage_is_itself_the_finding() {
+        let quiet = [log(Kind::Resume, -900.0, None), log(Kind::WlanConnect, -890.0, None)];
+        let causes = analyse(&event("isp", wifi_ctx(), 300.0), &[], &[], &quiet);
+        assert!(causes.iter().any(|c| c.code == "log_clean_isp"));
+
+        // The same silence during a local outage proves nothing, and claiming
+        // it would hand the user an argument they cannot win.
+        assert!(!analyse(&event("lan", wifi_ctx(), 300.0), &[], &[], &quiet)
+            .iter()
+            .any(|c| c.code == "log_clean_isp"));
+
+        // Nor does it hold once the log names a fault here.
+        let faulty = [log(Kind::DhcpFail, -5.0, None)];
+        assert!(!analyse(&event("isp", wifi_ctx(), 300.0), &[], &[], &faulty)
+            .iter()
+            .any(|c| c.code == "log_clean_isp"));
+    }
+
+    #[test]
+    fn an_entry_with_no_stored_context_can_still_be_explained_by_the_log() {
+        // The row predates the app storing a context, so every inference rule
+        // is blind. The log was written by someone else and is still there.
+        let mut e = event("lan", serde_json::json!(null), 30.0);
+        e.context = String::new();
+        let causes = analyse(&e, &[], &[], &[log(Kind::DhcpFail, -4.0, None)]);
+
+        assert_eq!(causes[0].code, "log_dhcp");
+        assert!(
+            !causes.iter().any(|c| c.code == "no_evidence"),
+            "there was evidence; it just did not come from this app"
+        );
     }
 }

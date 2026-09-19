@@ -42,7 +42,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(S_MD);
 
     let r = app.bloat.clone();
-    ui.horizontal(|ui| {
+    // Wrapped for the same reason as the Live tab's row: a clipped card is a
+    // measurement the user waited through a load test for and cannot see.
+    ui.horizontal_wrapped(|ui| {
         match r.idle_avg {
             Some(v) => stat_card(ui, i18n::bloat_card_idle(), &format!("{v:.0} ms"), "", FG),
             None => stat_card(ui, i18n::bloat_card_idle(), "—", "", FG_DIM),

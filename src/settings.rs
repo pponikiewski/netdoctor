@@ -37,7 +37,6 @@ pub struct Settings {
     pub probe_interval_ms: u64,
     pub ping_timeout_ms: u32,
     pub outage_after_fails: u32,
-    pub history_points: usize,
     pub extra_targets: Vec<String>,
 
     pub ping_good_ms: f64,
@@ -63,7 +62,6 @@ impl Default for Settings {
             probe_interval_ms: 1000,
             ping_timeout_ms: 1000,
             outage_after_fails: 3,
-            history_points: 300,
             extra_targets: Vec::new(),
 
             ping_good_ms: 30.0,

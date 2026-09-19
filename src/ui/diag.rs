@@ -78,8 +78,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let findings = &app.findings;
     let selected_finding = app.selected_finding;
 
-    ui.columns(2, |cols| {
-        egui::ScrollArea::vertical().id_salt("findings").show(&mut cols[0], |ui| {
+    // A list beside its detail pane when there is room, one above the other
+    // when there is not. Half of a narrow window is not enough for either:
+    // the findings wrap onto three lines each and the explanation beside them
+    // becomes a column of single words.
+    let narrow = super::is_narrow(ui);
+    let mut list = |ui: &mut egui::Ui| {
+        egui::ScrollArea::vertical().id_salt("findings").show(ui, |ui| {
             let mut row = |ui: &mut egui::Ui, i: usize, f: &crate::diagnose::Finding| {
                 let hit = ui
                     .push_id(&f.key, |ui| {
@@ -123,14 +128,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 });
             }
         });
+    };
 
-        let detail_col = &mut cols[1];
+    let mut detail = |ui: &mut egui::Ui| {
         egui::Frame::none()
             .fill(super::BG2)
             .rounding(6.0)
             .inner_margin(egui::Margin::same(S_MD))
-            .show(detail_col, |ui| {
-                ui.set_min_height(240.0);
+            .show(ui, |ui| {
+                ui.set_min_height(if narrow { 160.0 } else { 240.0 });
                 match selected_finding.and_then(|i| findings.get(i)) {
                     None => {
                         ui.label(
@@ -161,7 +167,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             });
-    });
+    };
+
+    if narrow {
+        list(ui);
+        ui.add_space(S_MD);
+        detail(ui);
+    } else {
+        ui.columns(2, |cols| {
+            list(&mut cols[0]);
+            detail(&mut cols[1]);
+        });
+    }
 
     if let Some(i) = picked {
         app.selected_finding = Some(i);
