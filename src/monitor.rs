@@ -7,7 +7,7 @@
 //! asleep or the ISP went down, and the two are fixed in completely different
 //! ways.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -68,6 +68,41 @@ impl Status {
 
 }
 
+/// Severity order among scopes, used only to break ties. A dropped adapter is
+/// a more specific and more actionable claim than "quality was poor", so when
+/// two scopes occur equally often the stronger claim is the one worth naming.
+pub fn scope_rank(scope: &str) -> u8 {
+    match scope {
+        "adapter" => 4,
+        "lan" => 3,
+        "isp" => 2,
+        "dns" => 1,
+        _ => 0,
+    }
+}
+
+/// The scope to name when summarising several outages: the most frequent, and
+/// on a tie the more severe.
+///
+/// The tie-break is not cosmetic. Counting into a `HashMap` and taking the
+/// maximum leaves the winner of a tie down to iteration order, which is seeded
+/// per map — so a summary rebuilt every frame picked a different scope every
+/// frame and the headline visibly flickered between two verdicts. Ordering has
+/// to be total, not merely "usually stable".
+pub fn dominant_scope<'a, I>(scopes: I) -> Option<&'a str>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for s in scopes {
+        *counts.entry(s).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(scope, n)| (*n, scope_rank(scope), *scope))
+        .map(|(scope, _)| scope)
+}
+
 #[derive(Debug, Clone)]
 pub struct Sample {
     pub ok: bool,
@@ -104,6 +139,100 @@ impl Default for Snapshot {
 
 /// Ring buffer of (timestamp, rtt) per target, for the live chart.
 pub type Series = Vec<(f64, Option<f64>)>;
+
+/// How many sweeps of lead-up are kept for the next outage. At the default one
+/// sweep per second this is three minutes, which is long enough to show a
+/// signal sliding away or a roam to another access point, and short enough
+/// that the JSON stays a few kilobytes.
+const LEAD_SWEEPS: usize = 180;
+
+/// One sweep, reduced to the fields that explain a later failure. Kept
+/// deliberately narrow: this is written into every outage row, so it has to
+/// stay cheap to store and cheap to read back.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct LeadSample {
+    pub ts: f64,
+    pub status: String,
+    pub up: bool,
+    pub bssid: String,
+    pub signal_pct: Option<u32>,
+    pub rssi_dbm: Option<i32>,
+    pub channel: Option<u32>,
+    pub rx_mbps: Option<u32>,
+    pub gateway_ms: Option<f64>,
+    pub internet_ms: Option<f64>,
+    pub internet_ok: bool,
+}
+
+/// Best available internet round-trip for a sweep: the fastest target that is
+/// not the router, so one slow endpoint does not look like an outage.
+fn internet_rtt(results: &HashMap<String, Sample>) -> (Option<f64>, bool) {
+    let mut best: Option<f64> = None;
+    let mut any_ok = false;
+    for (key, s) in results {
+        if key == "gateway" {
+            continue;
+        }
+        if s.ok {
+            any_ok = true;
+            if let Some(rtt) = s.rtt_ms {
+                best = Some(best.map_or(rtt, |b: f64| b.min(rtt)));
+            }
+        }
+    }
+    (best, any_ok)
+}
+
+fn lead_sample(snap: &Snapshot) -> LeadSample {
+    let (internet_ms, internet_ok) = internet_rtt(&snap.results);
+    LeadSample {
+        ts: snap.ts,
+        status: snap.status.key().to_string(),
+        up: snap.net.up,
+        bssid: snap.net.bssid.clone(),
+        signal_pct: snap.net.signal_pct,
+        rssi_dbm: snap.net.rssi_dbm,
+        channel: snap.net.channel,
+        rx_mbps: snap.net.rx_mbps,
+        gateway_ms: snap.results.get("gateway").and_then(|s| s.rtt_ms),
+        internet_ms,
+        internet_ok,
+    }
+}
+
+/// The evidence written into an outage row. `lead_up` is the part that was
+/// missing: a single snapshot says what the connection looked like once it had
+/// already broken, which is rarely the thing that broke it.
+fn context_json(snap: &Snapshot, lead: &VecDeque<LeadSample>, roamed_recently: bool) -> String {
+    let net = &snap.net;
+    serde_json::json!({
+        "adapter": net.adapter_name,
+        "adapter_desc": net.adapter_desc,
+        "medium": net.medium.label(),
+        "up": net.up,
+        "ssid": net.ssid,
+        "bssid": net.bssid,
+        "security": net.security,
+        "signal_pct": net.signal_pct,
+        "rssi_dbm": net.rssi_dbm,
+        "channel": net.channel,
+        "band": net.band(),
+        "phy": net.phy,
+        "rx_mbps": net.rx_mbps,
+        "tx_mbps": net.tx_mbps,
+        "link_speed_mbps": net.link_speed_mbps,
+        "local_ip": net.local_ip.map(|i| i.to_string()),
+        "gateway": net.gateway.map(|g| g.to_string()),
+        "dns": net.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>(),
+        "dns_is_router_only": net.dns_is_router_only(),
+        "dns_ms": snap.dns_ms,
+        "dns_error": snap.dns_error,
+        "roamed": roamed_recently,
+        "lead_up": lead.iter().collect::<Vec<_>>(),
+    })
+    .to_string()
+}
 
 pub struct Shared {
     pub history: Mutex<HashMap<String, Series>>,
@@ -235,6 +364,8 @@ fn run_loop(
 
     let mut fail_streak: u32 = 0;
     let mut open_event: Option<i64> = None;
+    let mut lead: VecDeque<LeadSample> = VecDeque::with_capacity(LEAD_SWEEPS);
+    let mut last_roam_ts: Option<f64> = None;
 
     let mut dns_ms: Option<f64> = None;
     let mut dns_error = String::new();
@@ -303,6 +434,9 @@ fn run_loop(
         if !net.bssid.is_empty() {
             last_bssid = net.bssid.clone();
         }
+        if roamed {
+            last_roam_ts = Some(ts);
+        }
 
         let (status, note) = classify(&results, &targets, &net, &dns_error, &settings, &store);
 
@@ -317,6 +451,13 @@ fn run_loop(
             roamed,
         };
 
+        // The lead-up is recorded on every sweep, good ones included: by the
+        // time an outage is confirmed the interesting sweeps are already past.
+        lead.push_back(lead_sample(&snap));
+        while lead.len() > LEAD_SWEEPS {
+            lead.pop_front();
+        }
+
         // Event bookkeeping: only open after a few consecutive bad sweeps so a
         // single dropped packet does not fill the log with noise.
         let bad = status != Status::Ok;
@@ -326,27 +467,21 @@ fn run_loop(
             fail_streak = 0;
         }
 
+        // A roam counts as "recent" for a minute either way; the disconnect it
+        // causes usually lands a few sweeps after the BSSID actually changes.
+        let roamed_recently = last_roam_ts.is_some_and(|t| ts - t <= 60.0);
+
         if bad && fail_streak >= settings.outage_after_fails && open_event.is_none() {
-            let context = serde_json::json!({
-                "adapter": net.adapter_name,
-                "medium": net.medium.label(),
-                "ssid": net.ssid,
-                "bssid": net.bssid,
-                "signal_pct": net.signal_pct,
-                "rssi_dbm": net.rssi_dbm,
-                "channel": net.channel,
-                "phy": net.phy,
-                "rx_mbps": net.rx_mbps,
-                "gateway": net.gateway.map(|g| g.to_string()),
-                "dns": net.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>(),
-            })
-            .to_string();
+            let context = context_json(&snap, &lead, roamed_recently);
             open_event = store
                 .open_event(status.key(), status.scope(), &snap.note, &context)
                 .ok();
         } else if !bad {
             if let Some(id) = open_event.take() {
-                let _ = store.close_event(id);
+                // An empty lead-up: what matters at recovery is the state the
+                // connection came back into, not another copy of the history.
+                let end = context_json(&snap, &VecDeque::new(), roamed_recently);
+                let _ = store.close_event(id, &end);
             }
         }
 
@@ -372,8 +507,10 @@ fn run_loop(
         }
     }
 
+    // Shutting down while an outage is open: close it, but say nothing about a
+    // recovery that never happened.
     if let Some(id) = open_event {
-        let _ = store.close_event(id);
+        let _ = store.close_event(id, "");
     }
 }
 
@@ -601,5 +738,41 @@ mod tests {
         let keys: Vec<String> =
             resolve_targets(&Settings::default(), &net).iter().map(|t| t.key.clone()).collect();
         assert!(keys.contains(&"dns_isp".to_string()));
+    }
+
+    #[test]
+    fn the_most_frequent_scope_wins() {
+        let scopes = ["internet", "isp", "isp", "internet", "isp"];
+        assert_eq!(dominant_scope(scopes), Some("isp"));
+    }
+
+    #[test]
+    fn a_tie_is_broken_by_severity_not_by_luck() {
+        // Three of each, which is exactly the case that used to flicker.
+        let scopes = ["internet", "isp", "internet", "isp", "internet", "isp"];
+        assert_eq!(dominant_scope(scopes), Some("isp"));
+        assert_eq!(dominant_scope(["internet", "lan"]), Some("lan"));
+        assert_eq!(dominant_scope(["lan", "adapter"]), Some("adapter"));
+        assert_eq!(dominant_scope(["dns", "isp"]), Some("isp"));
+    }
+
+    #[test]
+    fn the_same_outages_always_give_the_same_answer() {
+        // The headline is rebuilt every frame from a freshly built map. If the
+        // result depended on iteration order it would change between frames,
+        // which is what the user saw as flickering text. Insertion order must
+        // not matter either.
+        let a = ["internet", "isp", "dns", "isp", "internet", "dns"];
+        let b = ["dns", "internet", "isp", "dns", "isp", "internet"];
+        let first = dominant_scope(a);
+        assert_eq!(first, dominant_scope(b));
+        for _ in 0..200 {
+            assert_eq!(dominant_scope(a), first);
+        }
+    }
+
+    #[test]
+    fn no_outages_name_no_scope() {
+        assert_eq!(dominant_scope([]), None);
     }
 }

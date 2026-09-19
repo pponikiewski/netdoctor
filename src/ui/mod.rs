@@ -98,6 +98,8 @@ pub struct App {
 
     pub tweak_states: Vec<(String, String, Option<bool>)>,
     pub selected_tweak: Option<usize>,
+    /// Row id of the outage whose cause panel is open, if any.
+    pub selected_outage: Option<i64>,
     pub elevated: bool,
     pub autostart_on: bool,
 
@@ -137,6 +139,7 @@ impl App {
             tracing: false,
             tweak_states: Vec::new(),
             selected_tweak: None,
+            selected_outage: None,
             elevated: crate::optimize::is_elevated(),
             autostart_on: crate::autostart::is_enabled(),
             toast: None,

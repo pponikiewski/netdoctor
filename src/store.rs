@@ -23,15 +23,17 @@ CREATE INDEX IF NOT EXISTS idx_samples_ts ON samples(ts);
 CREATE INDEX IF NOT EXISTS idx_samples_target_ts ON samples(target, ts);
 
 CREATE TABLE IF NOT EXISTS events (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts_start REAL NOT NULL,
-    ts_end   REAL,
-    kind     TEXT NOT NULL,
-    scope    TEXT NOT NULL,
-    detail   TEXT,
-    context  TEXT
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_start    REAL NOT NULL,
+    ts_end      REAL,
+    kind        TEXT NOT NULL,
+    scope       TEXT NOT NULL,
+    detail      TEXT,
+    context     TEXT,
+    context_end TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_start ON events(ts_start);
+CREATE INDEX IF NOT EXISTS idx_events_scope ON events(scope, ts_start);
 
 CREATE TABLE IF NOT EXISTS tweaks (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,16 +57,33 @@ pub struct Stats {
 
 #[derive(Debug, Clone)]
 pub struct Event {
+    pub id: i64,
     pub ts_start: f64,
     pub ts_end: Option<f64>,
     pub kind: String,
     pub scope: String,
     pub detail: String,
+    /// Connection state as JSON at the moment the outage opened, including the
+    /// `lead_up` series of sweeps that preceded it. This is the evidence the
+    /// cause analysis reads; an empty string means the row predates it.
+    pub context: String,
+    /// Connection state as JSON at the moment the connection came back.
+    pub context_end: Option<String>,
 }
 
 impl Event {
     pub fn duration_s(&self) -> Option<f64> {
         self.ts_end.map(|e| e - self.ts_start)
+    }
+
+    /// The stored context, parsed. Rows written by older builds — or by a
+    /// build that failed to serialise — simply have nothing to say.
+    pub fn context_json(&self) -> Option<serde_json::Value> {
+        serde_json::from_str(&self.context).ok()
+    }
+
+    pub fn context_end_json(&self) -> Option<serde_json::Value> {
+        serde_json::from_str(self.context_end.as_deref()?).ok()
     }
 }
 
@@ -99,6 +118,7 @@ impl Store {
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
         conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn);
         Ok(Store { conn: Mutex::new(conn) })
     }
 
@@ -106,6 +126,7 @@ impl Store {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn);
         Ok(Store { conn: Mutex::new(conn) })
     }
 
@@ -169,14 +190,57 @@ impl Store {
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn close_event(&self, id: i64) -> Result<()> {
+    /// Closes an outage, recording the state it recovered *into*. The pair of
+    /// contexts is what separates "the signal came back" from "the adapter was
+    /// reset" — the recovery is as diagnostic as the failure.
+    pub fn close_event(&self, id: i64, context_end: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("UPDATE events SET ts_end=? WHERE id=?", params![now(), id])?;
+        conn.execute(
+            "UPDATE events SET ts_end=?, context_end=? WHERE id=?",
+            params![now(), context_end, id],
+        )?;
         Ok(())
     }
 
     pub fn events_since(&self, window_s: f64) -> Vec<Event> {
         self.query_events("WHERE ts_start >= ? ORDER BY ts_start DESC", Some(now() - window_s))
+    }
+
+    /// Every sample for every target inside a time span, oldest first. This is
+    /// what draws an outage's own timeline instead of a rolling live window.
+    pub fn samples_between(&self, from: f64, to: f64) -> Vec<(f64, String, Option<f64>, bool)> {
+        let conn = self.conn.lock().unwrap();
+        let Ok(mut stmt) = conn.prepare_cached(
+            "SELECT ts, target, rtt_ms, ok FROM samples WHERE ts>=? AND ts<=? ORDER BY ts",
+        ) else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map(params![from, to], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? != 0))
+        });
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
+    }
+
+    /// Tweaks applied inside a time span. A change made minutes before an
+    /// outage is the first thing worth suspecting, and until now nothing in
+    /// the app ever put the two tables side by side.
+    pub fn tweaks_between(&self, from: f64, to: f64) -> Vec<TweakLogRow> {
+        let conn = self.conn.lock().unwrap();
+        let Ok(mut stmt) = conn.prepare_cached(
+            "SELECT ts, tweak_id, action, COALESCE(result,'') FROM tweaks \
+             WHERE ts>=? AND ts<=? ORDER BY ts DESC",
+        ) else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map(params![from, to], |r| {
+            Ok(TweakLogRow {
+                ts: r.get(0)?,
+                tweak_id: r.get(1)?,
+                action: r.get(2)?,
+                result: r.get(3)?,
+            })
+        });
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
     pub fn recent_events(&self, limit: usize) -> Vec<Event> {
@@ -234,16 +298,41 @@ impl Store {
 }
 
 /// The column order every event query uses.
-const EVENT_COLUMNS: &str = "id, ts_start, ts_end, kind, scope, COALESCE(detail,'')";
+const EVENT_COLUMNS: &str =
+    "id, ts_start, ts_end, kind, scope, COALESCE(detail,''), COALESCE(context,''), context_end";
 
 fn map_event(r: &rusqlite::Row) -> rusqlite::Result<Event> {
     Ok(Event {
+        id: r.get(0)?,
         ts_start: r.get(1)?,
         ts_end: r.get(2)?,
         kind: r.get(3)?,
         scope: r.get(4)?,
         detail: r.get(5)?,
+        context: r.get(6)?,
+        context_end: r.get(7)?,
     })
+}
+
+/// Adds columns that later versions introduced. `CREATE TABLE IF NOT EXISTS`
+/// leaves an existing table exactly as it was, so a database written by an
+/// earlier build keeps its old shape and every query naming a new column fails
+/// at prepare time — silently, because the callers here return empty vectors
+/// on error. Adding the column is cheap and idempotent enough to run always.
+fn migrate(conn: &Connection) {
+    let existing: Vec<String> = conn
+        .prepare("PRAGMA table_info(events)")
+        .and_then(|mut s| {
+            s.query_map([], |r| r.get::<_, String>(1))
+                .map(|rows| rows.flatten().collect())
+        })
+        .unwrap_or_default();
+
+    for (name, decl) in [("context", "TEXT"), ("context_end", "TEXT")] {
+        if !existing.iter().any(|c| c == name) {
+            let _ = conn.execute_batch(&format!("ALTER TABLE events ADD COLUMN {name} {decl}"));
+        }
+    }
 }
 
 /// Loss, average, extremes and mean consecutive deviation (jitter).
@@ -310,12 +399,70 @@ mod tests {
         assert_eq!(s.count, 3);
         assert!((s.loss_pct - 33.333).abs() < 0.01);
 
-        let id = store.open_event("lan_down", "lan", "router stopped answering", "{}").unwrap();
-        store.close_event(id).unwrap();
+        let id = store
+            .open_event("lan_down", "lan", "router stopped answering", r#"{"rssi_dbm":-78}"#)
+            .unwrap();
+        store.close_event(id, r#"{"rssi_dbm":-52}"#).unwrap();
         let events = store.recent_events(10);
         assert_eq!(events.len(), 1);
         assert!(events[0].duration_s().is_some());
         assert_eq!(events[0].scope, "lan");
+    }
+
+    #[test]
+    fn stored_context_survives_the_round_trip() {
+        // The bug this guards: the context column was written on every outage
+        // and read back by nothing, so the richest evidence the app collected
+        // was invisible to it.
+        let store = Store::open_in_memory().unwrap();
+        let id = store
+            .open_event("lan_down", "lan", "note", r#"{"rssi_dbm":-81,"ssid":"home"}"#)
+            .unwrap();
+        store.close_event(id, r#"{"rssi_dbm":-55}"#).unwrap();
+
+        let e = &store.recent_events(1)[0];
+        let start = e.context_json().expect("opening context parses");
+        assert_eq!(start["rssi_dbm"], -81);
+        assert_eq!(start["ssid"], "home");
+        assert_eq!(e.context_end_json().unwrap()["rssi_dbm"], -55);
+        assert!(e.id > 0, "the row id is needed to select an outage in the UI");
+    }
+
+    #[test]
+    fn a_database_from_an_older_build_gains_the_new_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts_start REAL NOT NULL,
+             ts_end REAL, kind TEXT NOT NULL, scope TEXT NOT NULL, detail TEXT);
+             INSERT INTO events (ts_start, kind, scope, detail) VALUES (1.0,'lan_down','lan','x');",
+        )
+        .unwrap();
+        migrate(&conn);
+
+        let store = Store { conn: Mutex::new(conn) };
+        let events = store.recent_events(10);
+        assert_eq!(events.len(), 1, "the old row must still be readable");
+        assert_eq!(events[0].context, "", "an old row simply has no context");
+    }
+
+    #[test]
+    fn samples_and_tweaks_are_fetched_by_span() {
+        let store = Store::open_in_memory().unwrap();
+        let t = now();
+        store
+            .add_samples(&[
+                (t - 100.0, "gateway".into(), Some(3.0), true),
+                (t - 10.0, "gateway".into(), None, false),
+                (t + 500.0, "gateway".into(), Some(4.0), true),
+            ])
+            .unwrap();
+        store.log_tweak("adapter_power", "apply", "on", "ok");
+
+        let span = store.samples_between(t - 60.0, t + 60.0);
+        assert_eq!(span.len(), 1, "only the sample inside the window");
+        assert!(!span[0].3, "and it is the failed one");
+        assert_eq!(store.tweaks_between(t - 60.0, t + 60.0).len(), 1);
+        assert!(store.tweaks_between(t + 3600.0, t + 7200.0).is_empty());
     }
 
     #[test]

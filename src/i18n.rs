@@ -283,6 +283,37 @@ poprosisz.";
     hist_ongoing => "ongoing", "trwa";
 
     // -----------------------------------------------------------------------
+    // history tab: the cause panel for a selected outage
+    // -----------------------------------------------------------------------
+    hist_select_hint =>
+        "Select an outage to see what led up to it.",
+        "Wybierz awarię, żeby zobaczyć, co ją poprzedziło.";
+    hist_cause_heading => "Probable cause", "Prawdopodobna przyczyna";
+    hist_leadup_heading => "Before, during and after", "Przed, w trakcie i po";
+    hist_state_heading => "Connection at the moment it broke", "Połączenie w chwili zerwania";
+    hist_recovery_heading => "Connection when it came back", "Połączenie po powrocie";
+    hist_no_recovery => "It has not come back yet.", "Jeszcze nie wróciło.";
+    hist_btn_fix => "Open the fix", "Otwórz poprawkę";
+    hist_btn_close => "Close", "Zamknij";
+    hist_no_leadup =>
+        "No lead-up was recorded for this outage — it was logged by an earlier version.",
+        "Dla tej awarii nie zapisano przebiegu — wpis pochodzi z wcześniejszej wersji.";
+    hist_no_state =>
+        "No connection state was stored for this entry.",
+        "Dla tego wpisu nie zapisano stanu połączenia.";
+    hist_leadup_rssi => "Signal (dBm)", "Sygnał (dBm)";
+    hist_leadup_rtt => "Router (ms)", "Router (ms)";
+    hist_tweaks_heading => "Changes applied shortly before", "Zmiany zastosowane krótko przed";
+    hist_leadup_axis =>
+        "seconds relative to the start of the outage",
+        "sekundy względem początku awarii";
+
+    // Confidence in a reading, not severity of the outage.
+    conf_certain => "clear", "jednoznaczne";
+    conf_likely => "likely", "prawdopodobne";
+    conf_possible => "possible", "możliwe";
+
+    // -----------------------------------------------------------------------
     // diagnostic scan: progress steps
     // -----------------------------------------------------------------------
     step_medium => "Checking adapter and medium", "Sprawdzanie karty i medium";
@@ -1156,6 +1187,413 @@ pub fn event_kind(kind: &str) -> String {
     match current() {
         Lang::En => en.to_string(),
         Lang::Pl => pl.to_string(),
+    }
+}
+
+/// Short name for a tweak, by the id stored in the `tweaks` table. Kept here
+/// rather than on the `Tweak` trait so a change logged by a version that has
+/// since dropped that tweak still reads as something.
+pub fn tweak_name(id: &str) -> String {
+    let (en, pl) = match id {
+        "adapter_power" => ("adapter power saving", "oszczędzanie energii karty"),
+        "fast_dns" => ("public DNS", "publiczny DNS"),
+        "mtu" => ("MTU", "MTU"),
+        "nagle_off" => ("Nagle off", "wyłączony Nagle"),
+        "net_throttling" => ("network throttling", "network throttling"),
+        "stack_reset" => ("network stack reset", "reset stosu sieciowego"),
+        "tcp_autotuning" => ("TCP autotuning", "TCP autotuning"),
+        "wlan_power_plan" => ("Wi-Fi power plan", "plan zasilania Wi-Fi"),
+        other => return other.to_string(),
+    };
+    pick(en, pl)
+}
+
+#[inline]
+fn pick(en: &str, pl: &str) -> String {
+    match current() {
+        Lang::En => en.to_string(),
+        Lang::Pl => pl.to_string(),
+    }
+}
+
+/// Headline for a cause code produced by `crate::cause`.
+pub fn cause_title(code: &str) -> String {
+    let (en, pl) = match code {
+        "after_tweak" => (
+            "A change applied just before this",
+            "Zmiana zastosowana tuż przed awarią",
+        ),
+        "adapter_powered_down" => (
+            "Windows put the Wi-Fi card to sleep",
+            "Windows uśpił kartę Wi-Fi",
+        ),
+        "adapter_power_plan" => (
+            "The power plan may be parking the radio",
+            "Plan zasilania może wyłączać radio",
+        ),
+        "out_of_range" => ("Out of range of the access point", "Poza zasięgiem access pointa"),
+        "adapter_or_driver" => (
+            "The adapter disappeared — driver or hardware",
+            "Karta zniknęła — sterownik albo sprzęt",
+        ),
+        "roaming" => (
+            "Handover to another access point",
+            "Przełączenie na inny access point",
+        ),
+        "signal_fade" => ("The signal faded away", "Sygnał stopniowo zanikał"),
+        "airtime_24ghz" => (
+            "The 2.4 GHz channel is crowded",
+            "Kanał 2.4 GHz jest zatłoczony",
+        ),
+        "router_side" => (
+            "The radio was fine — the router side was not",
+            "Radio było w porządku — problem po stronie routera",
+        ),
+        "weak_signal" => ("Weak signal at the moment of the drop", "Słaby sygnał w chwili zerwania"),
+        "marginal_link" => ("The link was marginal", "Łącze było na granicy"),
+        "cable_or_router" => ("Cable or router, not Wi-Fi", "Kabel albo router, nie Wi-Fi"),
+        "isp_sustained" => ("A sustained outage at the provider", "Dłuższa awaria u dostawcy"),
+        "isp_brief" => ("A brief drop on the WAN side", "Krótki zryw po stronie WAN"),
+        "isp_pattern" => ("The provider drops repeatedly", "Dostawca zrywa regularnie"),
+        "dns_router_only" => (
+            "The router is the only resolver",
+            "Router jest jedynym resolverem",
+        ),
+        "dns_resolver" => ("The resolver did not answer", "Resolver nie odpowiedział"),
+        "local_saturation" => (
+            "The link to the router was saturated",
+            "Łącze do routera było wysycone",
+        ),
+        "rate_collapse" => ("The Wi-Fi rate collapsed", "Prędkość Wi-Fi załamała się"),
+        "time_pattern" => ("It happens at the same hour", "Zdarza się o tej samej godzinie"),
+        "no_evidence" => ("No evidence was recorded", "Nie zapisano dowodów"),
+        "unclear" => ("No single cause stands out", "Żadna przyczyna się nie wyróżnia"),
+        other => return other.to_string(),
+    };
+    pick(en, pl)
+}
+
+/// What to do about a cause. Concrete enough to act on without a second tab.
+pub fn cause_advice(code: &str) -> String {
+    let (en, pl) = match code {
+        "after_tweak" => (
+            "Revert that change and watch whether the outages stop. If they do, the change is the \
+             cause; if they carry on, put it back and look further down this list.",
+            "Cofnij tę zmianę i sprawdź, czy awarie ustaną. Jeśli tak — to ona jest przyczyną; \
+             jeśli nie — przywróć ją i szukaj niżej na tej liście.",
+        ),
+        "adapter_powered_down" => (
+            "Turn off power saving on the adapter. This is the most common cause of a connection \
+             that drops while the computer is idle and comes back the moment you touch it.",
+            "Wyłącz oszczędzanie energii na karcie. To najczęstsza przyczyna zrywania połączenia, \
+             gdy komputer stoi bezczynnie, a wraca ono, gdy tylko go dotkniesz.",
+        ),
+        "adapter_power_plan" => (
+            "Set the wireless adapter to maximum performance in the active power plan. It is a \
+             separate setting from the adapter's own power saving and both have to be off.",
+            "Ustaw kartę bezprzewodową na maksymalną wydajność w aktywnym planie zasilania. To \
+             osobne ustawienie od oszczędzania energii samej karty — oba muszą być wyłączone.",
+        ),
+        "out_of_range" | "weak_signal" => (
+            "Move closer to the access point or add one. Below about -75 dBm a link stops being \
+             usable no matter how fast the router is.",
+            "Zbliż się do access pointa albo dodaj kolejny. Poniżej mniej więcej -75 dBm łącze \
+             przestaje być używalne, niezależnie od tego, jak szybki jest router.",
+        ),
+        "adapter_or_driver" => (
+            "Reinstall or roll back the adapter driver. If the adapter also vanishes from Device \
+             Manager, suspect the hardware or its power supply.",
+            "Przeinstaluj albo cofnij sterownik karty. Jeśli karta znika też z Menedżera \
+             urządzeń, podejrzewaj sprzęt albo jego zasilanie.",
+        ),
+        "roaming" => (
+            "The computer changed access point and the handover cost it the connection. If you \
+             have several APs, giving each a distinct channel and matching their power usually \
+             cures it; a single AP means the router itself switched band.",
+            "Komputer zmienił access point i przełączenie kosztowało go połączenie. Jeśli masz \
+             kilka AP, zwykle pomaga nadanie każdemu osobnego kanału i wyrównanie mocy; przy \
+             jednym AP oznacza to, że router sam przełączył pasmo.",
+        ),
+        "signal_fade" => (
+            "The signal was dropping steadily before the connection broke, so the computer or the \
+             access point moved, or something came between them. This is not a router fault.",
+            "Sygnał spadał miarowo, zanim połączenie padło — więc komputer albo access point \
+             zmienił położenie, albo coś stanęło między nimi. To nie jest wina routera.",
+        ),
+        "airtime_24ghz" => (
+            "2.4 GHz is shared with every neighbour, microwave and Bluetooth device around. Move \
+             to 5 GHz if the adapter supports it, or pick channel 1, 6 or 11 — whichever is least \
+             used nearby.",
+            "2.4 GHz dzielisz z każdym sąsiadem, mikrofalówką i urządzeniem Bluetooth w okolicy. \
+             Przejdź na 5 GHz, jeśli karta to obsługuje, albo wybierz kanał 1, 6 lub 11 — ten \
+             najmniej obciążony w pobliżu.",
+        ),
+        "router_side" => (
+            "The signal was strong and steady right up to the drop, so the radio link was not the \
+             problem. Look at the router: its uptime, its temperature, its firmware, and whether \
+             it drops other devices at the same moment.",
+            "Sygnał był mocny i stabilny aż do zerwania, więc łącze radiowe nie było problemem. \
+             Sprawdź router: czas pracy, temperaturę, firmware oraz to, czy zrywa w tym samym \
+             momencie także innym urządzeniom.",
+        ),
+        "marginal_link" => (
+            "It failed on a weak signal and recovered on a much stronger one, so the link sits \
+             right at the edge of usable. Anything that nudges it — a door, a body, a microwave — \
+             will keep breaking it.",
+            "Zerwało się przy słabym sygnale, a wróciło przy znacznie mocniejszym, więc łącze \
+             działa na samej granicy używalności. Cokolwiek je poruszy — drzwi, człowiek, \
+             mikrofalówka — będzie je zrywać dalej.",
+        ),
+        "cable_or_router" => (
+            "This is a wired link, so start with the cable and the port: reseat both ends, try \
+             another port, try another cable. A failing cable looks exactly like a failing router.",
+            "To łącze przewodowe, więc zacznij od kabla i portu: przepnij oba końce, spróbuj \
+             innego portu, innego kabla. Psujący się kabel wygląda dokładnie jak psujący się \
+             router.",
+        ),
+        "isp_sustained" | "isp_brief" => (
+            "The router was answering the whole time, so the break was beyond it. Nothing on this \
+             computer will fix that — but this log is the evidence to put in front of the \
+             provider.",
+            "Router odpowiadał przez cały czas, więc zerwanie było za nim. Nic na tym komputerze \
+             tego nie naprawi — ale ten dziennik jest dowodem, który możesz przedstawić dostawcy.",
+        ),
+        "isp_pattern" => (
+            "Repeated WAN drops are a service fault, not bad luck. Export the report and quote the \
+             timestamps; a provider will engage with a list of dated outages and will not engage \
+             with \"my internet is bad\".",
+            "Powtarzające się zrywy WAN to usterka usługi, a nie pech. Wyeksportuj raport i podaj \
+             znaczniki czasu — dostawca podejmie rozmowę o liście awarii z datami, a nie o \
+             stwierdzeniu „internet mi nie działa”.",
+        ),
+        "dns_router_only" => (
+            "Every name lookup goes through the router, so when its resolver stalls the internet \
+             looks dead while it is in fact reachable. Add a public resolver alongside it.",
+            "Każde zapytanie o nazwę idzie przez router, więc gdy jego resolver się zatnie, \
+             internet wygląda na martwy, choć jest osiągalny. Dodaj obok publiczny resolver.",
+        ),
+        "dns_resolver" => (
+            "Names stopped resolving while the network itself was up. Switching to a public \
+             resolver is the quickest way to tell a resolver fault from a connection fault.",
+            "Nazwy przestały się rozwiązywać, choć sieć działała. Przełączenie na publiczny \
+             resolver to najszybszy sposób, żeby odróżnić awarię resolvera od awarii połączenia.",
+        ),
+        "local_saturation" => (
+            "Latency to the router climbed before the quality dropped, so something on this side \
+             filled the link — an upload, a backup, an update. Run the load test to confirm it and \
+             to find the rate the link actually holds.",
+            "Opóźnienie do routera rosło, zanim jakość spadła, więc coś po tej stronie zapchało \
+             łącze — wysyłka, backup, aktualizacja. Uruchom test obciążeniowy, żeby to \
+             potwierdzić i znaleźć przepustowość, którą łącze naprawdę utrzymuje.",
+        ),
+        "rate_collapse" => (
+            "The negotiated Wi-Fi rate fell away before the quality did. That is interference or \
+             distance, not the router's capacity — a faster router will not change it.",
+            "Wynegocjowana prędkość Wi-Fi spadła, zanim spadła jakość. To zakłócenia albo \
+             odległość, a nie wydajność routera — szybszy router tego nie zmieni.",
+        ),
+        "time_pattern" => (
+            "Outages clustered at one hour of the day have a schedule behind them: a neighbour's \
+             appliance, the router's nightly resync, a backup job, a provider maintenance window.",
+            "Awarie skupione o jednej godzinie mają za sobą harmonogram: urządzenie sąsiada, \
+             nocny resync routera, zadanie backupu, okno serwisowe dostawcy.",
+        ),
+        "no_evidence" => (
+            "This outage was logged before the app kept the state that led up to it. Newer entries \
+             carry it, so the next occurrence will be explainable.",
+            "Ta awaria została zapisana, zanim aplikacja zachowywała stan ją poprzedzający. Nowsze \
+             wpisy już go mają, więc następne wystąpienie da się wyjaśnić.",
+        ),
+        "unclear" => (
+            "The recorded state does not single out one cause. If it repeats, the lead-up below is \
+             the place to look for what changes each time.",
+            "Zapisany stan nie wskazuje jednej przyczyny. Jeśli się powtórzy, przebieg poniżej \
+             jest miejscem, w którym warto szukać tego, co za każdym razem się zmienia.",
+        ),
+        _ => ("", ""),
+    };
+    pick(en, pl)
+}
+
+// ---------------------------------------------------------------------------
+// evidence lines: the numbers a verdict was read off
+// ---------------------------------------------------------------------------
+
+pub fn ev_after_tweak(tweak: &str, mins: i64) -> String {
+    match current() {
+        Lang::En => format!("\"{tweak}\" was applied {mins} min before this outage started"),
+        Lang::Pl => format!("„{tweak}” zastosowano {mins} min przed początkiem tej awarii"),
+    }
+}
+
+pub fn ev_adapter_powered_down(rssi: Option<i32>) -> String {
+    let signal = match rssi {
+        Some(r) => format!("{r} dBm"),
+        None => pick("unknown", "nieznany"),
+    };
+    match current() {
+        Lang::En => format!("the adapter went down while the signal was still {signal}"),
+        Lang::Pl => format!("karta wyłączyła się, gdy sygnał wynosił jeszcze {signal}"),
+    }
+}
+
+pub fn ev_adapter_power_plan() -> String {
+    pick(
+        "the active power plan is a second, independent way Windows parks the radio",
+        "aktywny plan zasilania to drugi, niezależny sposób, w jaki Windows wyłącza radio",
+    )
+}
+
+pub fn ev_rssi_low(rssi: i32) -> String {
+    match current() {
+        Lang::En => format!("signal was {rssi} dBm — below the usable threshold of about -75 dBm"),
+        Lang::Pl => format!("sygnał wynosił {rssi} dBm — poniżej progu używalności około -75 dBm"),
+    }
+}
+
+pub fn ev_adapter_absent() -> String {
+    pick(
+        "the adapter reported no link and no radio state at all",
+        "karta nie zgłaszała ani łącza, ani żadnego stanu radia",
+    )
+}
+
+pub fn ev_roam(from: &str, to: &str) -> String {
+    match current() {
+        Lang::En => format!("the access point changed from {from} to {to} just before the drop"),
+        Lang::Pl => format!("access point zmienił się z {from} na {to} tuż przed zerwaniem"),
+    }
+}
+
+pub fn ev_roam_flag() -> String {
+    pick(
+        "a handover to another access point was recorded within the preceding minute",
+        "w ciągu poprzedzającej minuty odnotowano przełączenie na inny access point",
+    )
+}
+
+pub fn ev_rssi_fade(from: i32, to: i32) -> String {
+    let drop = from - to;
+    match current() {
+        Lang::En => format!("signal slid from {from} to {to} dBm — {drop} dB lost before the drop"),
+        Lang::Pl => {
+            format!("sygnał osunął się z {from} do {to} dBm — {drop} dB straty przed zerwaniem")
+        }
+    }
+}
+
+pub fn ev_crowded_24(channel: Option<u32>) -> String {
+    let ch = channel.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+    match current() {
+        Lang::En => {
+            format!("the signal was strong and steady on 2.4 GHz channel {ch} right up to the drop")
+        }
+        Lang::Pl => {
+            format!("sygnał był mocny i stabilny na kanale {ch} w paśmie 2.4 GHz aż do zerwania")
+        }
+    }
+}
+
+pub fn ev_signal_was_fine(rssi: i32) -> String {
+    match current() {
+        Lang::En => format!("signal held at {rssi} dBm through the whole lead-up"),
+        Lang::Pl => format!("sygnał utrzymywał się na {rssi} dBm przez cały przebieg przed awarią"),
+    }
+}
+
+pub fn ev_recovered_stronger(start: i32, end: i32) -> String {
+    match current() {
+        Lang::En => format!("it broke at {start} dBm and recovered at {end} dBm"),
+        Lang::Pl => format!("zerwało się przy {start} dBm, a wróciło przy {end} dBm"),
+    }
+}
+
+pub fn ev_wired() -> String {
+    pick(
+        "no radio state was recorded, so this link is wired",
+        "nie zapisano żadnego stanu radia, więc to łącze przewodowe",
+    )
+}
+
+pub fn ev_isp(duration: Option<f64>) -> String {
+    let d = match duration {
+        Some(d) if d >= 60.0 => format!("{:.0} min", d / 60.0),
+        Some(d) => format!("{d:.0} s"),
+        None => return pick("the router kept answering; it is still down", "router odpowiadał; awaria trwa"),
+    };
+    match current() {
+        Lang::En => format!("the router kept answering for the whole {d}; only the WAN was gone"),
+        Lang::Pl => format!("router odpowiadał przez całe {d}; zniknął tylko WAN"),
+    }
+}
+
+pub fn ev_isp_pattern(count: usize) -> String {
+    match current() {
+        Lang::En => format!("{count} WAN outages are recorded in this history"),
+        Lang::Pl => format!("w tej historii zapisano {count} awarii WAN"),
+    }
+}
+
+pub fn ev_dns_router_only() -> String {
+    pick(
+        "the router is the only configured resolver, so its stall takes every lookup with it",
+        "router jest jedynym skonfigurowanym resolverem, więc jego zacięcie zabiera wszystkie \
+         zapytania",
+    )
+}
+
+pub fn ev_dns_error(err: &str) -> String {
+    if err.is_empty() {
+        return pick("the test lookup did not complete", "testowe zapytanie nie zakończyło się");
+    }
+    match current() {
+        Lang::En => format!("the test lookup failed: {err}"),
+        Lang::Pl => format!("testowe zapytanie nie powiodło się: {err}"),
+    }
+}
+
+pub fn ev_latency_climb(from: f64, to: f64) -> String {
+    match current() {
+        Lang::En => format!("round-trip to the router climbed from {from:.0} to {to:.0} ms"),
+        Lang::Pl => format!("czas do routera wzrósł z {from:.0} do {to:.0} ms"),
+    }
+}
+
+pub fn ev_rate_drop(from: u32, to: u32) -> String {
+    match current() {
+        Lang::En => format!("the Wi-Fi receive rate fell from {from} to {to} Mbps"),
+        Lang::Pl => format!("prędkość odbioru Wi-Fi spadła z {from} do {to} Mbps"),
+    }
+}
+
+pub fn ev_time_pattern(count: usize, hour: i64) -> String {
+    match current() {
+        Lang::En => format!("{count} of these outages started between {hour:02}:00 and {:02}:00", hour + 1),
+        Lang::Pl => {
+            format!("{count} z tych awarii zaczęło się między {hour:02}:00 a {:02}:00", hour + 1)
+        }
+    }
+}
+
+pub fn ev_none() -> String {
+    pick(
+        "this entry predates the app storing the state around an outage",
+        "ten wpis powstał, zanim aplikacja zapisywała stan wokół awarii",
+    )
+}
+
+pub fn ev_unclear() -> String {
+    pick(
+        "the recorded state matches no single pattern",
+        "zapisany stan nie pasuje do żadnego pojedynczego wzorca",
+    )
+}
+
+/// Heading over the cause panel, naming the outage being explained.
+pub fn hist_cause_for(when: &str) -> String {
+    match current() {
+        Lang::En => format!("Outage of {when}"),
+        Lang::Pl => format!("Awaria z {when}"),
     }
 }
 

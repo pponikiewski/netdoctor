@@ -7,6 +7,7 @@ use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use crate::i18n;
+use crate::monitor;
 use crate::probe::icmp;
 use crate::probe::netstate::{Medium, NetState};
 use crate::settings::Settings;
@@ -449,15 +450,21 @@ fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding
         )];
     }
 
-    let mut by_scope: std::collections::HashMap<String, Vec<&store::Event>> =
-        std::collections::HashMap::new();
+    // A BTreeMap rather than a HashMap: the sort below is stable, so it
+    // preserves whatever order the grouping produced, and a HashMap's order is
+    // seeded per map. Equally frequent scopes then swapped places between
+    // scans and the "most important finding" headline changed for no reason.
+    let mut by_scope: std::collections::BTreeMap<String, Vec<&store::Event>> =
+        std::collections::BTreeMap::new();
     for e in &events {
         by_scope.entry(e.scope.clone()).or_default().push(e);
     }
 
     let mut out = Vec::new();
     let mut scopes: Vec<_> = by_scope.into_iter().collect();
-    scopes.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
+    scopes.sort_by_key(|(scope, v)| {
+        std::cmp::Reverse((v.len(), monitor::scope_rank(scope)))
+    });
 
     for (scope, items) in scopes {
         let (title, advice) = match scope.as_str() {
@@ -509,6 +516,12 @@ pub fn format_datetime(ts: f64) -> String {
     let secs = t.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
     format!("{d:02}.{m:02} {y:04} {:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
+}
+
+/// Hour of the day, 0-23, in the machine's own time zone. Grouping outages by
+/// hour only says anything if the hour is the one the user lives in.
+pub fn local_hour(ts: f64) -> i64 {
+    (ts as i64 + local_utc_offset_secs()).div_euclid(3600).rem_euclid(24)
 }
 
 fn local_utc_offset_secs() -> i64 {

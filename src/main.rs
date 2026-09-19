@@ -4,6 +4,7 @@
 
 mod autostart;
 mod bandwidth;
+mod cause;
 mod diagnose;
 mod i18n;
 mod monitor;

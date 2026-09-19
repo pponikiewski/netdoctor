@@ -24,9 +24,27 @@ reads the blame off the *pattern* of failures:
 
 Every outage is written to SQLite along with the connection state at that
 instant — signal, RSSI, channel, access point, link rate, and whether the router
-was still answering. That is what makes a 3 a.m. dropout explainable the next
-morning, and what turns "my internet is bad" into evidence an ISP has to engage
-with.
+was still answering — and the three minutes of sweeps that led up to it. That is
+what makes a 3 a.m. dropout explainable the next morning, and what turns "my
+internet is bad" into evidence an ISP has to engage with.
+
+## From where it broke to why
+
+A verdict of "the router stopped answering" is a location, not a reason, and it
+fits a laptop carried out of range, a Wi-Fi card put to sleep by Windows, a
+handover to another access point, and a router that genuinely crashed. Those
+have four different fixes.
+
+Selecting an outage in the history opens the reasoning behind it: the probable
+cause, the numbers that cause was read off, the signal and router latency
+plotted from before the break through to the recovery, the state it failed on
+against the state it came back into, and any tweak applied shortly beforehand —
+which is the first thing worth suspecting and the easiest to undo. Where a
+cause has a matching entry in Optimise, one button goes straight to it.
+
+The rules live in [`src/cause.rs`](src/cause.rs) and are plain enough to argue
+with: every verdict shows its evidence, so a wrong one is visibly wrong rather
+than merely unhelpful.
 
 ## Running it
 
@@ -74,7 +92,8 @@ one English label that would silently fail everywhere else.
   saturated. Grade A–F and specific advice. This is usually the answer to
   "good ping, still lagging".
 - **Optimise** — every tweak with its current state and risk level.
-- **Outage history** — when, how long, and whose fault.
+- **Outage history** — when, how long, whose fault, and on selecting an entry,
+  why: cause, evidence, the lead-up plotted, and a route to the fix.
 - **Settings** — probe cadence, thresholds, extra ping targets (your game
   server, for instance), autostart.
 
