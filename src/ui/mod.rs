@@ -11,7 +11,6 @@ mod opt;
 mod report;
 mod settings_tab;
 
-use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -70,8 +69,6 @@ pub enum Job {
     BloatDone(Box<BloatResult>),
     Traceroute(Vec<String>),
     AirDone(Box<crate::probe::airscan::AirScan>),
-    /// The tweak ranking came back, or the request explaining why it did not.
-    AdviceDone(Result<Vec<crate::advise::Priority>, String>),
 }
 
 pub struct App {
@@ -102,13 +99,6 @@ pub struct App {
 
     pub tweak_states: Vec<(String, String, Option<bool>)>,
     pub selected_tweak: Option<usize>,
-
-    /// The last tweak ranking, keyed by tweak id, and whether one is in
-    /// flight. Empty unless the user has asked for one — the optimise tab
-    /// is fully usable without it and falls back to its own ordering.
-    pub priorities: HashMap<String, crate::advise::Priority>,
-    pub advising: bool,
-    pub advice_error: Option<String>,
 
     /// What the Wi-Fi card can hear around it, and the channel advice read
     /// off it. Empty until the first scan is asked for.
@@ -160,9 +150,6 @@ impl App {
             tracing: false,
             tweak_states: Vec::new(),
             selected_tweak: None,
-            priorities: HashMap::new(),
-            advising: false,
-            advice_error: None,
             air: Default::default(),
             air_scanning: false,
             show_unavailable: true,
@@ -223,20 +210,6 @@ impl App {
                     self.air = *scan;
                     self.air_scanning = false;
                     self.monitor.set_paused(false);
-                }
-                Job::AdviceDone(result) => {
-                    self.advising = false;
-                    match result {
-                        Ok(list) => {
-                            // Replaced wholesale rather than merged: a stale
-                            // entry for a tweak left out of this batch would
-                            // rank it against measurements it never saw.
-                            self.priorities =
-                                list.into_iter().map(|p| (p.tweak_id.clone(), p)).collect();
-                            self.advice_error = None;
-                        }
-                        Err(e) => self.advice_error = Some(e),
-                    }
                 }
                 Job::Traceroute(lines) => {
                     self.trace = lines;
