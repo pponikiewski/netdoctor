@@ -182,8 +182,7 @@ impl Store {
     pub fn recent_events(&self, limit: usize) -> Vec<Event> {
         let conn = self.conn.lock().unwrap();
         let sql = format!(
-            "SELECT id, ts_start, ts_end, kind, scope, COALESCE(detail,'') FROM events \
-             ORDER BY ts_start DESC LIMIT {limit}"
+            "SELECT {EVENT_COLUMNS} FROM events ORDER BY ts_start DESC LIMIT {limit}"
         );
         let Ok(mut stmt) = conn.prepare(&sql) else {
             return Vec::new();
@@ -194,8 +193,7 @@ impl Store {
 
     fn query_events(&self, tail: &str, arg: Option<f64>) -> Vec<Event> {
         let conn = self.conn.lock().unwrap();
-        let sql =
-            format!("SELECT id, ts_start, ts_end, kind, scope, COALESCE(detail,'') FROM events {tail}");
+        let sql = format!("SELECT {EVENT_COLUMNS} FROM events {tail}");
         let Ok(mut stmt) = conn.prepare(&sql) else {
             return Vec::new();
         };
@@ -234,6 +232,9 @@ impl Store {
         rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 }
+
+/// The column order every event query uses.
+const EVENT_COLUMNS: &str = "id, ts_start, ts_end, kind, scope, COALESCE(detail,'')";
 
 fn map_event(r: &rusqlite::Row) -> rusqlite::Result<Event> {
     Ok(Event {

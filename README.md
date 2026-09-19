@@ -139,8 +139,17 @@ automatically.
 cargo build --release
 ```
 
-Produces `target/release/netdoctor.exe`, about 5 MB, with no external
+Produces `target/release/netdoctor.exe`, about 5.3 MB, with no external
 dependencies. Requires Rust 1.82+ and the MSVC toolchain.
+
+`.cargo/config.toml` links the C runtime statically. Without it the binary
+imports `vcruntime140.dll` and will not start on a machine that lacks the
+Visual C++ Redistributable — which is the wrong thing to discover on a machine
+whose network is already broken. The `api-ms-win-crt-*` imports that remain are
+the UCRT, part of Windows itself since Windows 10.
+
+To hand the app to someone, ship that executable on its own. It needs no
+installer and writes nothing outside `%LOCALAPPDATA%\NetDoctor\`.
 
 ## Limitations
 

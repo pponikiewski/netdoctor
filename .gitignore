@@ -2,3 +2,6 @@ target/
 *.pdb
 .env
 .env.local
+dist-build/
+dist/
+*.zip

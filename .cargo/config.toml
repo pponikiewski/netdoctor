@@ -1,0 +1,12 @@
+# Link the C runtime statically.
+#
+# Without this the binary imports vcruntime140.dll, which only exists on a
+# machine that has the Visual C++ Redistributable installed. A tool you hand to
+# someone whose network is broken is exactly the tool that cannot ask them to
+# download an installer first, so the runtime goes inside the executable.
+#
+# The api-ms-win-crt-* imports that remain are the UCRT, which is part of
+# Windows itself since Windows 10 and needs nothing installed.
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
