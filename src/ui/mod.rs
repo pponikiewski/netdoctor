@@ -17,7 +17,7 @@ use std::sync::Arc;
 use eframe::egui;
 
 use crate::bandwidth::BloatResult;
-use crate::diagnose::Finding;
+use crate::diagnose::{Finding, Scan, Verdict};
 use crate::monitor::{Monitor, Snapshot, Status};
 use crate::probe::netstate::NetState;
 use crate::settings::Settings;
@@ -137,7 +137,7 @@ pub enum Tab {
 /// A message from a background job back to the UI.
 pub enum Job {
     ScanProgress(String, f32),
-    ScanDone(Vec<Finding>),
+    ScanDone(Box<Scan>),
     BloatProgress(String, f32),
     BloatDone(Box<BloatResult>),
     Traceroute(Vec<String>),
@@ -157,10 +157,17 @@ pub struct App {
     pub net: NetState,
 
     pub findings: Vec<Finding>,
+    pub verdict: Verdict,
     pub selected_finding: Option<usize>,
     pub scanning: bool,
     pub scan_label: String,
     pub scan_progress: f32,
+    /// Whether the scan saturates the line to look for bufferbloat. On by
+    /// default: it is the check that answers the question people actually ask.
+    pub deep_scan: bool,
+    /// The monitor's pause state from before a scan paused it, so finishing
+    /// the scan hands it back rather than deciding for the user.
+    pub monitor_was_paused: bool,
 
     pub bloat: BloatResult,
     pub bloat_running: bool,
@@ -211,10 +218,13 @@ impl App {
             last: Snapshot::default(),
             net: NetState::default(),
             findings: Vec::new(),
+            verdict: Verdict::default(),
             selected_finding: None,
             scanning: false,
             scan_label: crate::i18n::diag_scan_hint().into(),
             scan_progress: 0.0,
+            deep_scan: true,
+            monitor_was_paused: false,
             bloat: BloatResult::default(),
             bloat_running: false,
             bloat_label: String::new(),
@@ -261,12 +271,18 @@ impl App {
                     self.scan_label = label;
                     self.scan_progress = frac;
                 }
-                Job::ScanDone(findings) => {
-                    self.findings = findings;
+                Job::ScanDone(scan) => {
+                    let scan = *scan;
+                    self.findings = scan.findings;
+                    self.verdict = scan.verdict;
                     self.selected_finding = None;
                     self.scanning = false;
                     self.scan_label = crate::i18n::diag_scan_done().into();
                     self.scan_progress = 1.0;
+                    // Restore whatever the monitor was doing before the scan
+                    // paused it. Unpausing unconditionally used to override a
+                    // pause the user had set themselves, silently.
+                    self.monitor.set_paused(self.monitor_was_paused);
                 }
                 Job::BloatProgress(label, frac) => {
                     self.bloat_label = label;

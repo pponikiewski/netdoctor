@@ -9,7 +9,7 @@
 
 use std::mem::size_of;
 use std::net::Ipv4Addr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HANDLE, WAIT_TIMEOUT};
 use windows::Win32::NetworkManagement::IpHelper::{
@@ -269,13 +269,36 @@ pub fn ping_once(addr: Ipv4Addr, timeout_ms: u32) -> PingResult {
     }
 }
 
-/// Several pings in a row. `None` marks a lost packet.
-pub fn ping_series(addr: Ipv4Addr, count: usize, timeout_ms: u32) -> Vec<Option<f64>> {
+/// Several pings at a fixed cadence. `None` marks a lost packet.
+///
+/// `gap_ms` is the interval between sends, not a delay added after each reply:
+/// a probe that took 40 ms to come back waits the remaining 20 of a 60 ms
+/// cadence, and one that timed out waits not at all. Back-to-back probing
+/// looks faster on paper and is worse, because several series running at once
+/// then arrive as a burst and the measurement starts reporting its own
+/// contention — a Wi-Fi link measured that way shows jitter it does not have.
+pub fn ping_series(
+    addr: Ipv4Addr,
+    count: usize,
+    timeout_ms: u32,
+    gap_ms: u64,
+) -> Vec<Option<f64>> {
     let pinger = match Pinger::new() {
         Ok(p) => p,
         Err(_) => return vec![None; count],
     };
-    (0..count).map(|_| pinger.ping(addr, timeout_ms).rtt_ms).collect()
+    let gap = Duration::from_millis(gap_ms);
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let started = Instant::now();
+        out.push(pinger.ping(addr, timeout_ms).rtt_ms);
+        if i + 1 < count {
+            if let Some(rest) = gap.checked_sub(started.elapsed()) {
+                std::thread::sleep(rest);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@
 //! asleep or the ISP went down, and the two are fixed in completely different
 //! ways.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -139,6 +139,85 @@ impl Default for Snapshot {
 
 /// Ring buffer of (timestamp, rtt) per target, for the live chart.
 pub type Series = Vec<(f64, Option<f64>)>;
+
+// ---------------------------------------------------------------------------
+// Telling a real latency event apart from one target's noise
+// ---------------------------------------------------------------------------
+
+/// A latency spike is only evidence about the connection if it hits more than
+/// one target at once.
+///
+/// Every target is reached over the same first hops — the same Wi-Fi link, the
+/// same router, the same uplink. A delay introduced anywhere on that shared
+/// stretch has to show up on all of them in the same sweep. So a sweep where
+/// one target jumps and the others are untouched cannot have been caused
+/// there: what was measured is that single responder taking its time. Routers
+/// and anycast nodes answer ICMP from the control plane at the lowest
+/// priority, and traffic that merely passes through them never waits that
+/// long.
+///
+/// On a real link the overwhelming majority of visible spikes are of the
+/// single-target kind, and plotting them identically to the correlated ones
+/// makes a healthy connection look ragged.
+#[derive(Debug, Clone, Default)]
+pub struct Spikes {
+    /// Sweeps where at least two targets jumped together, with how many did.
+    pub correlated: Vec<(f64, usize)>,
+    /// Spikes that hit exactly one target. Noise from that responder.
+    pub single: usize,
+}
+
+/// How far above its own normal a sample has to sit to count as a spike.
+///
+/// Relative, because a 20 ms jump means nothing on a 90 ms satellite link and
+/// is an event on a 4 ms one; with a floor, because on a very fast link the
+/// relative test alone fires on ordinary scheduling noise.
+fn spike_threshold(median: f64) -> f64 {
+    (median * 0.8).max(8.0)
+}
+
+fn median_of(series: &Series) -> Option<f64> {
+    let mut v: Vec<f64> = series.iter().filter_map(|(_, r)| *r).collect();
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(v[v.len() / 2])
+}
+
+/// Group the spikes across every plotted series by the sweep they happened in.
+///
+/// Samples from one sweep carry slightly different timestamps — they are taken
+/// one after another — so they are bucketed by whole second, which is the
+/// probe interval and comfortably wider than a sweep.
+pub fn find_spikes(series: &[Series]) -> Spikes {
+    let mut hits: BTreeMap<i64, (f64, usize)> = BTreeMap::new();
+
+    for s in series {
+        let Some(median) = median_of(s) else {
+            continue;
+        };
+        let threshold = spike_threshold(median);
+        for (ts, rtt) in s {
+            if let Some(v) = rtt {
+                if v - median > threshold {
+                    let slot = hits.entry(ts.round() as i64).or_insert((*ts, 0));
+                    slot.1 += 1;
+                }
+            }
+        }
+    }
+
+    let mut out = Spikes::default();
+    for (_, (ts, n)) in hits {
+        if n >= 2 {
+            out.correlated.push((ts, n));
+        } else {
+            out.single += 1;
+        }
+    }
+    out
+}
 
 /// How many sweeps of lead-up are kept for the next outage. At the default one
 /// sweep per second this is three minutes, which is long enough to show a
@@ -774,5 +853,79 @@ mod tests {
     #[test]
     fn no_outages_name_no_scope() {
         assert_eq!(dominant_scope([]), None);
+    }
+
+    /// A flat series at `base` ms, with `spikes` mapping a sweep index to the
+    /// value measured in it.
+    fn flat(base: f64, len: usize, spikes: &[(usize, f64)]) -> Series {
+        (0..len)
+            .map(|i| {
+                let v = spikes.iter().find(|(at, _)| *at == i).map(|(_, v)| *v).unwrap_or(base);
+                (i as f64, Some(v))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_spike_on_one_target_alone_is_not_evidence() {
+        // Exactly the commonest shape in the recorded data: one responder
+        // takes 90 ms to answer while the others are untouched in the same
+        // sweep. It cannot have happened on the shared path.
+        let s = vec![
+            flat(12.0, 40, &[(10, 90.0)]),
+            flat(12.0, 40, &[]),
+            flat(16.0, 40, &[]),
+        ];
+        let out = find_spikes(&s);
+        assert!(out.correlated.is_empty());
+        assert_eq!(out.single, 1);
+    }
+
+    #[test]
+    fn a_spike_on_every_target_at_once_is() {
+        let s = vec![
+            flat(12.0, 40, &[(10, 90.0)]),
+            flat(12.0, 40, &[(10, 75.0)]),
+            flat(16.0, 40, &[(10, 88.0)]),
+        ];
+        let out = find_spikes(&s);
+        assert_eq!(out.single, 0);
+        assert_eq!(out.correlated.len(), 1);
+        assert_eq!(out.correlated[0].1, 3, "all three series counted");
+    }
+
+    #[test]
+    fn samples_from_one_sweep_group_despite_differing_timestamps() {
+        // The targets are probed one after another, so a sweep's samples never
+        // share an exact timestamp.
+        let a: Series = vec![(10.02, Some(90.0)), (11.0, Some(12.0))];
+        let b: Series = vec![(10.31, Some(80.0)), (11.3, Some(12.0))];
+        let mut a_full = flat(12.0, 10, &[]);
+        let mut b_full = flat(12.0, 10, &[]);
+        a_full.extend(a);
+        b_full.extend(b);
+        let out = find_spikes(&[a_full, b_full]);
+        assert_eq!(out.correlated.len(), 1);
+        assert_eq!(out.single, 0);
+    }
+
+    #[test]
+    fn the_bar_scales_with_what_the_line_normally_does() {
+        // 30 ms is an event on a 4 ms link.
+        let fast = find_spikes(&[flat(4.0, 40, &[(5, 30.0)]), flat(4.0, 40, &[(5, 30.0)])]);
+        assert_eq!(fast.correlated.len(), 1);
+
+        // The same 30 ms is ordinary on a link that normally sits at 90.
+        let slow = find_spikes(&[flat(90.0, 40, &[(5, 120.0)]), flat(90.0, 40, &[(5, 120.0)])]);
+        assert!(slow.correlated.is_empty());
+        assert_eq!(slow.single, 0);
+    }
+
+    #[test]
+    fn lost_packets_are_not_spikes() {
+        let s: Series = (0..20).map(|i| (i as f64, if i == 5 { None } else { Some(12.0) })).collect();
+        let out = find_spikes(&[s.clone(), s]);
+        assert!(out.correlated.is_empty());
+        assert_eq!(out.single, 0);
     }
 }

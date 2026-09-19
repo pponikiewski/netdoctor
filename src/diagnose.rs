@@ -2,16 +2,47 @@
 //!
 //! Each check produces Findings. Severity drives ordering in the UI, and a
 //! finding may point at the tweak that fixes it.
+//!
+//! A list of findings is not a diagnosis, though. "Jitter is high", "the
+//! signal is 60%" and "TCP autotuning is off" can all be true at once while
+//! the user still has no idea which of them is *the* reason a call breaks up.
+//! So the scan does two things a checklist does not:
+//!
+//! * It **cuts the chain into segments** — this PC, the router, the
+//!   provider's first hop, the open internet — and attributes each millisecond
+//!   and each lost packet to the segment that introduced it. Latency measured
+//!   only at the far end cannot tell a tired Wi-Fi card from a congested
+//!   provider, and those have opposite fixes.
+//! * It **reproduces the complaint** instead of only sampling an idle line.
+//!   Most "the internet is slow" is bufferbloat, which by definition is
+//!   invisible until something saturates the link.
+//!
+//! Those measurements are then collapsed into a single [`Verdict`]: one
+//! segment, how sure we are, what it costs the user in terms they recognise,
+//! and at most three actions worth taking.
 
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use crate::bandwidth::{self, BloatResult, Grade};
+use crate::cause::Confidence;
 use crate::i18n;
 use crate::monitor;
 use crate::probe::icmp;
 use crate::probe::netstate::{Medium, NetState};
 use crate::settings::Settings;
-use crate::store::{self, Store};
+use crate::store::{self, Stats, Store};
+
+/// Where the scan aims everything that has to leave the building.
+const ANCHOR: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
+/// The monitor's key for `ANCHOR`, which is how the baseline is looked up.
+const ANCHOR_KEY: &str = "cloudflare";
+/// A seven-day window is long enough to average out one bad evening and short
+/// enough that a line which genuinely changed does not stay judged by its past.
+const BASELINE_WINDOW_S: f64 = 7.0 * 86400.0;
+/// Below this, the median is noise rather than a baseline.
+const BASELINE_MIN_SAMPLES: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -70,42 +101,432 @@ impl Finding {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The verdict
+// ---------------------------------------------------------------------------
+
+/// A link in the chain between the user and whatever they were trying to
+/// reach. The whole point of the scan is to name exactly one of these, because
+/// each has a different owner and a different fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Segment {
+    /// This PC to the router: Wi-Fi, the cable, the adapter's own settings.
+    Lan,
+    /// The queue on the way out. Owned by the router, felt on the provider's
+    /// uplink, which is why it deserves naming separately from either.
+    Uplink,
+    /// The router to the provider's network.
+    Isp,
+    /// Past the provider, where nobody local has any influence.
+    Internet,
+    /// Name resolution, which fails independently of the path working.
+    Dns,
+    /// Nothing on the wire — a setting on this machine.
+    Config,
+    /// Nothing found.
+    Healthy,
+}
+
+impl Segment {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Segment::Lan => i18n::seg_lan(),
+            Segment::Uplink => i18n::seg_uplink(),
+            Segment::Isp => i18n::seg_isp(),
+            Segment::Internet => i18n::seg_internet(),
+            Segment::Dns => i18n::seg_dns(),
+            Segment::Config => i18n::seg_config(),
+            Segment::Healthy => i18n::seg_healthy(),
+        }
+    }
+}
+
+/// One thing worth doing, in the order it is worth doing it.
+#[derive(Debug, Clone)]
+pub struct Action {
+    pub text: String,
+    pub tweak_id: Option<String>,
+}
+
+/// The answer the user came for.
+#[derive(Debug, Clone)]
+pub struct Verdict {
+    pub segment: Segment,
+    pub confidence: Confidence,
+    /// Where the round trip is actually spent, when it could be split.
+    pub split: Option<String>,
+    /// The consequence, in terms the user recognises from using the machine.
+    pub cost: String,
+    pub actions: Vec<Action>,
+}
+
+impl Default for Verdict {
+    fn default() -> Self {
+        Verdict {
+            segment: Segment::Healthy,
+            confidence: Confidence::Possible,
+            split: None,
+            cost: i18n::verdict_none().into(),
+            actions: Vec::new(),
+        }
+    }
+}
+
+/// Everything the scan measured, kept separate from how it is worded. The
+/// verdict is read off these numbers; the findings only describe them.
+#[derive(Debug, Clone, Default)]
+pub struct Measurements {
+    pub gateway: Option<Stats>,
+    /// The first hop past the router, when it is willing to answer.
+    pub edge: Option<(Ipv4Addr, Stats)>,
+    /// That hop turned out to be the user's own second box rather than the
+    /// provider's, so its latency belongs to the LAN share, not the ISP's.
+    pub edge_is_local: bool,
+    pub internet: Option<Stats>,
+    /// This machine's own median RTT and how many samples it rests on.
+    pub baseline: Option<(f64, usize)>,
+    pub dns_ms: Option<f64>,
+    pub tcp_ms: Option<f64>,
+    pub tcp_blocked: bool,
+    pub load: Option<BloatResult>,
+    pub medium: Medium,
+    pub signal_pct: Option<u32>,
+}
+
+impl Measurements {
+    fn avg(stats: &Option<Stats>) -> Option<f64> {
+        stats.as_ref().and_then(|s| s.avg)
+    }
+
+    /// Milliseconds contributed by each segment, rather than the cumulative
+    /// round trip each probe happens to report. A hop that answers in 40 ms
+    /// when the router answers in 38 is not slow; it inherited 38 of them.
+    fn shares(&self) -> Option<(f64, f64, f64)> {
+        let lan = Self::avg(&self.gateway)?;
+        let far = Self::avg(&self.internet)?;
+        match self.edge.as_ref().and_then(|(_, s)| s.avg) {
+            // A hop that is still the user's own equipment extends the local
+            // chain instead of starting the provider's; charging its
+            // milliseconds to the ISP is how a double-NAT household ends up
+            // filing a support ticket about its own spare router.
+            Some(edge) if self.edge_is_local => Some((edge, 0.0, (far - edge).max(0.0))),
+            Some(edge) => Some((lan, (edge - lan).max(0.0), (far - edge).max(0.0))),
+            // Without the middle hop the remainder cannot be attributed, so it
+            // is reported whole rather than guessed at.
+            None => Some((lan, 0.0, (far - lan).max(0.0))),
+        }
+    }
+}
+
+/// The result of a scan: the measurements' story, and the answer.
+#[derive(Debug, Clone, Default)]
+pub struct Scan {
+    pub findings: Vec<Finding>,
+    pub verdict: Verdict,
+}
+
 pub type Progress = Arc<dyn Fn(&str, f32) + Send + Sync>;
 
-/// Run every check. Ordered worst-first on return.
+/// Run every check. Findings come back worst-first, with a verdict on top.
+///
+/// `deep` adds the load test. It costs about twenty seconds and briefly
+/// saturates the line, which is exactly why it is the check that finds what
+/// the others cannot — but it is not something to do behind the user's back.
 pub fn scan(
     net: &NetState,
     store: &Store,
     settings: &Settings,
+    deep: bool,
     progress: Option<Progress>,
-) -> Vec<Finding> {
-    let steps: Vec<(&str, fn(&NetState, &Store, &Settings) -> Vec<Finding>)> = vec![
-        (i18n::step_medium(), check_medium),
-        (i18n::step_wifi(), check_wifi),
-        (i18n::step_power(), check_power),
-        (i18n::step_dns(), check_dns),
-        (i18n::step_link(), check_local_link),
-        (i18n::step_internet(), check_internet),
-        (i18n::step_mtu(), check_mtu),
-        (i18n::step_tcp(), check_tcp),
-        (i18n::step_history(), check_history),
-    ];
-
-    let total = steps.len() as f32;
-    let mut out = Vec::new();
-    for (i, (label, f)) in steps.iter().enumerate() {
+) -> Scan {
+    let say = |label: &str, frac: f32| {
         if let Some(p) = &progress {
-            p(label, i as f32 / total);
+            p(label, frac);
         }
-        out.extend(f(net, store, settings));
+    };
+
+    let mut m = Measurements {
+        medium: net.medium.clone(),
+        signal_pct: net.signal_pct,
+        ..Default::default()
+    };
+    let mut out = Vec::new();
+
+    say(i18n::step_medium(), 0.02);
+    out.extend(check_medium(net, store, settings));
+
+    say(i18n::step_wifi(), 0.06);
+    out.extend(check_wifi(net, store, settings));
+
+    say(i18n::step_power(), 0.10);
+    out.extend(check_power(net, store, settings));
+
+    // Every probe that touches the wire runs at once. Partly for the twenty
+    // seconds it saves, but mainly because the segment split is a subtraction
+    // between three measurements: taking them ten seconds apart, across a link
+    // whose whole complaint is that it changes, compares numbers that were
+    // never true at the same moment.
+    say(i18n::step_path(), 0.14);
+    let wire = measure_wire(net, settings);
+
+    out.extend(report_dns(net, &wire, &mut m));
+    out.extend(report_link(net, &wire, &mut m));
+    out.extend(report_edge(&wire, &mut m));
+    out.extend(report_internet(store, settings, &wire, &mut m));
+    out.extend(report_reachability(&wire, &mut m));
+
+    say(i18n::step_mtu(), 0.50);
+    out.extend(check_mtu(net, store, settings));
+
+    say(i18n::step_tcp(), 0.56);
+    out.extend(check_tcp(net, store, settings));
+
+    if deep {
+        say(i18n::step_load(), 0.60);
+        let inner = progress.clone();
+        // The load test reports its own 0..1; fold it into the tail of ours.
+        let nested: Option<bandwidth::Progress> = inner.map(|p| {
+            Arc::new(move |label: &str, frac: f32| p(label, 0.60 + frac * 0.32))
+                as bandwidth::Progress
+        });
+        out.extend(check_load(settings, nested, &mut m));
+    } else {
+        out.push(Finding::new(
+            "load",
+            i18n::f_load_skipped(),
+            Severity::Info,
+            i18n::f_load_skipped_detail(),
+        ));
     }
-    if let Some(p) = &progress {
-        p(i18n::step_done(), 1.0);
-    }
+
+    say(i18n::step_history(), 0.94);
+    out.extend(check_history(net, store, settings));
+
+    say(i18n::step_done(), 1.0);
 
     // Worst first, stable within a severity so related findings stay together.
     out.sort_by(|a, b| b.severity.cmp(&a.severity));
-    out
+    let verdict = judge(&out, &m);
+    Scan { findings: out, verdict }
+}
+
+/// Turn the measurements into one segment, one cost and an ordered plan.
+///
+/// The order below is the order of certainty, not of severity: a segment that
+/// went silent is known, a segment that lost packets is nearly known, and a
+/// segment that merely contributed the most milliseconds is an inference. The
+/// first rule that fires wins, so a hard break is never buried under a
+/// millisecond comparison.
+pub fn judge(findings: &[Finding], m: &Measurements) -> Verdict {
+    let shares = m.shares();
+    let split = shares.map(|(lan, isp, far)| i18n::verdict_split(lan, isp, far));
+
+    let has = |key: &str| findings.iter().any(|f| f.key == key);
+    // Several keys are emitted whatever the outcome — `medium` describes a
+    // healthy Wi-Fi link as readily as a missing one — so a rule that keys off
+    // a failure has to ask for the severity as well, not just the subject.
+    let failed = |key: &str| {
+        findings.iter().any(|f| f.key == key && f.severity == Severity::Critical)
+    };
+    let worst_of = |seg: Segment| actions_for(findings, seg);
+
+    let mut v = Verdict { split: split.clone(), ..Default::default() };
+
+    // 1. Hard breaks. Each of these is an observation, not a judgement.
+    // A mute middle hop is deliberately absent: routers that drop their own
+    // ICMP are ordinary, and `internet_silent` is what distinguishes one of
+    // those from a provider that has actually gone down.
+    let broken = [
+        ("medium", Segment::Lan),
+        ("gateway_silent", Segment::Lan),
+        ("internet_silent", Segment::Isp),
+        ("tcp_blocked", Segment::Internet),
+        ("dns_resolve", Segment::Dns),
+    ];
+    for (key, seg) in broken {
+        if failed(key) {
+            v.segment = seg;
+            v.confidence = Confidence::Certain;
+            v.cost = cost_for(seg, m);
+            v.actions = worst_of(seg);
+            return v;
+        }
+    }
+
+    // 2. Loss, attributed to the first segment that shows it. Loss that is
+    //    already present at the router did not come from the internet.
+    let loss_seg = loss_origin(m);
+    if let Some((seg, pct)) = loss_seg {
+        v.segment = seg;
+        v.confidence = Confidence::Likely;
+        v.cost = i18n::cost_loss(pct);
+        v.actions = worst_of(seg);
+        return v;
+    }
+
+    // 3. Bufferbloat. An idle line that falls apart the moment it is used is
+    //    the commonest cause of "it's slow" and never shows up in a ping.
+    if let Some(load) = &m.load {
+        if matches!(load.grade_or_unknown(), Grade::D | Grade::F) {
+            let bump = load.bump_ms.unwrap_or(0.0);
+            v.segment = Segment::Uplink;
+            v.confidence = Confidence::Certain;
+            v.cost = i18n::cost_load(bump);
+            v.actions = worst_of(Segment::Uplink);
+            return v;
+        }
+    }
+
+    // 4. Latency, blamed on whichever segment actually contributed it. The
+    //    threshold is this machine's own history where there is enough of it,
+    //    so a satellite link is not told it is broken for being satellite.
+    if let Some((lan, isp, far)) = shares {
+        let total = lan + isp + far;
+        let over_baseline = m
+            .baseline
+            .map(|(usual, _)| total > usual * 1.6 && total - usual > 15.0)
+            .unwrap_or(false);
+        if over_baseline || has("ping") {
+            let seg = if lan >= isp && lan >= far {
+                Segment::Lan
+            } else if isp >= far {
+                Segment::Isp
+            } else {
+                Segment::Internet
+            };
+            v.segment = seg;
+            // Attribution without the middle hop is an educated guess.
+            v.confidence = if m.edge.is_some() { Confidence::Likely } else { Confidence::Possible };
+            v.cost = i18n::cost_latency(total);
+            v.actions = worst_of(seg);
+            return v;
+        }
+    }
+
+    // 5. Jitter. On Wi-Fi it is almost always the air; on a cable it is not.
+    if has("jitter") {
+        let jitter = m.internet.as_ref().and_then(|s| s.jitter).unwrap_or(0.0);
+        let wifi = m.medium == Medium::Wifi;
+        let seg = if wifi { Segment::Lan } else { Segment::Isp };
+        v.segment = seg;
+        // Unstable latency on a Wi-Fi link that is also weak is not a
+        // coincidence worth hedging about.
+        v.confidence = match m.signal_pct {
+            Some(pct) if wifi && pct < 65 => Confidence::Certain,
+            _ => Confidence::Likely,
+        };
+        v.cost = i18n::cost_jitter(jitter);
+        v.actions = worst_of(seg);
+        return v;
+    }
+
+    // 6. DNS. The line is fine; the wait happens before it is used.
+    if has("dns_slow") || has("dns_router") {
+        v.segment = Segment::Dns;
+        v.confidence = Confidence::Likely;
+        v.cost = i18n::cost_dns(m.dns_ms.unwrap_or(0.0));
+        v.actions = worst_of(Segment::Dns);
+        return v;
+    }
+
+    // 7. Nothing is wrong *now*. A scan is a thirty-second window, and the
+    //    complaint that brought the user here is usually about something that
+    //    happens twice an evening. The recorded outages are the only evidence
+    //    of that, and a clean instant reading must not be allowed to overrule
+    //    them — it can only say the fault was not happening while we looked.
+    //    `hist_other` records a degradation whose scope was never established,
+    //    so it is skipped rather than blamed on the nearest segment.
+    let recorded = findings
+        .iter()
+        .filter(|f| f.key.starts_with("hist_"))
+        .find_map(|f| segment_of(&f.key).map(|seg| (f, seg)));
+    if let Some((f, seg)) = recorded {
+        v.segment = seg;
+        v.confidence = Confidence::Possible;
+        v.cost = i18n::cost_intermittent().into();
+        v.actions = worst_of(seg);
+        if v.actions.is_empty() && !f.advice.is_empty() {
+            v.actions = vec![Action { text: f.advice.clone(), tweak_id: f.tweak_id.clone() }];
+        }
+        return v;
+    }
+
+    // 8. Nothing is wrong on the wire, but something on this machine is set
+    //    against itself. Worth saying, never worth alarming about.
+    let config = worst_of(Segment::Config);
+    if !config.is_empty() {
+        v.segment = Segment::Config;
+        v.confidence = Confidence::Possible;
+        v.cost = i18n::cost_config().into();
+        v.actions = config;
+        return v;
+    }
+
+    v.segment = Segment::Healthy;
+    v.confidence = Confidence::Certain;
+    v.cost = i18n::cost_none().into();
+    v
+}
+
+/// The first segment along the chain where packets start going missing.
+fn loss_origin(m: &Measurements) -> Option<(Segment, f64)> {
+    let lan = m.gateway.as_ref().map(|s| s.loss_pct).unwrap_or(0.0);
+    let edge = m.edge.as_ref().map(|(_, s)| s.loss_pct).unwrap_or(0.0);
+    let far = m.internet.as_ref().map(|s| s.loss_pct).unwrap_or(0.0);
+    // A hop that deprioritises its own ICMP replies reports loss that the
+    // traffic through it never sees, so the middle hop only counts as the
+    // origin when the far end is losing packets too.
+    if lan > 1.0 {
+        Some((Segment::Lan, lan))
+    } else if edge > 1.0 && far > 1.0 {
+        // Same rule as the latency split: a hop we walked to that is still the
+        // user's own equipment is part of their LAN, whatever it costs.
+        let seg = if m.edge_is_local { Segment::Lan } else { Segment::Isp };
+        Some((seg, edge.max(far)))
+    } else if far > 1.0 {
+        Some((Segment::Internet, far))
+    } else {
+        None
+    }
+}
+
+/// The findings that belong to a segment, worst first, as at most three
+/// actions. A plan longer than three items is a list again.
+fn actions_for(findings: &[Finding], seg: Segment) -> Vec<Action> {
+    findings
+        .iter()
+        .filter(|f| f.severity >= Severity::Warn || f.tweak_id.is_some())
+        .filter(|f| segment_of(&f.key) == Some(seg))
+        .filter(|f| !f.advice.is_empty())
+        .take(3)
+        .map(|f| Action { text: f.advice.clone(), tweak_id: f.tweak_id.clone() })
+        .collect()
+}
+
+/// Which segment a finding speaks about. Keys are stable; titles are not.
+fn segment_of(key: &str) -> Option<Segment> {
+    Some(match key {
+        "medium" | "signal" | "band" | "gateway" | "gateway_silent" | "hist_lan" => Segment::Lan,
+        "power" | "mtu" | "tcp_autotuning" | "net_throttling" | "hist_adapter" => Segment::Config,
+        "load" => Segment::Uplink,
+        "edge" | "edge_silent" | "internet_silent" | "hist_isp" => Segment::Isp,
+        "loss" | "jitter" | "ping" | "internet" | "baseline" | "tcp_blocked" | "tcp_slow" => {
+            Segment::Internet
+        }
+        "dns_resolve" | "dns_slow" | "dns_router" | "hist_dns" => Segment::Dns,
+        _ => return None,
+    })
+}
+
+fn cost_for(seg: Segment, m: &Measurements) -> String {
+    match seg {
+        Segment::Dns => i18n::cost_dns(m.dns_ms.unwrap_or(0.0)),
+        Segment::Uplink => i18n::cost_load(
+            m.load.as_ref().and_then(|l| l.bump_ms).unwrap_or(0.0),
+        ),
+        Segment::Healthy => i18n::cost_none().into(),
+        _ => i18n::cost_down().into(),
+    }
 }
 
 pub fn summarise(findings: &[Finding]) -> String {
@@ -226,10 +647,7 @@ fn check_power(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     }
 }
 
-fn check_dns(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
-    use crate::probe::netstate::dns_lookup_ms;
-    use crate::settings::DNS_TEST_HOST;
-
+fn report_dns(net: &NetState, wire: &Wire, m: &mut Measurements) -> Vec<Finding> {
     let servers = if net.dns_servers.is_empty() {
         i18n::f_dns_from_dhcp().to_string()
     } else {
@@ -237,7 +655,8 @@ fn check_dns(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     };
 
     let mut out = Vec::new();
-    let (ms, err) = dns_lookup_ms(DNS_TEST_HOST);
+    let (ms, err) = (wire.dns.0, wire.dns.1.clone());
+    m.dns_ms = ms;
     match (ms, err.is_empty()) {
         (_, false) => out.push(
             Finding::new("dns_resolve", i18n::f_dns_failing(), Severity::Critical, err)
@@ -283,10 +702,130 @@ fn check_dns(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     out
 }
 
-fn check_local_link(net: &NetState, _s: &Store, cfg: &Settings) -> Vec<Finding> {
+/// Formats a `Stats` the way every latency finding shows it.
+fn stats_line(s: &Stats) -> String {
+    i18n::f_stats_line(
+        s.avg.unwrap_or(0.0),
+        s.min.unwrap_or(0.0),
+        s.max.unwrap_or(0.0),
+        s.jitter.unwrap_or(0.0),
+        s.loss_pct,
+    )
+}
+
+/// The cadence every segment is measured at. Slow enough that three series
+/// running side by side stay well under the traffic of a single web page, so
+/// the scan measures the link rather than itself.
+const PROBE_GAP_MS: u64 = 60;
+
+fn measure(host: Ipv4Addr, count: usize, cfg: &Settings) -> Stats {
+    let samples = icmp::ping_series(host, count, cfg.ping_timeout_ms, PROBE_GAP_MS);
+    let rtts: Vec<f64> = samples.iter().flatten().copied().collect();
+    store::summarise(samples.len(), &rtts)
+}
+
+/// The hop past the gateway that the scan measured, and whether it turned out
+/// to be someone else's equipment or still the user's own.
+struct Edge {
+    addr: Ipv4Addr,
+    stats: Stats,
+    /// True when every hop we could see is still inside the house: a second
+    /// router, a mesh node, a modem left in router mode. Blaming the provider
+    /// for latency added by the user's own spare router is exactly the kind of
+    /// wrong answer this scan exists to stop giving.
+    local: bool,
+}
+
+/// Every reading that has to touch the network, taken simultaneously.
+#[derive(Default)]
+struct Wire {
+    gateway: Option<Stats>,
+    edge: Option<Edge>,
+    internet: Option<Stats>,
+    tcp: Option<Result<f64, String>>,
+    dns: (Option<f64>, String),
+}
+
+/// 100.64.0.0/10, the carrier-grade NAT range. Unlike the RFC 1918 ranges this
+/// one is unambiguous: a household never numbers itself out of it, so a hop
+/// here is the provider however private the address looks.
+fn is_cgnat(a: Ipv4Addr) -> bool {
+    let o = a.octets();
+    o[0] == 100 && (64..128).contains(&o[1])
+}
+
+/// Walk the path and pick the hop that represents the provider's edge.
+///
+/// The first hop past the gateway is not automatically the provider: on a
+/// double-NAT setup — a second router, an ISP box left in router mode, a mesh
+/// controller — it is another of the user's own devices, and charging its
+/// latency to the provider produces a confident, wrong verdict. So a private
+/// hop is walked past, and only a public or CGNAT address is treated as the
+/// edge. If the whole visible path is private, the last private hop is
+/// measured anyway and flagged as local, because the milliseconds are real
+/// even when the owner is not who we assumed.
+fn find_edge(gw: Ipv4Addr, cfg: &Settings) -> Option<(Ipv4Addr, bool)> {
+    // Six hops clears the customer edge on any residential line, and a short
+    // walk keeps a path of silent routers from costing the user a minute.
+    let hops = icmp::traceroute(ANCHOR, 6, cfg.ping_timeout_ms);
+    let mut first_private = None;
+
+    for addr in hops.iter().filter_map(|h| h.addr) {
+        if addr == gw {
+            continue;
+        }
+        if !addr.is_private() || is_cgnat(addr) {
+            return Some((addr, false));
+        }
+        first_private.get_or_insert(addr);
+    }
+    first_private.map(|addr| (addr, true))
+}
+
+/// Take every network reading at once.
+///
+/// These probes are independent, and running them concurrently is worth it
+/// twice over: the scan stops spending half a minute waiting on timeouts one
+/// at a time, and — the part that actually matters — the three latencies the
+/// segment split subtracts from each other finally describe the same instant.
+fn measure_wire(net: &NetState, cfg: &Settings) -> Wire {
+    use crate::probe::netstate::dns_lookup_ms;
+    use crate::settings::DNS_TEST_HOST;
+
+    let mut wire = Wire::default();
+
+    std::thread::scope(|s| {
+        let gateway = net.gateway.map(|gw| s.spawn(move || measure(gw, 10, cfg)));
+        let internet = s.spawn(|| measure(ANCHOR, 15, cfg));
+        let tcp = s.spawn(|| tcp_probe(cfg));
+        let dns = s.spawn(|| dns_lookup_ms(DNS_TEST_HOST));
+        // The traceroute has to finish before its result can be pinged, so the
+        // whole two-step sequence lives on one thread rather than blocking the
+        // others behind it.
+        let edge = net.gateway.map(|gw| {
+            s.spawn(move || {
+                find_edge(gw, cfg).map(|(addr, local)| Edge {
+                    addr,
+                    stats: measure(addr, 10, cfg),
+                    local,
+                })
+            })
+        });
+
+        wire.gateway = gateway.and_then(|h| h.join().ok());
+        wire.internet = internet.join().ok();
+        wire.tcp = tcp.join().ok();
+        wire.dns = dns.join().unwrap_or((None, String::new()));
+        wire.edge = edge.and_then(|h| h.join().ok()).flatten();
+    });
+
+    wire
+}
+
+fn report_link(net: &NetState, wire: &Wire, m: &mut Measurements) -> Vec<Finding> {
     let Some(gw) = net.gateway else {
         return vec![Finding::new(
-            "gateway",
+            "gateway_silent",
             i18n::f_no_gateway(),
             Severity::Critical,
             i18n::f_no_gateway_detail(),
@@ -294,30 +833,25 @@ fn check_local_link(net: &NetState, _s: &Store, cfg: &Settings) -> Vec<Finding> 
         .advise(i18n::f_no_gateway_advice())];
     };
 
-    let samples = icmp::ping_series(gw, 10, cfg.ping_timeout_ms);
-    let rtts: Vec<f64> = samples.iter().flatten().copied().collect();
-    let stats = store::summarise(samples.len(), &rtts);
+    let stats = match &wire.gateway {
+        Some(s) if s.avg.is_some() => s.clone(),
+        _ => {
+            return vec![Finding::new(
+                "gateway_silent",
+                i18n::f_router_silent(),
+                Severity::Critical,
+                i18n::f_router_silent_detail(&gw.to_string()),
+            )
+            .advise(i18n::f_router_silent_advice())]
+        }
+    };
 
-    if rtts.is_empty() {
-        return vec![Finding::new(
-            "gateway",
-            i18n::f_router_silent(),
-            Severity::Critical,
-            i18n::f_router_silent_detail(&gw.to_string()),
-        )
-        .advise(i18n::f_router_silent_advice())];
-    }
+    let detail = stats_line(&stats);
+    let unstable =
+        stats.loss_pct > 0.0 || stats.avg.unwrap_or(0.0) > 15.0 || stats.jitter.unwrap_or(0.0) > 10.0;
+    m.gateway = Some(stats);
 
-    let detail = i18n::f_stats_line(
-        stats.avg.unwrap_or(0.0),
-        stats.min.unwrap_or(0.0),
-        stats.max.unwrap_or(0.0),
-        stats.jitter.unwrap_or(0.0),
-        stats.loss_pct,
-    );
-
-    if stats.loss_pct > 0.0 || stats.avg.unwrap_or(0.0) > 15.0 || stats.jitter.unwrap_or(0.0) > 10.0
-    {
+    if unstable {
         vec![Finding::new("gateway", i18n::f_link_unstable(), Severity::Warn, detail)
             .advise(i18n::f_link_unstable_advice())]
     } else {
@@ -325,43 +859,101 @@ fn check_local_link(net: &NetState, _s: &Store, cfg: &Settings) -> Vec<Finding> 
     }
 }
 
-fn check_internet(_net: &NetState, _s: &Store, cfg: &Settings) -> Vec<Finding> {
-    let host = Ipv4Addr::new(1, 1, 1, 1);
-    let samples = icmp::ping_series(host, 15, cfg.ping_timeout_ms);
-    let rtts: Vec<f64> = samples.iter().flatten().copied().collect();
-    let stats = store::summarise(samples.len(), &rtts);
-
-    if rtts.is_empty() {
+/// What the hop past the router turned out to be. This is the measurement that
+/// makes the rest of the scan able to assign blame at all: without it, every
+/// millisecond past the gateway is one undivided lump, and "your Wi-Fi" and
+/// "your provider" look identical.
+fn report_edge(wire: &Wire, m: &mut Measurements) -> Vec<Finding> {
+    let Some(edge) = &wire.edge else {
         return vec![Finding::new(
-            "internet",
+            "edge_unknown",
+            i18n::f_edge_unknown(),
+            Severity::Info,
+            i18n::f_edge_unknown_detail(),
+        )];
+    };
+
+    let addr = edge.addr.to_string();
+    let Some(avg) = edge.stats.avg else {
+        // On the path but mute. Routers that drop ICMP entirely are common, so
+        // this is only alarming when the far end is also unreachable — which
+        // the internet check decides, not this one.
+        return vec![Finding::new(
+            "edge_unknown",
+            i18n::f_edge_unknown(),
+            Severity::Info,
+            i18n::f_edge_silent_detail(&addr),
+        )];
+    };
+
+    let detail = i18n::f_edge_detail(&addr, &stats_line(&edge.stats));
+    let added = avg - Measurements::avg(&m.gateway).unwrap_or(0.0);
+    let loss = edge.stats.loss_pct;
+    m.edge = Some((edge.addr, edge.stats.clone()));
+    m.edge_is_local = edge.local;
+
+    // A second box of the user's own is a different finding with a different
+    // owner, even when the numbers coming off it are identical.
+    if edge.local {
+        return if added > 20.0 {
+            vec![Finding::new("gateway", i18n::f_local_hop_slow(&addr, added), Severity::Warn, detail)
+                .advise(i18n::f_local_hop_slow_advice())]
+        } else {
+            vec![Finding::new("edge", i18n::f_local_hop(&addr, avg), Severity::Info, detail)
+                .advise(i18n::f_local_hop_advice())]
+        };
+    }
+
+    if loss > 2.0 {
+        vec![Finding::new("edge", i18n::f_edge_lossy(loss), Severity::Warn, detail)
+            .advise(i18n::f_edge_lossy_advice())]
+    } else if added > 40.0 {
+        vec![Finding::new("edge", i18n::f_edge_slow(added), Severity::Warn, detail)
+            .advise(i18n::f_edge_slow_advice())]
+    } else {
+        vec![Finding::new("edge", i18n::f_edge_found(&addr, avg), Severity::Good, detail)]
+    }
+}
+
+fn report_internet(
+    store: &Store,
+    cfg: &Settings,
+    wire: &Wire,
+    m: &mut Measurements,
+) -> Vec<Finding> {
+    let stats = wire.internet.clone().unwrap_or_default();
+
+    let Some(avg) = stats.avg else {
+        return vec![Finding::new(
+            "internet_silent",
             i18n::f_net_silent(),
             Severity::Critical,
             i18n::f_net_silent_detail(),
         )
         .advise(i18n::f_net_silent_advice())];
-    }
+    };
 
-    let avg = stats.avg.unwrap_or(0.0);
     let jitter = stats.jitter.unwrap_or(0.0);
     let spread = stats.max.unwrap_or(0.0) - stats.min.unwrap_or(0.0);
-    let detail = i18n::f_stats_line(
-        avg,
-        stats.min.unwrap_or(0.0),
-        stats.max.unwrap_or(0.0),
-        jitter,
-        stats.loss_pct,
-    );
+    let detail = stats_line(&stats);
+    let loss = stats.loss_pct;
+    m.internet = Some(stats);
+
+    // This machine's own history, where there is enough of it. A threshold
+    // from a settings file describes a hypothetical line; this describes the
+    // one in front of the user, and only it can say "worse than usual".
+    let history = store.stats(ANCHOR_KEY, BASELINE_WINDOW_S);
+    if history.count >= BASELINE_MIN_SAMPLES {
+        if let Some(usual) = history.avg {
+            m.baseline = Some((usual, history.count));
+        }
+    }
 
     let mut out = Vec::new();
-    if stats.loss_pct > cfg.loss_ok_pct {
+    if loss > cfg.loss_ok_pct {
         out.push(
-            Finding::new(
-                "loss",
-                i18n::f_loss(stats.loss_pct),
-                Severity::Critical,
-                detail.clone(),
-            )
-            .advise(i18n::f_loss_advice()),
+            Finding::new("loss", i18n::f_loss(loss), Severity::Critical, detail.clone())
+                .advise(i18n::f_loss_advice()),
         );
     }
     if jitter > cfg.jitter_ok_ms {
@@ -376,15 +968,131 @@ fn check_internet(_net: &NetState, _s: &Store, cfg: &Settings) -> Vec<Finding> {
                 .advise(i18n::f_ping_high_advice()),
         );
     }
+    if let Some((usual, count)) = m.baseline {
+        // A line that is normally 90 ms is not broken for being 90 ms, and one
+        // that is normally 8 ms is in trouble at 30 long before any fixed
+        // threshold would notice.
+        if avg > usual * 1.6 && avg - usual > 15.0 {
+            out.push(
+                Finding::new(
+                    "baseline",
+                    i18n::f_baseline_worse(avg, usual),
+                    Severity::Warn,
+                    i18n::f_baseline_detail(avg, usual, count),
+                )
+                .advise(i18n::f_baseline_advice()),
+            );
+        }
+    }
     if out.is_empty() {
-        out.push(Finding::new(
-            "internet",
-            i18n::f_net_ok(avg),
-            Severity::Good,
-            detail,
-        ));
+        out.push(Finding::new("internet", i18n::f_net_ok(avg), Severity::Good, detail));
     }
     out
+}
+
+/// Ping proves a path exists. It does not prove anything the user cares about
+/// can travel down it. A captive portal, a corporate firewall or a misbehaving
+/// proxy all answer ICMP happily while every page times out, and that failure
+/// is invisible to every other check in this scan.
+///
+/// The probe goes to a literal address so that a broken resolver cannot be
+/// mistaken for a broken transport — DNS is checked separately, on purpose.
+fn tcp_probe(cfg: &Settings) -> Result<f64, String> {
+    let addr = SocketAddr::from((ANCHOR, 443));
+    let timeout = Duration::from_millis((cfg.ping_timeout_ms as u64 * 3).max(2000));
+    let started = Instant::now();
+    match TcpStream::connect_timeout(&addr, timeout) {
+        Ok(_) => Ok(started.elapsed().as_secs_f64() * 1000.0),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn report_reachability(wire: &Wire, m: &mut Measurements) -> Vec<Finding> {
+    let host = ANCHOR.to_string();
+    let Some(result) = &wire.tcp else {
+        return Vec::new();
+    };
+
+    match result {
+        Err(e) => {
+            m.tcp_blocked = true;
+            // Only a contradiction is interesting: if ICMP failed too, the
+            // internet check already said so and this adds nothing.
+            if m.internet.is_none() {
+                return Vec::new();
+            }
+            vec![Finding::new(
+                "tcp_blocked",
+                i18n::f_tcp_blocked(),
+                Severity::Critical,
+                i18n::f_tcp_blocked_detail(&host, e),
+            )
+            .advise(i18n::f_tcp_blocked_advice())]
+        }
+        Ok(ms) => {
+            let ms = *ms;
+            m.tcp_ms = Some(ms);
+            let ping = Measurements::avg(&m.internet).unwrap_or(0.0);
+            let detail = i18n::f_tcp_detail(&host, ms, ping);
+            // One round trip to open, so anything far above the ping to the
+            // same address is something in the middle, not the distance.
+            if ping > 0.0 && ms > ping * 4.0 + 100.0 {
+                vec![Finding::new("tcp_slow", i18n::f_tcp_slow(ms), Severity::Warn, detail)
+                    .advise(i18n::f_tcp_slow_advice())]
+            } else {
+                vec![Finding::new("tcp", i18n::f_tcp_ok(&host, ms), Severity::Good, detail)]
+            }
+        }
+    }
+}
+
+/// The check that reproduces the complaint instead of sampling around it.
+///
+/// An idle line says nothing about a line in use. Bufferbloat — a fat queue in
+/// the router or the modem that fills the moment a transfer starts and holds
+/// every other packet behind it — is the ordinary reason a connection that
+/// benchmarks well still drops calls, and no amount of idle pinging will ever
+/// show it.
+fn check_load(
+    cfg: &Settings,
+    progress: Option<bandwidth::Progress>,
+    m: &mut Measurements,
+) -> Vec<Finding> {
+    // Shorter than the dedicated tab's run: enough to fill the queue and read
+    // the grade, not enough to make a scan feel like a speed test.
+    let res = bandwidth::run(
+        ANCHOR,
+        Duration::from_secs(4),
+        Duration::from_secs(8),
+        cfg.ping_timeout_ms,
+        progress,
+    );
+
+    if !res.error.is_empty() && res.grade.is_none() {
+        m.load = Some(res.clone());
+        return vec![Finding::new("load", i18n::f_load_skipped(), Severity::Info, res.error)];
+    }
+
+    let bump = res.bump_ms.unwrap_or(0.0);
+    let grade = res.grade_or_unknown();
+    let detail = i18n::f_load_detail(
+        res.idle_avg.unwrap_or(0.0),
+        res.loaded_avg.unwrap_or(0.0),
+        res.mbps.unwrap_or(0.0),
+        grade.letter(),
+    );
+    m.load = Some(res);
+
+    match grade {
+        Grade::D | Grade::F => {
+            vec![Finding::new("load", i18n::f_load_bad(bump), Severity::Critical, detail)
+                .advise(i18n::f_load_bad_advice())]
+        }
+        Grade::C => vec![Finding::new("load", i18n::f_load_bad(bump), Severity::Warn, detail)
+            .advise(i18n::f_load_bad_advice())],
+        _ => vec![Finding::new("load", i18n::f_load_ok(bump), Severity::Good, detail)
+            .advise(i18n::f_load_ok_advice())],
+    }
 }
 
 fn check_mtu(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
@@ -592,12 +1300,196 @@ mod tests {
     fn a_full_scan_of_the_live_machine_produces_findings() {
         let net = crate::probe::netstate::read();
         let store = Store::open_in_memory().unwrap();
-        let findings = scan(&net, &store, &Settings::default(), None);
-        assert!(!findings.is_empty());
-        assert!(findings.windows(2).all(|w| w[0].severity >= w[1].severity));
+        // Without the load test: a unit test has no business saturating the
+        // machine's uplink for twelve seconds.
+        let scan = scan(&net, &store, &Settings::default(), false, None);
+        assert!(!scan.findings.is_empty());
+        assert!(scan.findings.windows(2).all(|w| w[0].severity >= w[1].severity));
         // Every finding must be presentable: a title and something to show.
-        for f in &findings {
+        for f in &scan.findings {
             assert!(!f.title.is_empty(), "finding {} has no title", f.key);
         }
+        assert!(!scan.verdict.cost.is_empty());
+    }
+
+    /// Stats as the scan would have measured them, so the judging rules can be
+    /// exercised without a network.
+    fn stats(avg: f64, loss: f64) -> Stats {
+        Stats {
+            count: 10,
+            loss_pct: loss,
+            avg: Some(avg),
+            min: Some(avg),
+            max: Some(avg),
+            jitter: Some(0.0),
+        }
+    }
+
+    #[test]
+    fn latency_is_charged_to_the_segment_that_introduced_it() {
+        // 4 ms to the router, 70 to the provider's first hop, 74 to the world:
+        // the provider's edge added 66 of the 74 and owns the verdict.
+        let m = Measurements {
+            gateway: Some(stats(4.0, 0.0)),
+            edge: Some((Ipv4Addr::new(10, 0, 0, 1), stats(70.0, 0.0))),
+            internet: Some(stats(74.0, 0.0)),
+            ..Default::default()
+        };
+        let (lan, isp, far) = m.shares().unwrap();
+        assert_eq!(lan, 4.0);
+        assert_eq!(isp, 66.0);
+        assert_eq!(far, 4.0);
+
+        let findings = vec![Finding::new("ping", "high", Severity::Warn, "")];
+        assert_eq!(judge(&findings, &m).segment, Segment::Isp);
+    }
+
+    #[test]
+    fn the_same_far_end_latency_can_be_the_users_own_wifi() {
+        // Identical 74 ms at the far end, but this time the router itself is
+        // 68 ms away. A checklist reports the same number; the split does not.
+        let m = Measurements {
+            gateway: Some(stats(68.0, 0.0)),
+            edge: Some((Ipv4Addr::new(10, 0, 0, 1), stats(72.0, 0.0))),
+            internet: Some(stats(74.0, 0.0)),
+            ..Default::default()
+        };
+        let findings = vec![Finding::new("ping", "high", Severity::Warn, "")];
+        assert_eq!(judge(&findings, &m).segment, Segment::Lan);
+    }
+
+    #[test]
+    fn a_second_router_of_your_own_is_not_the_provider() {
+        // The exact numbers from the isp case above, but the hop past the
+        // gateway is an RFC 1918 address — a double-NAT household. Charging
+        // those 66 ms to the provider produces a confident, wrong verdict and
+        // a support ticket about the user's own spare router.
+        let m = Measurements {
+            gateway: Some(stats(4.0, 0.0)),
+            edge: Some((Ipv4Addr::new(192, 168, 222, 1), stats(70.0, 0.0))),
+            edge_is_local: true,
+            internet: Some(stats(74.0, 0.0)),
+            ..Default::default()
+        };
+        let (lan, isp, far) = m.shares().unwrap();
+        assert_eq!(lan, 70.0, "the whole local chain counts as LAN");
+        assert_eq!(isp, 0.0);
+        assert_eq!(far, 4.0);
+
+        let findings = vec![Finding::new("ping", "high", Severity::Warn, "")];
+        assert_eq!(judge(&findings, &m).segment, Segment::Lan);
+    }
+
+    #[test]
+    fn carrier_grade_nat_is_the_provider_however_private_it_looks() {
+        // 100.64/10 is the one range a household never numbers itself out of.
+        assert!(is_cgnat(Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(is_cgnat(Ipv4Addr::new(100, 127, 255, 254)));
+        assert!(!is_cgnat(Ipv4Addr::new(100, 128, 0, 1)));
+        assert!(!is_cgnat(Ipv4Addr::new(100, 63, 255, 255)));
+        assert!(!is_cgnat(Ipv4Addr::new(192, 168, 1, 1)));
+    }
+
+    #[test]
+    fn loss_at_your_own_second_router_is_not_the_providers_loss() {
+        let m = Measurements {
+            gateway: Some(stats(3.0, 0.0)),
+            edge: Some((Ipv4Addr::new(192, 168, 222, 1), stats(12.0, 6.0))),
+            edge_is_local: true,
+            internet: Some(stats(20.0, 5.0)),
+            ..Default::default()
+        };
+        assert_eq!(loss_origin(&m), Some((Segment::Lan, 6.0)));
+    }
+
+    #[test]
+    fn loss_is_blamed_on_the_first_segment_that_shows_it() {
+        let lan = Measurements {
+            gateway: Some(stats(3.0, 8.0)),
+            internet: Some(stats(20.0, 9.0)),
+            ..Default::default()
+        };
+        assert_eq!(loss_origin(&lan), Some((Segment::Lan, 8.0)));
+
+        // A middle hop that rate-limits its own replies is not an outage, so
+        // loss there only counts when the far end loses packets too.
+        let quiet_hop = Measurements {
+            gateway: Some(stats(3.0, 0.0)),
+            edge: Some((Ipv4Addr::new(10, 0, 0, 1), stats(12.0, 30.0))),
+            internet: Some(stats(20.0, 0.0)),
+            ..Default::default()
+        };
+        assert_eq!(loss_origin(&quiet_hop), None);
+    }
+
+    #[test]
+    fn a_clean_idle_line_that_collapses_under_load_is_still_a_fault() {
+        let m = Measurements {
+            gateway: Some(stats(2.0, 0.0)),
+            edge: Some((Ipv4Addr::new(10, 0, 0, 1), stats(9.0, 0.0))),
+            internet: Some(stats(12.0, 0.0)),
+            load: Some(BloatResult {
+                idle_avg: Some(12.0),
+                loaded_avg: Some(460.0),
+                bump_ms: Some(448.0),
+                grade: Some(Grade::F),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let v = judge(&[], &m);
+        assert_eq!(v.segment, Segment::Uplink);
+        assert_eq!(v.confidence, Confidence::Certain);
+    }
+
+    /// A chain with nothing wrong anywhere along it.
+    fn clean() -> Measurements {
+        Measurements {
+            gateway: Some(stats(2.0, 0.0)),
+            edge: Some((Ipv4Addr::new(10, 0, 0, 1), stats(9.0, 0.0))),
+            internet: Some(stats(12.0, 0.0)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_healthy_chain_names_no_segment() {
+        assert_eq!(judge(&[], &clean()).segment, Segment::Healthy);
+    }
+
+    #[test]
+    fn a_working_wifi_link_is_not_read_as_a_missing_one() {
+        // `check_medium` reports the medium whichever way it comes out, so a
+        // rule keyed on the subject alone announced "connected over Wi-Fi" as
+        // a dead segment. Severity is what separates the two.
+        let findings = vec![
+            Finding::new("medium", "Connected over Wi-Fi", Severity::Info, "")
+                .advise("a cable is steadier"),
+        ];
+        assert_eq!(judge(&findings, &clean()).segment, Segment::Healthy);
+    }
+
+    #[test]
+    fn a_clean_reading_does_not_overrule_last_nights_outages() {
+        let findings = vec![
+            // Recorded, but its scope was never established: unusable for blame.
+            Finding::new("hist_other", "degraded quality", Severity::Critical, ""),
+            Finding::new("hist_isp", "WAN drops", Severity::Critical, "").advise("report it"),
+        ];
+        let v = judge(&findings, &clean());
+        assert_eq!(v.segment, Segment::Isp);
+        // Thirty seconds of clean measurements cannot confirm last night.
+        assert_eq!(v.confidence, Confidence::Possible);
+        assert!(!v.actions.is_empty());
+    }
+
+    #[test]
+    fn the_plan_never_runs_past_three_items() {
+        let findings: Vec<Finding> = (0..6)
+            .map(|i| {
+                Finding::new("signal", format!("w{i}"), Severity::Warn, "").advise("do something")
+            })
+            .collect();
+        assert!(actions_for(&findings, Segment::Lan).len() <= 3);
     }
 }

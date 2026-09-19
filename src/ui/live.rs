@@ -63,6 +63,13 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
         .flat_map(|(_, _, d)| d.last().map(|(ts, _)| *ts))
         .fold(f64::NEG_INFINITY, f64::max);
 
+    // Which of the visible spikes are evidence about the link and which are
+    // one responder taking its time. Without the split they look identical,
+    // and a healthy connection reads as ragged.
+    let plotted: Vec<crate::monitor::Series> =
+        series.iter().map(|(_, _, d)| d.clone()).collect();
+    let spikes = crate::monitor::find_spikes(&plotted);
+
     Plot::new("latency")
         .height(280.0)
         .allow_drag(false)
@@ -83,6 +90,15 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
             }
         })
         .show(ui, |plot_ui| {
+            // Behind the lines, so the marker reads as a band the data sits on
+            // rather than as another series drawn over it.
+            for (ts, n) in &spikes.correlated {
+                // Two targets together is already more than coincidence; all
+                // of them is unambiguous, and the marker says which it was.
+                let strength = if *n >= series.len().max(2) { 0.42 } else { 0.22 };
+                plot_ui.vline(VLine::new(ts - newest).color(YELLOW.linear_multiply(strength)));
+            }
+
             for (label, colour, data) in &series {
                 // Split at gaps so a lost packet breaks the line instead of
                 // drawing a straight segment across the outage.
@@ -135,8 +151,30 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new(i18n::live_red_line()).size(T_META).color(FG_DIM),
             );
+            ui.add_space(S_SM);
+            ui.label(
+                egui::RichText::new(i18n::live_amber_line())
+                    .size(T_META)
+                    .color(FG_DIM),
+            )
+            .on_hover_text(i18n::live_spike_explainer());
         });
     });
+
+    // The count is the part that reframes the chart: it says in one line how
+    // much of what looks like instability was never about the connection.
+    if spikes.single + spikes.correlated.len() > 0 {
+        ui.add_space(S_XS);
+        ui.label(
+            egui::RichText::new(i18n::live_spike_tally(
+                spikes.correlated.len(),
+                spikes.single,
+            ))
+            .size(T_META)
+            .color(FG_DIM),
+        )
+        .on_hover_text(i18n::live_spike_explainer());
+    }
 }
 
 fn cards(app: &mut App, ui: &mut egui::Ui) {

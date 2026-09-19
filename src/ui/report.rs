@@ -145,6 +145,21 @@ pub fn build(app: &App) -> String {
     if !app.findings.is_empty() {
         let _ = writeln!(out);
         let _ = writeln!(out, "{}", i18n::rep_sec_diagnosis());
+
+        // The verdict goes first and in full. A report is usually pasted into
+        // a ticket, and the segment split is the part that decides whether the
+        // person reading it is the right person to be reading it at all.
+        let v = &app.verdict;
+        let _ = writeln!(out, "  {}: {} — {}", i18n::verdict_heading(), v.segment.label(), v.confidence.label());
+        if let Some(split) = &v.split {
+            let _ = writeln!(out, "  {split}");
+        }
+        let _ = writeln!(out, "  {}", v.cost);
+        for (n, a) in v.actions.iter().enumerate() {
+            let _ = writeln!(out, "  {}. {}", n + 1, a.text);
+        }
+
+        let _ = writeln!(out);
         let _ = writeln!(out, "  {}", crate::diagnose::summarise(&app.findings));
         let _ = writeln!(out);
         for f in &app.findings {

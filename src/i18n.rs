@@ -219,6 +219,18 @@ poprosisz.";
         "Karta właśnie przełączyła się na inny access point.";
     live_x_now => "now", "teraz";
     live_red_line => "red line = lost packet", "czerwona linia = zgubiony pakiet";
+    live_amber_line => "amber band = every target at once", "bursztynowe pasmo = wszystkie cele naraz";
+    live_spike_explainer =>
+        "All the targets are reached over the same Wi-Fi link, the same router and the same \
+         uplink. A delay introduced anywhere on that shared stretch has to appear on all of them \
+         in the same sweep, so a spike on one target alone cannot have come from there — it is \
+         that one responder taking its time to answer a ping, which traffic passing through it \
+         never waits for. Only the marked sweeps say anything about your connection.",
+        "Wszystkie cele są osiągane przez to samo Wi-Fi, ten sam router i ten sam uplink. \
+         Opóźnienie powstałe gdziekolwiek na tym wspólnym odcinku musi pojawić się na wszystkich \
+         naraz, więc skok na jednym celu nie mógł stamtąd pochodzić — to ten jeden węzeł zwleka z \
+         odpowiedzią na pinga, na co ruch przez niego przechodzący nigdy nie czeka. Tylko \
+         oznaczone zamiatania mówią cokolwiek o Twoim łączu.";
     live_no_data => "no data", "brak danych";
 
     live_card_latency => "Latency (1.1.1.1)", "Opóźnienie (1.1.1.1)";
@@ -257,16 +269,26 @@ poprosisz.";
     diag_scan_starting => "Starting…", "Uruchamianie…";
     diag_btn_scan => "Run full scan", "Uruchom pełny skan";
     diag_no_scan_yet =>
-        "No scan yet. The scan measures the link to your router, latency and loss to the \
-         internet, DNS behaviour, Wi-Fi quality, MTU, TCP settings and the recorded outage \
-         history.",
-        "Jeszcze nie było skanu. Skan mierzy łącze do routera, opóźnienie i straty do \
-         internetu, zachowanie DNS, jakość Wi-Fi, MTU, ustawienia TCP oraz zapisaną historię \
-         awarii.";
+        "No scan yet. The scan splits the chain — this PC, the router, the provider's first hop, \
+         the open internet — and measures where latency and loss are actually introduced. It \
+         then saturates the line to see whether latency survives a download, checks that real \
+         TCP traffic gets through and not just ping, and compares everything against this \
+         machine's own history rather than a generic threshold.",
+        "Jeszcze nie było skanu. Skan rozcina łańcuch — ten komputer, router, pierwszy węzeł \
+         dostawcy, otwarty internet — i mierzy, gdzie naprawdę powstaje opóźnienie i gdzie giną \
+         pakiety. Potem obciąża łącze, żeby sprawdzić, czy opóźnienie przeżyje pobieranie, \
+         weryfikuje, czy przechodzi realny ruch TCP, a nie tylko ping, i porównuje wszystko z \
+         własną historią tego komputera zamiast ze sztywnym progiem.";
     diag_select_finding =>
         "Select a finding to see what it means.",
         "Wybierz wynik, żeby zobaczyć, co oznacza.";
     diag_btn_fix => "Fix this", "Napraw to";
+    diag_deep => "Include the load test", "Dołącz test obciążeniowy";
+    diag_deep_hint =>
+        "Adds about 20 seconds and briefly saturates the line. Without it the scan cannot see \
+         bufferbloat, which is the usual reason a fast connection feels slow.",
+        "Wydłuża skan o około 20 sekund i na chwilę obciąża łącze do pełna. Bez tego skan nie \
+         zobaczy bufferbloatu, a to zwykle on sprawia, że szybkie łącze wydaje się wolne.";
 
     // -----------------------------------------------------------------------
     // history tab
@@ -328,9 +350,8 @@ poprosisz.";
     step_medium => "Checking adapter and medium", "Sprawdzanie karty i medium";
     step_wifi => "Checking Wi-Fi quality", "Sprawdzanie jakości Wi-Fi";
     step_power => "Checking adapter power management", "Sprawdzanie zarządzania energią karty";
-    step_dns => "Checking DNS configuration", "Sprawdzanie konfiguracji DNS";
-    step_link => "Measuring the link to the router", "Pomiar łącza do routera";
-    step_internet => "Measuring internet latency", "Pomiar opóźnienia do internetu";
+    step_path => "Measuring every segment at once", "Pomiar wszystkich odcinków naraz";
+    step_load => "Measuring behaviour under load", "Pomiar zachowania pod obciążeniem";
     step_mtu => "Checking MTU", "Sprawdzanie MTU";
     step_tcp => "Checking TCP settings", "Sprawdzanie ustawień TCP";
     step_history => "Reviewing outage history", "Przegląd historii awarii";
@@ -339,6 +360,117 @@ poprosisz.";
     scan_all_healthy =>
         "The network looks healthy. Nothing needs attention.",
         "Sieć wygląda zdrowo. Nic nie wymaga uwagi.";
+
+    // -----------------------------------------------------------------------
+    // the verdict: which segment of the chain is at fault, and what it costs
+    // -----------------------------------------------------------------------
+    verdict_heading => "Where the problem is", "Gdzie leży problem";
+    verdict_cost_heading => "What it costs you", "Ile Cię to kosztuje";
+    verdict_actions_heading => "What to do, in order", "Co zrobić, po kolei";
+    verdict_none =>
+        "Too little was measured to point at a segment.",
+        "Zmierzono za mało, żeby wskazać odcinek.";
+
+    seg_lan => "Between this PC and the router", "Między tym komputerem a routerem";
+    // Named apart from both neighbours on purpose: the queue physically sits in
+    // the router, the congestion is felt on the provider's uplink, and the fix
+    // belongs to neither party alone.
+    seg_uplink => "In the outbound queue (router ↔ provider)", "W kolejce wyjściowej (router ↔ dostawca)";
+    seg_isp => "On the provider's side", "Po stronie dostawcy";
+    seg_internet => "Beyond the provider", "Poza dostawcą";
+    seg_dns => "In DNS", "W DNS";
+    seg_config => "In this machine's settings", "W ustawieniach tego komputera";
+    seg_healthy => "Nowhere — the chain is sound", "Nigdzie — łańcuch jest sprawny";
+
+    cost_none =>
+        "Nothing measurable. Calls, games and streaming should all behave.",
+        "Nic mierzalnego. Rozmowy, gry i streaming powinny działać bez zarzutu.";
+    cost_down =>
+        "Nothing gets through this segment right now, so everything that depends on it is \
+         stopped rather than slow.",
+        "Przez ten odcinek w tej chwili nic nie przechodzi, więc wszystko, co od niego zależy, \
+         stoi, a nie działa wolno.";
+    cost_intermittent =>
+        "Everything measures clean right now, so the fault is not constant — but it was recorded \
+         breaking within the last 24 hours. A scan is a thirty-second window; the outage history \
+         is the better evidence here.",
+        "W tej chwili wszystko mierzy się czysto, więc usterka nie jest stała — ale w ciągu \
+         ostatnich 24 godzin zapisano jej wystąpienia. Skan to okno trzydziestu sekund; lepszym \
+         dowodem jest tutaj historia awarii.";
+    cost_config =>
+        "The line itself measures clean. What is left are settings on this machine that work \
+         against it — worth changing, but not the reason for a bad call.",
+        "Samo łącze mierzy się czysto. Zostają ustawienia na tym komputerze, które mu szkodzą — \
+         warto je zmienić, ale to nie one psują rozmowę.";
+
+    // -----------------------------------------------------------------------
+    // findings: segment isolation, real reachability, behaviour under load
+    // -----------------------------------------------------------------------
+    f_edge_unknown => "Provider's first hop is hidden", "Pierwszy węzeł dostawcy jest ukryty";
+    f_edge_unknown_detail =>
+        "The routers on the path do not answer expired packets, so latency cannot be split \
+         between your router and the provider. Everything else in this scan still holds.",
+        "Routery na trasie nie odpowiadają na wygasłe pakiety, więc nie da się rozdzielić \
+         opóźnienia między Twój router a dostawcę. Reszta tego skanu pozostaje w mocy.";
+    f_local_hop_advice =>
+        "This hop is still your own equipment — a second router, a mesh node, or a modem left in \
+         router mode. Its latency counts as your network, not the provider's, which is why the \
+         split above charges it to the LAN.",
+        "Ten węzeł to nadal Twój własny sprzęt — drugi router, węzeł mesh albo modem zostawiony w \
+         trybie routera. Jego opóźnienie liczy się jako Twoja sieć, a nie dostawcy, i dlatego \
+         podział powyżej przypisuje je do LAN-u.";
+    f_local_hop_slow_advice =>
+        "A second box of your own is adding this delay before the traffic even leaves the house. \
+         Putting it into bridge mode, or removing it from the chain, recovers the whole amount.",
+        "Drugie własne urządzenie dokłada to opóźnienie, zanim ruch w ogóle opuści dom. \
+         Przełączenie go w tryb bridge albo wyjęcie z łańcucha odzyskuje całą tę wartość.";
+    f_edge_lossy_advice =>
+        "Packets are being dropped on the provider's first hop, not inside your home. No setting \
+         on this machine changes that.",
+        "Pakiety giną na pierwszym węźle dostawcy, a nie u Ciebie w domu. Żadne ustawienie na tym \
+         komputerze tego nie zmieni.";
+    f_edge_slow_advice =>
+        "The hop into the provider's network is where the delay appears. Typical for a loaded \
+         DSL or cable segment at peak hours.",
+        "Opóźnienie pojawia się dopiero na wejściu do sieci dostawcy. Typowe dla obciążonego \
+         segmentu DSL lub kablowego w godzinach szczytu.";
+
+    f_tcp_blocked => "Ping works but real traffic does not", "Ping działa, ale ruch realny już nie";
+    f_tcp_blocked_advice =>
+        "ICMP gets through and TCP on port 443 does not. That is a captive portal waiting for a \
+         login, a firewall, or a proxy — not a broken line. Open any page in a browser and see \
+         what answers.",
+        "ICMP przechodzi, a TCP na porcie 443 już nie. To captive portal czekający na \
+         zalogowanie, firewall albo proxy — nie zepsute łącze. Otwórz dowolną stronę w \
+         przeglądarce i zobacz, co odpowie.";
+    f_tcp_slow_advice =>
+        "The handshake takes far longer than the ping to the same place, which points at \
+         filtering or an overloaded middlebox rather than at the line itself.",
+        "Handshake trwa znacznie dłużej niż ping w to samo miejsce, co wskazuje na filtrowanie \
+         albo przeciążony middlebox, a nie na samo łącze.";
+
+    f_load_skipped => "Behaviour under load not measured", "Nie zmierzono zachowania pod obciążeniem";
+    f_load_skipped_detail =>
+        "The load test was left out of this scan. It is the single most informative check for \
+         \"the internet feels slow\", because it is the only one that reproduces the condition.",
+        "Test obciążeniowy został pominięty w tym skanie. To najbardziej wymowna pojedyncza \
+         próba przy objawie „internet działa wolno\", bo jako jedyna odtwarza warunki awarii.";
+    f_load_bad_advice =>
+        "This is bufferbloat: while something downloads, everything else queues behind it. It \
+         is fixed on the router with SQM or QoS, not on this machine.",
+        "To bufferbloat: w trakcie pobierania wszystko inne czeka w kolejce za transferem. \
+         Naprawia się to na routerze przez SQM lub QoS, a nie na tym komputerze.";
+    f_load_ok_advice =>
+        "The line holds its latency while saturated, so a download in the background will not \
+         break a call or a game.",
+        "Łącze trzyma opóźnienie przy pełnym obciążeniu, więc pobieranie w tle nie zepsuje \
+         rozmowy ani gry.";
+
+    f_baseline_advice =>
+        "Compared against this machine's own median from the last seven days, not against a \
+         generic threshold. A number that is normal for one line is a fault on another.",
+        "Porównanie z własną medianą tego komputera z ostatnich siedmiu dni, a nie ze sztywnym \
+         progiem. Wartość normalna dla jednego łącza jest awarią na innym.";
 
     // -----------------------------------------------------------------------
     // findings: adapter and medium
@@ -1303,6 +1435,241 @@ pub fn scan_warnings(count: usize, first: &str) -> String {
         }
         Lang::Pl => format!(
             "Nic nie jest zepsute, ale da się poprawić rzeczy: {count}. Najważniejsza: {first}"
+        ),
+    }
+}
+
+// --- verdict ---------------------------------------------------------------
+
+pub fn verdict_confident(segment: &str, confidence: &str) -> String {
+    match current() {
+        Lang::En => format!("{segment} — {confidence}"),
+        Lang::Pl => format!("{segment} — {confidence}"),
+    }
+}
+
+/// How much of the round trip each segment of the chain adds. This is the line
+/// that turns "ping is 90 ms" into an address for the complaint.
+pub fn verdict_split(lan: f64, isp: f64, far: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "Of the total round trip: {lan:.0} ms to your router, {isp:.0} ms added by the hop \
+             into the provider, {far:.0} ms added by everything beyond it."
+        ),
+        Lang::Pl => format!(
+            "Z całego czasu przelotu: {lan:.0} ms do Twojego routera, {isp:.0} ms dokłada wejście \
+             do sieci dostawcy, {far:.0} ms dokłada wszystko za nim."
+        ),
+    }
+}
+
+pub fn cost_load(bump: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "A download in the background adds {bump:.0} ms to everything else. Calls break up, \
+             games rubber-band and pages stall while anything is transferring."
+        ),
+        Lang::Pl => format!(
+            "Pobieranie w tle dokłada {bump:.0} ms do wszystkiego innego. Rozmowy się rwą, gry \
+             teleportują, a strony stają w miejscu, kiedy cokolwiek się transferuje."
+        ),
+    }
+}
+
+pub fn cost_loss(pct: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "{pct:.0}% of packets never arrive. Every one of them is a stutter in a call and a \
+             retransmission that slows a download down."
+        ),
+        Lang::Pl => format!(
+            "{pct:.0}% pakietów nie dociera. Każdy z nich to zacięcie w rozmowie i retransmisja, \
+             która spowalnia pobieranie."
+        ),
+    }
+}
+
+pub fn cost_latency(ms: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "Every request waits {ms:.0} ms before anything can come back. Browsing feels heavy \
+             and competitive games are unplayable above roughly 80 ms."
+        ),
+        Lang::Pl => format!(
+            "Każde żądanie czeka {ms:.0} ms, zanim cokolwiek wróci. Przeglądanie jest ociężałe, a \
+             gry sieciowe powyżej mniej więcej 80 ms przestają się nadawać do grania."
+        ),
+    }
+}
+
+pub fn cost_jitter(ms: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "Latency swings by {ms:.0} ms between packets. Voice and video absorb a high ping far \
+             better than they absorb an unpredictable one."
+        ),
+        Lang::Pl => format!(
+            "Opóźnienie skacze o {ms:.0} ms między pakietami. Głos i wideo znoszą wysoki ping \
+             znacznie lepiej niż nieprzewidywalny."
+        ),
+    }
+}
+
+pub fn cost_dns(ms: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "Every new domain costs {ms:.0} ms before the first byte is even requested. The line \
+             is fine; the wait happens before it is used."
+        ),
+        Lang::Pl => format!(
+            "Każda nowa domena kosztuje {ms:.0} ms, zanim padnie żądanie o pierwszy bajt. Łącze \
+             jest sprawne; czekanie dzieje się, zanim w ogóle zostanie użyte."
+        ),
+    }
+}
+
+// --- findings: segment isolation, reachability, load -----------------------
+
+pub fn f_edge_found(addr: &str, ms: f64) -> String {
+    match current() {
+        Lang::En => format!("Provider's first hop answers ({addr}, {ms:.0} ms)"),
+        Lang::Pl => format!("Pierwszy węzeł dostawcy odpowiada ({addr}, {ms:.0} ms)"),
+    }
+}
+
+pub fn f_local_hop(addr: &str, ms: f64) -> String {
+    match current() {
+        Lang::En => format!("Another router of your own on the path ({addr}, {ms:.0} ms)"),
+        Lang::Pl => format!("Na trasie stoi Twój drugi router ({addr}, {ms:.0} ms)"),
+    }
+}
+
+pub fn f_local_hop_slow(addr: &str, ms: f64) -> String {
+    match current() {
+        Lang::En => format!("Your second router adds {ms:.0} ms ({addr})"),
+        Lang::Pl => format!("Twój drugi router dokłada {ms:.0} ms ({addr})"),
+    }
+}
+
+pub fn f_edge_slow(ms: f64) -> String {
+    match current() {
+        Lang::En => format!("The provider's first hop adds {ms:.0} ms"),
+        Lang::Pl => format!("Pierwszy węzeł dostawcy dokłada {ms:.0} ms"),
+    }
+}
+
+pub fn f_edge_lossy(pct: f64) -> String {
+    match current() {
+        Lang::En => format!("Loss starts at the provider's first hop ({pct:.0}%)"),
+        Lang::Pl => format!("Straty zaczynają się na pierwszym węźle dostawcy ({pct:.0}%)"),
+    }
+}
+
+pub fn f_edge_detail(addr: &str, stats: &str) -> String {
+    match current() {
+        Lang::En => format!("Hop {addr}: {stats}"),
+        Lang::Pl => format!("Węzeł {addr}: {stats}"),
+    }
+}
+
+pub fn f_edge_silent_detail(addr: &str) -> String {
+    match current() {
+        Lang::En => format!("{addr} is on the path but answered nothing."),
+        Lang::Pl => format!("{addr} jest na trasie, ale nie odpowiedział ani razu."),
+    }
+}
+
+pub fn f_tcp_ok(host: &str, ms: f64) -> String {
+    match current() {
+        Lang::En => format!("Real traffic gets through ({host}:443 in {ms:.0} ms)"),
+        Lang::Pl => format!("Realny ruch przechodzi ({host}:443 w {ms:.0} ms)"),
+    }
+}
+
+pub fn f_tcp_slow(ms: f64) -> String {
+    match current() {
+        Lang::En => format!("Slow TCP handshake ({ms:.0} ms)"),
+        Lang::Pl => format!("Wolny handshake TCP ({ms:.0} ms)"),
+    }
+}
+
+pub fn f_tcp_detail(host: &str, ms: f64, ping: f64) -> String {
+    match current() {
+        Lang::En => format!("{host}:443 answered in {ms:.0} ms; ping to the same network is {ping:.0} ms."),
+        Lang::Pl => format!("{host}:443 odpowiedział w {ms:.0} ms; ping do tej samej sieci to {ping:.0} ms."),
+    }
+}
+
+pub fn f_tcp_blocked_detail(host: &str, err: &str) -> String {
+    match current() {
+        Lang::En => format!("Could not open {host}:443 — {err}"),
+        Lang::Pl => format!("Nie udało się otworzyć {host}:443 — {err}"),
+    }
+}
+
+pub fn f_load_bad(bump: f64) -> String {
+    match current() {
+        Lang::En => format!("Latency collapses under load (+{bump:.0} ms)"),
+        Lang::Pl => format!("Opóźnienie załamuje się pod obciążeniem (+{bump:.0} ms)"),
+    }
+}
+
+pub fn f_load_ok(bump: f64) -> String {
+    match current() {
+        Lang::En => format!("Latency holds under load (+{bump:.0} ms)"),
+        Lang::Pl => format!("Opóźnienie trzyma się pod obciążeniem (+{bump:.0} ms)"),
+    }
+}
+
+pub fn f_load_detail(idle: f64, loaded: f64, mbps: f64, grade: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "Idle {idle:.0} ms, saturated {loaded:.0} ms, at {mbps:.0} Mbps. Bufferbloat grade {grade}."
+        ),
+        Lang::Pl => format!(
+            "Bez obciążenia {idle:.0} ms, przy pełnym {loaded:.0} ms, przy {mbps:.0} Mbps. \
+             Ocena bufferbloatu: {grade}."
+        ),
+    }
+}
+
+pub fn f_baseline_worse(now: f64, usual: f64) -> String {
+    match current() {
+        Lang::En => format!("Worse than usual for this line ({now:.0} ms vs {usual:.0} ms)"),
+        Lang::Pl => format!("Gorzej niż zwykle na tym łączu ({now:.0} ms wobec {usual:.0} ms)"),
+    }
+}
+
+pub fn f_baseline_detail(now: f64, usual: f64, samples: usize) -> String {
+    match current() {
+        Lang::En => format!(
+            "Now {now:.0} ms against a seven-day median of {usual:.0} ms over {samples} samples."
+        ),
+        Lang::Pl => format!(
+            "Teraz {now:.0} ms wobec mediany {usual:.0} ms z siedmiu dni i {samples} próbek."
+        ),
+    }
+}
+
+pub fn diag_checked_ok(count: usize) -> String {
+    match current() {
+        Lang::En => format!("Checked and fine ({count})"),
+        Lang::Pl => format!("Sprawdzone i w porządku ({count})"),
+    }
+}
+
+pub fn live_spike_tally(correlated: usize, single: usize) -> String {
+    match current() {
+        Lang::En => format!(
+            "{} spikes in view: {correlated} hit every target at once and are real; {single} hit \
+             one target while the rest stayed normal, and say nothing about your link.",
+            correlated + single
+        ),
+        Lang::Pl => format!(
+            "Skoków w widoku: {}. {correlated} trafiło we wszystkie cele naraz i są prawdziwe; \
+             {single} trafiło w jeden cel, gdy reszta była normalna — te nie mówią nic o Twoim \
+             łączu.",
+            correlated + single
         ),
     }
 }

@@ -45,13 +45,28 @@ fn main() -> eframe::Result<()> {
         }
     };
 
-    // Headless scan, for scripting or for pasting into a ticket.
+    // Headless scan, for scripting or for pasting into a ticket. `--quick`
+    // drops the load test, which is the only part that takes real time and the
+    // only part that saturates the line.
     if args.iter().any(|a| a == "--scan") {
+        let deep = !args.iter().any(|a| a == "--quick");
         let net = probe::netstate::read();
-        let findings = diagnose::scan(&net, &store, &cfg, None);
-        println!("{}", diagnose::summarise(&findings));
+        let scan = diagnose::scan(&net, &store, &cfg, deep, None);
+
+        let v = &scan.verdict;
+        println!("{}", i18n::verdict_heading());
+        println!("  {} — {}", v.segment.label(), v.confidence.label());
+        if let Some(split) = &v.split {
+            println!("  {split}");
+        }
+        println!("  {}", v.cost);
+        for (n, a) in v.actions.iter().enumerate() {
+            println!("  {}. {}", n + 1, a.text);
+        }
+
         println!("{}", "-".repeat(72));
-        for f in &findings {
+        println!("{}", diagnose::summarise(&scan.findings));
+        for f in &scan.findings {
             println!("[{:>8}] {} :: {}", f.severity.label(), f.title, f.detail);
             if !f.advice.is_empty() {
                 println!("           -> {}", f.advice);
