@@ -91,6 +91,12 @@ pub fn create_key(root: Root, path: &str) -> Result<()> {
 }
 
 /// `Ok(None)` means the value simply is not there, which is a normal state.
+///
+/// A value of the wrong type is an error, not a number: `RegQueryValueExW`
+/// will happily copy the first four bytes of a `REG_BINARY` into our `u32`
+/// and report success, and a tweak deciding whether the machine is already
+/// configured off four bytes of something else is worse than one that admits
+/// it cannot tell.
 pub fn read_dword(root: Root, path: &str, name: &str) -> Result<Option<u32>> {
     let key = open(root, path, false)?;
     let mut data: u32 = 0;
@@ -107,6 +113,10 @@ pub fn read_dword(root: Root, path: &str, name: &str) -> Result<Option<u32>> {
         )
     };
     match rc {
+        ERROR_SUCCESS if kind != REG_DWORD => {
+            Err(anyhow!("{name} is not a DWORD (type {})", kind.0))
+        }
+        ERROR_SUCCESS if size != 4 => Err(anyhow!("{name} is {size} bytes, not 4")),
         ERROR_SUCCESS => Ok(Some(data)),
         e if e == ERROR_FILE_NOT_FOUND => Ok(None),
         e => Err(anyhow!("cannot read {name}: {}", describe(e))),
@@ -125,17 +135,33 @@ pub fn write_dword(root: Root, path: &str, name: &str, value: u32) -> Result<()>
     Ok(())
 }
 
+/// Reads `REG_SZ` or `REG_EXPAND_SZ`. Anything else is refused rather than
+/// reinterpreted: a `REG_MULTI_SZ` read this way silently becomes its first
+/// entry, and a `REG_BINARY` becomes noise that looks like text.
 pub fn read_string(root: Root, path: &str, name: &str) -> Result<Option<String>> {
+    use windows::Win32::System::Registry::REG_EXPAND_SZ;
+
     let key = open(root, path, false)?;
     let mut size: u32 = 0;
+    let mut kind = REG_SZ;
     let rc = unsafe {
-        RegQueryValueExW(key.0, PCWSTR(wide(name).as_ptr()), None, None, None, Some(&mut size))
+        RegQueryValueExW(
+            key.0,
+            PCWSTR(wide(name).as_ptr()),
+            None,
+            Some(&mut kind),
+            None,
+            Some(&mut size),
+        )
     };
     if rc == ERROR_FILE_NOT_FOUND {
         return Ok(None);
     }
     if rc != ERROR_SUCCESS {
         return Err(anyhow!("cannot size {name}: {}", describe(rc)));
+    }
+    if kind != REG_SZ && kind != REG_EXPAND_SZ {
+        return Err(anyhow!("{name} is not a string (type {})", kind.0));
     }
     let mut buf = vec![0u8; size as usize];
     let rc = unsafe {
@@ -151,6 +177,8 @@ pub fn read_string(root: Root, path: &str, name: &str) -> Result<Option<String>>
     if rc != ERROR_SUCCESS {
         return Err(anyhow!("cannot read {name}: {}", describe(rc)));
     }
+    // The second call can report fewer bytes than the first reserved.
+    buf.truncate(size as usize);
     let wide_chars: Vec<u16> = buf
         .chunks_exact(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
@@ -185,7 +213,13 @@ pub fn delete_value(root: Root, path: &str, name: &str) -> Result<()> {
 }
 
 /// Enumerate subkeys of a path, returning their names.
+///
+/// A name longer than the buffer used to end the walk, so one oversized
+/// sibling could hide every adapter after it and `adapter_class_key` would
+/// report "no adapter" on a machine that has one. Only `ERROR_NO_MORE_ITEMS`
+/// ends the loop now; a too-small buffer just skips that one entry.
 pub fn subkeys(root: Root, path: &str) -> Vec<String> {
+    use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS};
     use windows::Win32::System::Registry::RegEnumKeyExW;
     let Ok(key) = open(root, path, false) else {
         return Vec::new();
@@ -193,6 +227,7 @@ pub fn subkeys(root: Root, path: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut index = 0u32;
     loop {
+        // 255 characters is the documented maximum for a key name.
         let mut name = [0u16; 256];
         let mut len = name.len() as u32;
         let rc = unsafe {
@@ -207,10 +242,12 @@ pub fn subkeys(root: Root, path: &str) -> Vec<String> {
                 None,
             )
         };
-        if rc != ERROR_SUCCESS {
-            break;
+        match rc {
+            ERROR_SUCCESS => out.push(String::from_utf16_lossy(&name[..len as usize])),
+            e if e == ERROR_MORE_DATA => {}
+            e if e == ERROR_NO_MORE_ITEMS => break,
+            _ => break,
         }
-        out.push(String::from_utf16_lossy(&name[..len as usize]));
         index += 1;
     }
     out
@@ -221,6 +258,7 @@ pub fn subkeys(root: Root, path: &str) -> Vec<String> {
 /// *value names* are what gets written and whose data is the wording Device
 /// Manager shows, so both halves are needed to pick an option by meaning.
 pub fn value_names(root: Root, path: &str) -> Vec<String> {
+    use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_NO_MORE_ITEMS};
     use windows::Win32::System::Registry::RegEnumValueW;
     let Ok(key) = open(root, path, false) else {
         return Vec::new();
@@ -242,10 +280,14 @@ pub fn value_names(root: Root, path: &str) -> Vec<String> {
                 None,
             )
         };
-        if rc != ERROR_SUCCESS {
-            break;
+        // Same reasoning as `subkeys`: skip what does not fit, stop only at
+        // the real end of the list.
+        match rc {
+            ERROR_SUCCESS => out.push(String::from_utf16_lossy(&name[..len as usize])),
+            e if e == ERROR_MORE_DATA => {}
+            e if e == ERROR_NO_MORE_ITEMS => break,
+            _ => break,
         }
-        out.push(String::from_utf16_lossy(&name[..len as usize]));
         index += 1;
     }
     out

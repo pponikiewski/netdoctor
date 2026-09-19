@@ -414,8 +414,7 @@ mod tests {
 
     #[test]
     fn band_follows_channel() {
-        let mut st = NetState::default();
-        st.channel = Some(6);
+        let mut st = NetState { channel: Some(6), ..Default::default() };
         assert_eq!(st.band(), Some("2.4 GHz"));
         st.channel = Some(108);
         assert_eq!(st.band(), Some("5 GHz"));
@@ -425,9 +424,11 @@ mod tests {
 
     #[test]
     fn router_only_dns_is_detected() {
-        let mut st = NetState::default();
-        st.gateway = Some(Ipv4Addr::new(192, 168, 50, 1));
-        st.dns_servers = vec![Ipv4Addr::new(192, 168, 50, 1)];
+        let mut st = NetState {
+            gateway: Some(Ipv4Addr::new(192, 168, 50, 1)),
+            dns_servers: vec![Ipv4Addr::new(192, 168, 50, 1)],
+            ..Default::default()
+        };
         assert!(st.dns_is_router_only());
         st.dns_servers.push(Ipv4Addr::new(1, 1, 1, 1));
         assert!(!st.dns_is_router_only());

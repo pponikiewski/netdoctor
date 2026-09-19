@@ -314,6 +314,17 @@ fn context_json(snap: &Snapshot, lead: &VecDeque<LeadSample>, roamed_recently: b
     .to_string()
 }
 
+/// Takes a lock, ignoring poisoning.
+///
+/// A poisoned mutex means some other thread panicked while holding it, not
+/// that the value is unusable: everything behind these locks is a snapshot
+/// the next sweep overwrites anyway. `unwrap` here would turn one panic into
+/// a panic in every thread that touches the same lock afterwards, and the
+/// monitor is the part that has to keep running.
+fn held<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub struct Shared {
     pub last: Mutex<Snapshot>,
     pub paused: AtomicBool,
@@ -355,6 +366,9 @@ impl Monitor {
             thread::Builder::new()
                 .name("netdoctor-monitor".into())
                 .spawn(move || run_loop(shared, store, tx, stop))
+                // ponytail: a thread spawn failing means the OS is out of
+                // resources and nothing this app does next will work. Make
+                // `new` fallible if it ever needs to degrade instead of die.
                 .expect("spawn monitor thread")
         };
 
@@ -368,6 +382,8 @@ impl Monitor {
             thread::Builder::new()
                 .name("netdoctor-path".into())
                 .spawn(move || run_path(shared, stop))
+                // ponytail: as above — unrecoverable, so it is not dressed up
+                // as a recoverable error.
                 .expect("spawn path thread")
         };
 
@@ -383,12 +399,12 @@ impl Monitor {
     }
 
     pub fn update_settings(&self, s: Settings) {
-        *self.shared.settings.lock().unwrap() = s;
+        *held(&self.shared.settings) = s;
     }
 
     /// The per-hop table and its verdict, as the path thread last left them.
     pub fn path(&self) -> PathReading {
-        self.shared.path.lock().unwrap().clone()
+        held(&self.shared.path).clone()
     }
 
 }
@@ -465,8 +481,8 @@ fn run_path(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
             continue;
         }
 
-        let timeout = shared.settings.lock().unwrap().ping_timeout_ms;
-        let gateway = *shared.gateway.lock().unwrap();
+        let timeout = held(&shared.settings).ping_timeout_ms;
+        let gateway = *held(&shared.gateway);
         let now = store::now();
 
         // A new gateway means a different network, and every hop behind it
@@ -483,9 +499,9 @@ fn run_path(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
 
         if !tracker.is_empty() {
             tracker.probe(&pinger, timeout);
-            *shared.path.lock().unwrap() = tracker.reading();
+            *held(&shared.path) = tracker.reading();
         } else {
-            *shared.path.lock().unwrap() = PathReading::default();
+            *held(&shared.path) = PathReading::default();
         }
 
         // Sleep in slices so stopping the app does not wait out the interval.
@@ -524,7 +540,7 @@ fn run_loop(
 
     while !stop.load(Ordering::Relaxed) {
         let started = Instant::now();
-        let settings = shared.settings.lock().unwrap().clone();
+        let settings = held(&shared.settings).clone();
 
         if shared.paused.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(200));
@@ -539,7 +555,7 @@ fn run_loop(
                 net = fresh;
             }
             next_state_refresh = Instant::now() + Duration::from_secs(5);
-            *shared.gateway.lock().unwrap() = net.gateway;
+            *held(&shared.gateway) = net.gateway;
         }
 
         if sweep % 10 == 0 {
@@ -630,7 +646,7 @@ fn run_loop(
             }
         }
 
-        *shared.last.lock().unwrap() = snap.clone();
+        *held(&shared.last) = snap.clone();
         // A full channel means the UI is behind; dropping is correct here.
         let _ = tx.try_send(snap);
 

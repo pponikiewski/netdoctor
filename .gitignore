@@ -5,3 +5,13 @@ target/
 dist-build/
 dist/
 *.zip
+.env.*
+!.env.example
+*.pem
+*.key
+*.local
+.DS_Store
+Thumbs.db
+*.log
+.claude/settings.local.json
+CLAUDE.local.md

@@ -70,14 +70,49 @@ impl PingResult {
     }
 }
 
+/// Reply buffer for `IcmpSendEcho`.
+///
+/// The obvious `vec![0u8; n]` is aligned to 1, and reading an
+/// `ICMP_ECHO_REPLY` back out of it is undefined behaviour however reliably
+/// the allocator happens to hand out aligned blocks — the API asks for an
+/// 8-byte boundary as well. Backing the buffer with `u64` puts that guarantee
+/// in the type instead of in a hope.
+struct ReplyBuf(Vec<u64>);
+
+impl ReplyBuf {
+    /// Room for the struct, the echoed payload, and any IP options a router
+    /// tacks on.
+    fn new(payload_len: usize) -> Self {
+        let bytes = size_of::<ICMP_ECHO_REPLY>() + payload_len + 64;
+        ReplyBuf(vec![0u64; bytes.div_ceil(size_of::<u64>())])
+    }
+
+    fn capacity_bytes(&self) -> u32 {
+        (self.0.len() * size_of::<u64>()) as u32
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut u64 {
+        self.0.as_mut_ptr()
+    }
+
+    /// # Safety
+    /// Only valid once `IcmpSendEcho` has reported at least one reply, which
+    /// is what fills the buffer.
+    unsafe fn reply(&self) -> &ICMP_ECHO_REPLY {
+        &*(self.0.as_ptr() as *const ICMP_ECHO_REPLY)
+    }
+}
+
 /// An open ICMP handle. Reusing one across pings avoids re-opening the
 /// device for every sample.
 pub struct Pinger {
     pub(crate) handle: HANDLE,
 }
 
-// The handle is only ever used behind &mut self, and IcmpSendEcho is
-// thread-safe per handle.
+// Send, not Sync: a Pinger is moved onto the thread that uses it and the
+// handle is never shared between threads. (`ping` takes `&self`, so `Sync`
+// would additionally require IcmpSendEcho to tolerate concurrent calls on one
+// handle — do not add it on the strength of this impl.)
 unsafe impl Send for Pinger {}
 
 impl Pinger {
@@ -92,9 +127,7 @@ impl Pinger {
 
     /// One echo request. `timeout` is in milliseconds.
     pub fn ping(&self, addr: Ipv4Addr, timeout_ms: u32) -> PingResult {
-        // The reply buffer must hold the struct, the echoed payload and room
-        // for any IP options the router tacks on.
-        let mut buf = vec![0u8; size_of::<ICMP_ECHO_REPLY>() + PAYLOAD.len() + 64];
+        let mut buf = ReplyBuf::new(PAYLOAD.len());
         let dest = u32::from_le_bytes(addr.octets());
 
         let started = Instant::now();
@@ -106,7 +139,7 @@ impl Pinger {
                 PAYLOAD.len() as u16,
                 None,
                 buf.as_mut_ptr() as *mut _,
-                buf.len() as u32,
+                buf.capacity_bytes(),
                 timeout_ms,
             )
         };
@@ -118,7 +151,7 @@ impl Pinger {
             return PingResult::failed(classify(err.code().0 as u32 & 0xFFFF, &err.message()));
         }
 
-        let reply = unsafe { &*(buf.as_ptr() as *const ICMP_ECHO_REPLY) };
+        let reply = unsafe { buf.reply() };
         if reply.Status != IP_SUCCESS {
             return PingResult::failed(classify(reply.Status, ""));
         }
@@ -175,11 +208,11 @@ pub fn probe_df(addr: Ipv4Addr, payload_len: u16, timeout_ms: u32) -> bool {
         return false;
     };
     let payload = vec![0x61u8; payload_len as usize];
-    let mut buf = vec![0u8; size_of::<ICMP_ECHO_REPLY>() + payload_len as usize + 64];
+    let mut buf = ReplyBuf::new(payload_len as usize);
     let dest = u32::from_le_bytes(addr.octets());
 
     // IP_FLAG_DF = 0x02 in ipexport.h.
-    let mut opts = IP_OPTION_INFORMATION { Ttl: 128, Tos: 0, Flags: 0x02, OptionsSize: 0, OptionsData: std::ptr::null_mut() };
+    let opts = IP_OPTION_INFORMATION { Ttl: 128, Tos: 0, Flags: 0x02, OptionsSize: 0, OptionsData: std::ptr::null_mut() };
 
     let replies = unsafe {
         IcmpSendEcho(
@@ -187,16 +220,16 @@ pub fn probe_df(addr: Ipv4Addr, payload_len: u16, timeout_ms: u32) -> bool {
             dest,
             payload.as_ptr() as *const _,
             payload_len,
-            Some(&mut opts),
+            Some(&opts),
             buf.as_mut_ptr() as *mut _,
-            buf.len() as u32,
+            buf.capacity_bytes(),
             timeout_ms,
         )
     };
     if replies == 0 {
         return false;
     }
-    let reply = unsafe { &*(buf.as_ptr() as *const ICMP_ECHO_REPLY) };
+    let reply = unsafe { buf.reply() };
     reply.Status == IP_SUCCESS
 }
 
@@ -219,8 +252,8 @@ pub fn traceroute(dest: Ipv4Addr, max_hops: u32, timeout_ms: u32) -> Vec<Hop> {
     let mut hops = Vec::new();
 
     for ttl in 1..=max_hops {
-        let mut buf = vec![0u8; size_of::<ICMP_ECHO_REPLY>() + PAYLOAD.len() + 64];
-        let mut opts = IP_OPTION_INFORMATION {
+        let mut buf = ReplyBuf::new(PAYLOAD.len());
+        let opts = IP_OPTION_INFORMATION {
             Ttl: ttl as u8,
             Tos: 0,
             Flags: 0,
@@ -234,9 +267,9 @@ pub fn traceroute(dest: Ipv4Addr, max_hops: u32, timeout_ms: u32) -> Vec<Hop> {
                 target,
                 PAYLOAD.as_ptr() as *const _,
                 PAYLOAD.len() as u16,
-                Some(&mut opts),
+                Some(&opts),
                 buf.as_mut_ptr() as *mut _,
-                buf.len() as u32,
+                buf.capacity_bytes(),
                 timeout_ms,
             )
         };
@@ -247,7 +280,7 @@ pub fn traceroute(dest: Ipv4Addr, max_hops: u32, timeout_ms: u32) -> Vec<Hop> {
             continue;
         }
 
-        let reply = unsafe { &*(buf.as_ptr() as *const ICMP_ECHO_REPLY) };
+        let reply = unsafe { buf.reply() };
         let addr = Ipv4Addr::from(reply.Address.to_le_bytes());
         hops.push(Hop { hop: ttl, addr: Some(addr), rtt_ms: Some(elapsed) });
 

@@ -27,6 +27,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     );
     ui.add_space(S_MD);
 
+    // The test is the one thing in this app that spends the user's data
+    // allowance, and on a phone hotspot it can spend a lot of it. Saying so
+    // before the button, not after the bill.
+    ui.label(egui::RichText::new(i18n::bloat_cost_warning()).size(T_BODY).color(YELLOW));
+    ui.add_space(S_SM);
+
     ui.horizontal(|ui| {
         if ui
             .add_enabled(!app.bloat_running, egui::Button::new(i18n::bloat_btn_run()).fill(super::ACCENT))
@@ -94,6 +100,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     ui.add_space(S_SM);
                 }
                 ui.label(egui::RichText::new(bandwidth::advice(&r)).size(T_BODY).color(FG_DIM));
+                if r.bytes > 0 {
+                    ui.add_space(S_SM);
+                    let mb = r.bytes as f64 / 1_000_000.0;
+                    ui.label(egui::RichText::new(i18n::bloat_data_used(mb)).size(T_BODY).color(FG_DIM));
+                }
             });
         });
 }

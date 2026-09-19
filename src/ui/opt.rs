@@ -55,6 +55,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.label(egui::RichText::new(i18n::opt_blurb()).size(T_BODY).color(FG_DIM));
     ui.add_space(S_SM);
 
+    // A damaged snapshot file used to just make every Revert button vanish,
+    // which reads as "nothing was ever applied" rather than as a fault.
+    if let Some(err) = optimize::snapshots_error() {
+        ui.label(egui::RichText::new(i18n::tw_snapshots_unreadable_hint()).size(T_META).color(RED));
+        ui.label(egui::RichText::new(err).size(T_META).color(FG_DIM));
+        ui.add_space(S_SM);
+    }
+
     ui.horizontal(|ui| {
         if ui.button(i18n::btn_refresh()).clicked() {
             app.refresh_tweaks();

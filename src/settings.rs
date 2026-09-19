@@ -98,17 +98,62 @@ pub fn snapshot_path() -> PathBuf {
     data_dir().join("tweak_snapshots.json")
 }
 
+/// Set when `load` had to fall back to defaults because the file was there
+/// but unreadable. The UI shows it; without it the user sees every setting
+/// reset to default and no reason why.
+static LOAD_ISSUE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn load_issue() -> Option<String> {
+    LOAD_ISSUE.lock().ok().and_then(|g| g.clone())
+}
+
+fn set_load_issue(msg: String) {
+    if let Ok(mut g) = LOAD_ISSUE.lock() {
+        *g = Some(msg);
+    }
+}
+
 impl Settings {
+    /// A missing file is a first run. A file that exists but does not parse
+    /// is a fault: the old contents are moved aside before defaults take over,
+    /// so the next `save` cannot destroy the only copy of the user's setup.
     pub fn load() -> Self {
-        match std::fs::read_to_string(settings_path()) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-            Err(_) => Settings::default(),
+        let (settings, issue) = Self::load_from(&settings_path());
+        if let Some(msg) = issue {
+            set_load_issue(msg);
+        }
+        settings
+    }
+
+    /// The load, with the path and the outcome in the open so it can be
+    /// tested without touching the user's profile.
+    fn load_from(path: &std::path::Path) -> (Self, Option<String>) {
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Settings::default(), None),
+            Err(e) => return (Settings::default(), Some(format!("{}: {e}", path.display()))),
+        };
+        match serde_json::from_str(&text) {
+            Ok(s) => (s, None),
+            Err(e) => {
+                let kept = path.with_extension("json.corrupt");
+                let where_ = match std::fs::rename(path, &kept) {
+                    Ok(()) => kept.display().to_string(),
+                    Err(_) => path.display().to_string(),
+                };
+                (Settings::default(), Some(format!("{e} ({where_})")))
+            }
         }
     }
 
+    /// Temp file plus rename, so an interrupted write cannot leave a
+    /// half-truncated settings file behind.
     pub fn save(&self) -> anyhow::Result<()> {
         std::fs::create_dir_all(data_dir())?;
-        std::fs::write(settings_path(), serde_json::to_string_pretty(self)?)?;
+        let path = settings_path();
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(self)?)?;
+        std::fs::rename(&tmp, &path)?;
         Ok(())
     }
 
@@ -226,17 +271,61 @@ mod tests {
         assert_eq!(s.ping_bad_ms, Settings::default().ping_bad_ms);
     }
 
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("netdoctor-settings-{name}.json"));
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(p.with_extension("json.corrupt"));
+        p
+    }
+
+    #[test]
+    fn a_missing_settings_file_is_a_first_run_not_a_fault() {
+        let (s, issue) = Settings::load_from(&scratch("absent"));
+        assert!(issue.is_none());
+        assert_eq!(s.keep_days, Settings::default().keep_days);
+    }
+
+    #[test]
+    fn a_damaged_settings_file_is_kept_aside_and_reported() {
+        let path = scratch("damaged");
+        std::fs::write(&path, "{ \"keep_days\": 30, ").unwrap();
+
+        let (s, issue) = Settings::load_from(&path);
+
+        assert_eq!(s.keep_days, Settings::default().keep_days, "defaults take over");
+        let issue = issue.expect("the user has to be told why their settings reset");
+        let kept = path.with_extension("json.corrupt");
+        assert!(kept.exists(), "the damaged file is preserved, not overwritten");
+        assert!(issue.contains("corrupt"), "the message says where it went: {issue}");
+        let _ = std::fs::remove_file(kept);
+    }
+
+    #[test]
+    fn a_partial_file_loads_without_being_reported_as_damage() {
+        let path = scratch("partial");
+        // Only one known key: `serde(default)` fills the rest.
+        std::fs::write(&path, r#"{"keep_days": 3}"#).unwrap();
+
+        let (s, issue) = Settings::load_from(&path);
+
+        assert!(issue.is_none(), "missing keys are normal, not damage");
+        assert_eq!(s.keep_days, 3);
+        assert_eq!(s.ping_timeout_ms, Settings::default().ping_timeout_ms);
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn interval_never_drops_below_the_floor() {
-        let mut s = Settings::default();
-        s.probe_interval_ms = 5;
+        let s = Settings { probe_interval_ms: 5, ..Default::default() };
         assert_eq!(s.interval(), std::time::Duration::from_millis(300));
     }
 
     #[test]
     fn literal_addresses_become_targets_and_junk_is_skipped() {
-        let mut s = Settings::default();
-        s.extra_targets = vec!["8.8.4.4".into(), "   ".into(), "!!!not a host!!!".into()];
+        let s = Settings {
+            extra_targets: vec!["8.8.4.4".into(), "   ".into(), "!!!not a host!!!".into()],
+            ..Default::default()
+        };
         let hosts: Vec<_> = s.targets().iter().filter_map(|t| t.host).collect();
         assert!(hosts.contains(&Ipv4Addr::new(8, 8, 4, 4)));
         assert_eq!(s.targets().len(), 5);

@@ -7,6 +7,14 @@ use crate::i18n;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().show(ui, |ui| {
+        // Silently resetting to defaults looks like the app forgot the
+        // settings; saying the file was damaged points at the real cause and
+        // at the copy that was kept.
+        if let Some(detail) = crate::settings::load_issue() {
+            ui.label(egui::RichText::new(i18n::set_load_failed(&detail)).size(T_META).color(RED));
+            ui.add_space(S_SM);
+        }
+
         // Side by side when there is room, stacked when there is not. A
         // labelled number field squeezed into a third of a narrow window is a
         // field whose label and value stop fitting on one line.

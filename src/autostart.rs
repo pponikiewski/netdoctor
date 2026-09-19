@@ -26,13 +26,29 @@ pub fn current_command() -> Option<String> {
     winreg::read_string(Root::CurrentUser, RUN_KEY, VALUE).ok().flatten()
 }
 
+/// The executable an autostart command line points at.
+///
+/// We always write the path in quotes, but an entry left by an older build or
+/// edited by hand may not be quoted — and splitting an unquoted line on `"`
+/// used to hand back the arguments as part of the path, which then "did not
+/// exist" and had the UI report a working autostart as broken.
+fn executable_in(cmd: &str) -> &str {
+    let cmd = cmd.trim();
+    match cmd.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(""),
+        // Unquoted: everything up to the first switch, which is the only
+        // shape we ever write without quotes.
+        None => cmd.split(" --").next().unwrap_or(cmd).trim_end(),
+    }
+}
+
 /// True when autostart points at an executable that no longer exists.
 pub fn is_stale() -> bool {
     let Some(cmd) = current_command() else {
         return false;
     };
-    let path = cmd.trim_start_matches('"').split('"').next().unwrap_or("").to_string();
-    !path.is_empty() && !std::path::Path::new(&path).exists()
+    let path = executable_in(&cmd);
+    !path.is_empty() && !std::path::Path::new(path).exists()
 }
 
 pub fn enable() -> Result<String> {
@@ -96,6 +112,20 @@ mod tests {
         let cmd = command_line().unwrap();
         assert!(cmd.starts_with('"'), "an unquoted path breaks on spaces: {cmd}");
         assert!(cmd.ends_with("--minimised"));
+    }
+
+    #[test]
+    fn executable_is_found_quoted_or_not() {
+        assert_eq!(
+            executable_in(r#""C:\Program Files\NetDoctor\netdoctor.exe" --minimised"#),
+            r"C:\Program Files\NetDoctor\netdoctor.exe"
+        );
+        // The shape an older build or a hand edit leaves behind.
+        assert_eq!(
+            executable_in(r"C:\Tools\netdoctor.exe --minimised"),
+            r"C:\Tools\netdoctor.exe"
+        );
+        assert_eq!(executable_in(r"C:\Tools\netdoctor.exe"), r"C:\Tools\netdoctor.exe");
     }
 
     #[test]

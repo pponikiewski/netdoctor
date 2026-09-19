@@ -107,6 +107,17 @@ pub fn now() -> f64 {
 }
 
 impl Store {
+    /// Takes the connection lock, ignoring poisoning.
+    ///
+    /// A poisoned mutex only means another thread panicked while holding it.
+    /// The SQLite connection behind it is untouched, and refusing to use it
+    /// would turn one panic into a dead history for the rest of the session —
+    /// in the component whose whole job is to still have the evidence
+    /// afterwards.
+    fn held(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn open_default() -> Result<Self> {
         std::fs::create_dir_all(settings::data_dir())?;
         Self::open(settings::db_path())
@@ -134,7 +145,7 @@ impl Store {
         if rows.is_empty() {
             return Ok(());
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.held();
         let tx = conn.transaction()?;
         {
             let mut stmt =
@@ -147,9 +158,17 @@ impl Store {
         Ok(())
     }
 
+    /// Loss, average, extremes and jitter over a window.
+    ///
+    /// ponytail: this pulls every row in the window and reduces in Rust,
+    /// because jitter is the mean gap between *consecutive* samples and needs
+    /// the order. Retention bounds the worst case (14 days × 1 sweep/s × a
+    /// handful of targets), and the windows the UI asks for are minutes, not
+    /// days. If a full-history view ever ships, move the reduction into SQL
+    /// with `LAG(rtt_ms) OVER (ORDER BY ts)` rather than making this bigger.
     pub fn stats(&self, target: &str, window_s: f64) -> Stats {
         let cutoff = now() - window_s;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.held();
         let mut stmt = match conn
             .prepare_cached("SELECT rtt_ms, ok FROM samples WHERE target=? AND ts>=? ORDER BY ts")
         {
@@ -174,15 +193,28 @@ impl Store {
         summarise(total, &rtts)
     }
 
+    /// Applies the retention setting to both sample and event history.
+    ///
+    /// Events used to be exempt, which sounded conservative and was not: each
+    /// one carries its `context` and `context_end` JSON — the whole lead-up
+    /// series — so on a machine that autostarts and runs all day they are the
+    /// bulk of the file, and they grew without limit no matter what the user
+    /// set. The tweak log is deliberately left alone: it is small, and it is
+    /// the record of what this app changed on the machine.
     pub fn prune(&self, keep_days: i64) -> Result<()> {
         let cutoff = now() - (keep_days.max(1) as f64) * 86400.0;
-        let conn = self.conn.lock().unwrap();
+        let conn = self.held();
         conn.execute("DELETE FROM samples WHERE ts < ?", params![cutoff])?;
+        // An outage still open has no end yet and is never old enough to drop.
+        conn.execute(
+            "DELETE FROM events WHERE ts_start < ? AND ts_end IS NOT NULL",
+            params![cutoff],
+        )?;
         Ok(())
     }
 
     pub fn open_event(&self, kind: &str, scope: &str, detail: &str, context: &str) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.held();
         conn.execute(
             "INSERT INTO events (ts_start, kind, scope, detail, context) VALUES (?,?,?,?,?)",
             params![now(), kind, scope, detail, context],
@@ -194,7 +226,7 @@ impl Store {
     /// contexts is what separates "the signal came back" from "the adapter was
     /// reset" — the recovery is as diagnostic as the failure.
     pub fn close_event(&self, id: i64, context_end: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.held();
         conn.execute(
             "UPDATE events SET ts_end=?, context_end=? WHERE id=?",
             params![now(), context_end, id],
@@ -209,7 +241,7 @@ impl Store {
     /// Every sample for every target inside a time span, oldest first. This is
     /// what draws an outage's own timeline instead of a rolling live window.
     pub fn samples_between(&self, from: f64, to: f64) -> Vec<(f64, String, Option<f64>, bool)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.held();
         let Ok(mut stmt) = conn.prepare_cached(
             "SELECT ts, target, rtt_ms, ok FROM samples WHERE ts>=? AND ts<=? ORDER BY ts",
         ) else {
@@ -225,7 +257,7 @@ impl Store {
     /// outage is the first thing worth suspecting, and until now nothing in
     /// the app ever put the two tables side by side.
     pub fn tweaks_between(&self, from: f64, to: f64) -> Vec<TweakLogRow> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.held();
         let Ok(mut stmt) = conn.prepare_cached(
             "SELECT ts, tweak_id, action, COALESCE(result,'') FROM tweaks \
              WHERE ts>=? AND ts<=? ORDER BY ts DESC",
@@ -244,7 +276,7 @@ impl Store {
     }
 
     pub fn recent_events(&self, limit: usize) -> Vec<Event> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.held();
         let sql = format!(
             "SELECT {EVENT_COLUMNS} FROM events ORDER BY ts_start DESC LIMIT {limit}"
         );
@@ -256,7 +288,7 @@ impl Store {
     }
 
     fn query_events(&self, tail: &str, arg: Option<f64>) -> Vec<Event> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.held();
         let sql = format!("SELECT {EVENT_COLUMNS} FROM events {tail}");
         let Ok(mut stmt) = conn.prepare(&sql) else {
             return Vec::new();
@@ -278,7 +310,7 @@ impl Store {
     }
 
     pub fn tweak_log(&self, limit: usize) -> Vec<TweakLogRow> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.held();
         let sql = format!(
             "SELECT ts, tweak_id, action, COALESCE(result,'') FROM tweaks ORDER BY ts DESC LIMIT {limit}"
         );
@@ -466,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn prune_drops_old_samples_only() {
+    fn prune_drops_old_samples() {
         let store = Store::open_in_memory().unwrap();
         let t = now();
         store
@@ -477,5 +509,26 @@ mod tests {
             .unwrap();
         store.prune(14).unwrap();
         assert_eq!(store.stats("x", 100.0 * 86400.0).count, 1);
+    }
+
+    #[test]
+    fn prune_drops_closed_events_but_keeps_the_open_one() {
+        let store = Store::open_in_memory().unwrap();
+        let old = now() - 40.0 * 86400.0;
+
+        let closed = store.open_event("outage", "lan", "old", "{}").unwrap();
+        store.close_event(closed, "{}").unwrap();
+        let still_open = store.open_event("outage", "lan", "running", "{}").unwrap();
+        // `open_event` stamps ts_start with `now()`, so age it by hand.
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute("UPDATE events SET ts_start = ?", params![old]).unwrap();
+        }
+
+        store.prune(14).unwrap();
+
+        let left = store.recent_events(10);
+        assert_eq!(left.len(), 1, "the closed one goes, the open one stays");
+        assert_eq!(left[0].id, still_open);
     }
 }

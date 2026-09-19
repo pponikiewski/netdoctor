@@ -122,6 +122,7 @@ strings! {
 
 OPTIONS:
     --scan         run the diagnostic scan on the console and exit
+    --quick        with --scan, skip the load test (no line saturation)
     --minimised    start with the window minimised (used by autostart)
     --version      print the version and exit
     --help         print this help
@@ -133,6 +134,7 @@ rights; the app offers to relaunch itself when you ask it to apply one.",
 
 OPCJE:
     --scan         uruchom skan diagnostyczny w konsoli i zakończ
+    --quick        razem z --scan: pomiń test obciążenia (bez saturacji łącza)
     --minimised    uruchom z oknem zminimalizowanym (używane przy autostarcie)
     --version      wypisz wersję i zakończ
     --help         wypisz tę pomoc
@@ -836,6 +838,9 @@ poprosisz.";
         "No saved state for this change. Nothing to revert to.",
         "Brak zapisanego stanu dla tej zmiany. Nie ma do czego wrócić.";
     tw_state_unreadable => "cannot read", "nie można odczytać";
+    tw_snapshots_unreadable_hint =>
+        "The saved-state file is damaged, so Revert is unavailable for every change. The file was not overwritten — it can still be repaired by hand.",
+        "Plik zapisanych stanów jest uszkodzony, więc Cofnij jest niedostępne dla wszystkich zmian. Plik nie został nadpisany — nadal da się go naprawić ręcznie.";
     tw_not_set => "not set", "nie ustawione";
 
     // adapter power saving
@@ -902,9 +907,15 @@ poprosisz.";
         "Ustawia 1.1.1.1 i 8.8.8.8 na aktywnej karcie zamiast serwerów z DHCP.";
     tw_dns_why =>
         "When the router is the only resolver, its hiccup looks exactly like \"the internet is \
-         down\": pings by IP work, but nothing loads.",
+         down\": pings by IP work, but nothing loads. In exchange every name you look up goes to \
+         Cloudflare and Google instead of your ISP, and on a company network or a VPN the \
+         internal names stop resolving. This only changes IPv4, so anything reaching a resolver \
+         over IPv6 keeps using the old one.",
         "Gdy router jest jedynym resolverem, jego zadyszka wygląda dokładnie jak „nie ma \
-         internetu”: ping po IP działa, ale nic się nie ładuje.";
+         internetu”: ping po IP działa, ale nic się nie ładuje. W zamian każda rozwiązywana nazwa \
+         trafia do Cloudflare i Google zamiast do dostawcy, a w sieci firmowej lub na VPN \
+         przestaną działać nazwy wewnętrzne. Zmiana dotyczy wyłącznie IPv4, więc ruch idący do \
+         resolvera po IPv6 zostaje przy starym.";
     tw_dns_none => "none / from DHCP", "brak / z DHCP";
     tw_dns_router_only_note =>
         "  (router only, single point of failure)",
@@ -1421,6 +1432,89 @@ pub fn rep_loaded_line(avg: f64, max: f64, loss: f64) -> String {
 }
 
 // --- tweaks ----------------------------------------------------------------
+
+/// The snapshot file exists but could not be read or parsed. Never silently
+/// treated as "no snapshots": that would hide every recorded "before" value.
+/// Warning before the load test: it pulls real data, which matters on a
+/// metered or mobile connection.
+pub fn bloat_cost_warning() -> &'static str {
+    match current() {
+        Lang::En => "The test downloads as fast as the line allows for about 14 seconds. On a fast connection that is well over a gigabyte — avoid it on a metered or mobile link.",
+        Lang::Pl => "Test pobiera dane z pełną prędkością łącza przez około 14 sekund. Na szybkim łączu to grubo ponad gigabajt — nie uruchamiaj go na połączeniu taryfowym ani na telefonie.",
+    }
+}
+
+/// How much the test actually cost, shown next to the result.
+pub fn bloat_data_used(mib: f64) -> String {
+    match current() {
+        Lang::En => format!("Data used by this test: {mib:.0} MB"),
+        Lang::Pl => format!("Dane zużyte przez ten test: {mib:.0} MB"),
+    }
+}
+
+/// Every download stream died, so nothing loaded the line.
+pub fn bloat_no_load_str() -> &'static str {
+    match current() {
+        Lang::En => "No load reached the line: every download stream failed. Nothing to grade.",
+        Lang::Pl => "Nie udało się obciążyć łącza: wszystkie strumienie padły. Nie ma czego oceniać.",
+    }
+}
+
+/// Some streams died, so the grade was read under less than full load.
+pub fn bloat_partial_load(alive: usize, total: usize) -> String {
+    match current() {
+        Lang::En => format!(
+            "Only {alive} of {total} download streams held up, so the line was not fully loaded — the grade is optimistic."
+        ),
+        Lang::Pl => format!(
+            "Utrzymało się tylko {alive} z {total} strumieni, więc łącze nie było w pełni obciążone — ocena jest zawyżona."
+        ),
+    }
+}
+
+/// An argument the CLI does not know.
+pub fn cli_unknown_flag(flag: &str) -> String {
+    match current() {
+        Lang::En => format!("Unknown option: {flag}"),
+        Lang::Pl => format!("Nieznana opcja: {flag}"),
+    }
+}
+
+/// Shown after a panic, pointing at the file that says what happened.
+pub fn crash_notice(path: &str) -> String {
+    match current() {
+        Lang::En => format!("NetDoctor stopped unexpectedly. Details were written to:\n{path}"),
+        Lang::Pl => format!("NetDoctor zatrzymał się nieoczekiwanie. Szczegóły zapisano w:\n{path}"),
+    }
+}
+
+/// The settings file was there but unreadable, so defaults are in force.
+pub fn set_load_failed(detail: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "Settings could not be read and defaults are in use. The old file was kept: {detail}"
+        ),
+        Lang::Pl => format!(
+            "Nie udało się odczytać ustawień, działają domyślne. Stary plik zachowano: {detail}"
+        ),
+    }
+}
+
+pub fn tw_snapshots_unreadable(path: &str, err: &str) -> String {
+    match current() {
+        Lang::En => format!("cannot read saved state ({path}): {err}"),
+        Lang::Pl => format!("nie można odczytać zapisanych stanów ({path}): {err}"),
+    }
+}
+
+/// The change went through but its "before" value could not be stored, so
+/// Revert will not work for it. Worth saying out loud rather than burying.
+pub fn tw_snapshot_save_failed(err: &str) -> String {
+    match current() {
+        Lang::En => format!("WARNING: applied, but the previous value could not be saved ({err}). Revert will not be available."),
+        Lang::Pl => format!("UWAGA: zastosowano, ale nie udało się zapisać poprzedniej wartości ({err}). Cofnięcie nie będzie dostępne."),
+    }
+}
 
 pub fn tw_cannot_read(err: &str) -> String {
     match current() {
@@ -2887,9 +2981,6 @@ pub fn set_save_failed(err: &str) -> String {
         Lang::Pl => format!("Nie udało się zapisać: {err}"),
     }
 }
-
-/// One-line summary of a Wi-Fi link, under the headline.
-#[allow(clippy::too_many_arguments)]
 
 /// The language is global, and `cargo test` runs tests in parallel. Any test
 /// that switches languages, or that asserts on translated text, holds this so

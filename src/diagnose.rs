@@ -305,7 +305,7 @@ pub fn scan(
     say(i18n::step_done(), 1.0);
 
     // Worst first, stable within a severity so related findings stay together.
-    out.sort_by(|a, b| b.severity.cmp(&a.severity));
+    out.sort_by_key(|f| std::cmp::Reverse(f.severity));
     let verdict = judge(&out, &m);
     Scan { findings: out, verdict }
 }
@@ -1267,12 +1267,12 @@ mod tests {
 
     #[test]
     fn findings_come_back_worst_first() {
-        let mut f = vec![
+        let mut f = [
             Finding::new("a", "good", Severity::Good, ""),
             Finding::new("b", "critical", Severity::Critical, ""),
             Finding::new("c", "warn", Severity::Warn, ""),
         ];
-        f.sort_by(|a, b| b.severity.cmp(&a.severity));
+        f.sort_by_key(|f| std::cmp::Reverse(f.severity));
         assert_eq!(f[0].severity, Severity::Critical);
         assert_eq!(f[2].severity, Severity::Good);
     }

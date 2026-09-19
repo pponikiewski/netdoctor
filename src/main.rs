@@ -21,7 +21,15 @@ use eframe::egui;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Everything the command line accepts. An argument outside this list is a
+/// typo, and a typo used to be ignored — `--qiuck` quietly ran the full scan,
+/// which saturates the line for a quarter of a minute.
+const FLAGS: [&str; 7] =
+    ["--scan", "--quick", "--minimised", "--version", "-V", "--help", "-h"];
+
 fn main() -> eframe::Result<()> {
+    install_panic_hook();
+
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     let cfg = settings::Settings::load();
@@ -37,11 +45,19 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    if let Some(bad) = args.iter().find(|a| !FLAGS.contains(&a.as_str())) {
+        eprintln!("{}", i18n::cli_unknown_flag(bad));
+        print_help();
+        std::process::exit(2);
+    }
+
     let store = match store::Store::open_default() {
         Ok(s) => Arc::new(s),
         Err(e) => {
+            // A scripted `--scan` has to be able to tell this apart from a
+            // clean run, so it cannot exit 0.
             eprintln!("{} {e}", i18n::err_open_db());
-            return Ok(());
+            std::process::exit(1);
         }
     };
 
@@ -94,4 +110,59 @@ fn main() -> eframe::Result<()> {
 
 fn print_help() {
     println!("netdoctor {VERSION} · {}\n\n{}", i18n::app_tagline(), i18n::cli_help());
+}
+
+/// The release build has no console (`windows_subsystem = "windows"`) and
+/// aborts on panic, so without this a crash is an application that simply
+/// vanishes. A diagnostics tool that cannot say why it died has it the wrong
+/// way round: write the reason next to the database and point at the file.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let dir = settings::data_dir();
+        let path = dir.join("crash.log");
+        let when = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let where_ = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "unknown".into());
+        let line = format!("netdoctor {VERSION} · unix {when} · {where_}\n{info}\n\n");
+
+        let _ = std::fs::create_dir_all(&dir);
+        let wrote = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()))
+            .is_ok();
+
+        previous(info);
+        if wrote {
+            show_crash_notice(&path.display().to_string());
+        }
+    }));
+}
+
+#[cfg(windows)]
+fn show_crash_notice(path: &str) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+
+    let wide = |s: &str| -> Vec<u16> {
+        std::ffi::OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    };
+    let text = wide(&i18n::crash_notice(path));
+    let title = wide("NetDoctor");
+    unsafe {
+        MessageBoxW(None, PCWSTR(text.as_ptr()), PCWSTR(title.as_ptr()), MB_OK | MB_ICONERROR);
+    }
+}
+
+#[cfg(not(windows))]
+fn show_crash_notice(path: &str) {
+    eprintln!("{}", i18n::crash_notice(path));
 }

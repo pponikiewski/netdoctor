@@ -351,7 +351,7 @@ fn wlan_disconnect_cause(e: &SysEvent, at: &str) -> Cause {
             Cause::new("log_wlan_auth", Confidence::Certain, i18n::ev_log_wlan_reason(r, at))
         }
         // The access point turned us away rather than losing us.
-        Some(r @ (5 | 6 | 7)) => Cause::new(
+        Some(r @ 5..=7) => Cause::new(
             "log_wlan_ap_rejected",
             Confidence::Certain,
             i18n::ev_log_wlan_reason(r, at),

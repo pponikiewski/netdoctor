@@ -142,47 +142,114 @@ pub trait Tweak: Send + Sync {
 // snapshot persistence
 // ---------------------------------------------------------------------------
 
-pub fn load_snapshots() -> HashMap<String, Value> {
-    std::fs::read_to_string(settings::snapshot_path())
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+/// A missing file means "nothing has been applied yet", which is normal. A
+/// file that exists but does not parse is an error the caller has to see:
+/// treating it as empty would hide every recorded "before" value and let the
+/// next apply overwrite the only copy of it.
+fn read_snapshots() -> Result<HashMap<String, Value>> {
+    read_snapshots_at(&settings::snapshot_path())
 }
 
+fn read_snapshots_at(path: &std::path::Path) -> Result<HashMap<String, Value>> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(e) => {
+            return Err(anyhow!(crate::i18n::tw_snapshots_unreadable(
+                &path.display().to_string(),
+                &e.to_string()
+            )))
+        }
+    };
+    serde_json::from_str(&text).map_err(|e| {
+        anyhow!(crate::i18n::tw_snapshots_unreadable(
+            &path.display().to_string(),
+            &e.to_string()
+        ))
+    })
+}
+
+/// `None` when the file is fine. The UI shows this instead of quietly
+/// dropping every Revert button.
+pub fn snapshots_error() -> Option<String> {
+    read_snapshots().err().map(|e| e.to_string())
+}
+
+/// Write to a sibling temp file and rename over the original. A crash or a
+/// power cut mid-write then loses the new entry rather than the whole file,
+/// which is the only record of what the machine looked like before.
 fn save_snapshots(map: &HashMap<String, Value>) -> Result<()> {
     std::fs::create_dir_all(settings::data_dir())?;
-    std::fs::write(settings::snapshot_path(), serde_json::to_string_pretty(map)?)?;
+    save_snapshots_at(&settings::snapshot_path(), map)
+}
+
+fn save_snapshots_at(path: &std::path::Path, map: &HashMap<String, Value>) -> Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(map)?)?;
+    // Windows `rename` replaces the destination, so this is atomic enough:
+    // a reader sees either the old file or the new one, never a truncated one.
+    std::fs::rename(&tmp, path)?;
     Ok(())
 }
 
-pub fn has_snapshot(id: &str) -> bool {
-    load_snapshots().contains_key(id)
+/// The rule that makes Revert trustworthy: the *first* recorded state wins.
+///
+/// Returns true if this call is what stored it. A second Apply of the same
+/// tweak must not overwrite the entry, or the value it recorded would be the
+/// tweak's own, and Revert would restore the tweak instead of undoing it.
+fn record_first(
+    snaps: &mut HashMap<String, Value>,
+    id: &str,
+    snapshot: Value,
+) -> bool {
+    if snaps.contains_key(id) {
+        return false;
+    }
+    snaps.insert(id.to_string(), snapshot);
+    true
 }
 
-/// Snapshot, then apply. Refuses without elevation so a half-applied change
-/// cannot happen.
+pub fn has_snapshot(id: &str) -> bool {
+    read_snapshots().map(|m| m.contains_key(id)).unwrap_or(false)
+}
+
+/// Apply, then record the state it replaced — and only the *first* time.
+///
+/// Both halves of that matter. Snapshotting after the change means a failed
+/// apply leaves no Revert button for something that never happened. Keeping
+/// the first snapshot means a second Apply cannot record the already-tweaked
+/// value as the original, which would turn Revert into a no-op and strand the
+/// machine on the tweak for good.
 pub fn apply(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
     if tweak.needs_admin() && !is_elevated() {
         return Err(anyhow!(crate::i18n::tw_needs_admin()));
     }
+    // Refuses rather than starting from an empty map: see `read_snapshots`.
+    let mut snaps = read_snapshots()?;
     let state = tweak.read(net);
-    let mut snaps = load_snapshots();
-    snaps.insert(tweak.id().to_string(), state.snapshot.clone());
-    save_snapshots(&snaps)?;
 
-    tweak.apply(net)
+    let msg = tweak.apply(net)?;
+
+    if !record_first(&mut snaps, tweak.id(), state.snapshot) {
+        return Ok(msg);
+    }
+    match save_snapshots(&snaps) {
+        Ok(()) => Ok(msg),
+        // The change is already live, so this is a warning, not a failure.
+        Err(e) => Ok(format!("{msg}
+{}", crate::i18n::tw_snapshot_save_failed(&e.to_string()))),
+    }
 }
 
 pub fn revert(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
     if tweak.needs_admin() && !is_elevated() {
         return Err(anyhow!(crate::i18n::tw_revert_needs_admin()));
     }
-    let snaps = load_snapshots();
+    let mut snaps = read_snapshots()?;
     let Some(snapshot) = snaps.get(tweak.id()) else {
         return Err(anyhow!(crate::i18n::tw_no_snapshot()));
     };
     let msg = tweak.revert(net, snapshot)?;
-    let mut snaps = load_snapshots();
     snaps.remove(tweak.id());
     save_snapshots(&snaps)?;
     Ok(msg)
@@ -213,12 +280,40 @@ pub fn is_elevated() -> bool {
     }
 }
 
+/// Resolves a Windows console tool to its full path under System32.
+///
+/// `Command::new("netsh")` would let `CreateProcess` search the application
+/// directory and the working directory before `PATH`. Every one of these
+/// tools runs from an elevated process, so a `netsh.exe` dropped next to our
+/// executable would inherit administrator rights. Naming the real one closes
+/// that door.
+#[cfg(windows)]
+fn system_tool(program: &str) -> std::path::PathBuf {
+    use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
+
+    let mut buf = [0u16; 260];
+    let len = unsafe { GetSystemDirectoryW(Some(&mut buf)) } as usize;
+    let dir = if len == 0 || len > buf.len() {
+        // Only reachable if the call fails outright; an absolute fallback is
+        // still better than letting the search path decide.
+        std::path::PathBuf::from(r"C:\Windows\System32")
+    } else {
+        std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len]))
+    };
+    dir.join(format!("{program}.exe"))
+}
+
+#[cfg(not(windows))]
+fn system_tool(program: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(program)
+}
+
 /// Run a console tool without flashing a window.
 pub(crate) fn run(program: &str, args: &[&str]) -> Result<String> {
     #[cfg(windows)]
     use std::os::windows::process::CommandExt;
 
-    let mut cmd = Command::new(program);
+    let mut cmd = Command::new(system_tool(program));
     cmd.args(args);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
@@ -473,8 +568,12 @@ impl Tweak for FastDns {
     fn why(&self) -> &'static str {
         crate::i18n::tw_dns_why()
     }
+    /// Not Low. It hands every lookup to two third parties, and on a company
+    /// network or a VPN it breaks split-horizon DNS — at which point internal
+    /// names stop resolving and nothing about the symptom points back here.
+    /// Medium keeps it out of "apply everything safe".
     fn risk(&self) -> Risk {
-        Risk::Low
+        Risk::Medium
     }
     fn category(&self) -> Category {
         Category::Naming
@@ -972,5 +1071,75 @@ mod tests {
         assert_eq!(canonical_autotune_level("wyłączone"), "disabled");
         assert_eq!(canonical_autotune_level("highly restricted"), "highlyrestricted");
         assert_eq!(canonical_autotune_level("something else"), "normal");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn system_tools_resolve_to_a_real_absolute_path() {
+        // If this ever resolves to something that is not there, every tweak
+        // silently stops working — and pinning the path is the whole defence
+        // against an elevated `netsh.exe` being picked up from elsewhere.
+        for tool in ["netsh", "powercfg", "ipconfig"] {
+            let path = system_tool(tool);
+            assert!(path.is_absolute(), "{tool} must not go through PATH: {path:?}");
+            assert!(path.exists(), "{tool} not found at {path:?}");
+        }
+    }
+
+    /// A scratch file that cleans up after itself, so these tests never touch
+    /// the real snapshot file in the user's profile.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("netdoctor-test-{name}.json"));
+        let _ = std::fs::remove_file(&p);
+        p
+    }
+
+    #[test]
+    fn the_first_recorded_state_is_the_one_that_is_kept() {
+        let mut snaps = HashMap::new();
+
+        assert!(record_first(&mut snaps, "dns", json!({ "servers": ["192.168.1.1"] })));
+        // The second Apply sees the machine already tweaked. Recording that
+        // would make Revert restore the tweak.
+        assert!(!record_first(&mut snaps, "dns", json!({ "servers": ["1.1.1.1"] })));
+
+        assert_eq!(snaps["dns"], json!({ "servers": ["192.168.1.1"] }));
+    }
+
+    #[test]
+    fn a_missing_snapshot_file_is_not_an_error() {
+        let path = scratch("absent");
+        let map = read_snapshots_at(&path).expect("a first run has no file yet");
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn a_damaged_snapshot_file_is_an_error_not_an_empty_map() {
+        let path = scratch("damaged");
+        // What a half-finished write leaves behind.
+        std::fs::write(&path, r#"{"dns": {"servers""#).unwrap();
+
+        let err = read_snapshots_at(&path).expect_err("truncated JSON must not read as empty");
+        assert!(err.to_string().contains("damaged"), "the message names the file: {err}");
+
+        // And the damaged file is still there to be repaired by hand.
+        assert!(path.exists());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn saving_replaces_the_file_and_leaves_no_temp_behind() {
+        let path = scratch("roundtrip");
+        let mut first = HashMap::new();
+        first.insert("power".to_string(), json!({ "value": 0 }));
+        save_snapshots_at(&path, &first).unwrap();
+
+        let mut second = HashMap::new();
+        second.insert("power".to_string(), json!({ "value": 24 }));
+        save_snapshots_at(&path, &second).unwrap();
+
+        assert_eq!(read_snapshots_at(&path).unwrap()["power"], json!({ "value": 24 }));
+        assert!(!path.with_extension("json.tmp").exists(), "the temp file is renamed, not left");
+        let _ = std::fs::remove_file(&path);
     }
 }

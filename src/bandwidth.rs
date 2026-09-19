@@ -74,6 +74,13 @@ pub struct BloatResult {
     pub mbps: Option<f64>,
     pub grade: Option<Grade>,
     pub error: String,
+    /// How many of the `STREAMS` download threads were still pulling when the
+    /// measurement ended. A grade read off half the intended load is not the
+    /// grade of a saturated line, so the number has to travel with it.
+    pub streams_alive: usize,
+    /// Bytes pulled during the test, so the cost of running it is visible
+    /// rather than implied.
+    pub bytes: u64,
 }
 
 impl BloatResult {
@@ -99,28 +106,34 @@ fn ping_window(host: Ipv4Addr, duration: Duration, timeout_ms: u32) -> Vec<Optio
 }
 
 /// Pulls bytes until told to stop, counting what arrived.
-fn download(stop: Arc<AtomicBool>, counter: Arc<AtomicU64>) {
+///
+/// Returns true if it was still pulling when it was asked to stop. A stream
+/// that died early leaves the line less than saturated, and a bufferbloat
+/// grade measured under partial load flatters the connection — so the caller
+/// needs to know, rather than reading a confident A off a quarter of the
+/// intended traffic.
+fn download(stop: Arc<AtomicBool>, counter: Arc<AtomicU64>) -> bool {
     while !stop.load(Ordering::Relaxed) {
         let resp = match ureq::get(LOAD_URL).timeout(Duration::from_secs(20)).call() {
             Ok(r) => r,
-            // One stream failing is fine as long as the others carry load.
-            Err(_) => return,
+            Err(_) => return false,
         };
         let mut reader = resp.into_reader();
         let mut buf = [0u8; 65536];
         loop {
             if stop.load(Ordering::Relaxed) {
-                return;
+                return true;
             }
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
                     counter.fetch_add(n as u64, Ordering::Relaxed);
                 }
-                Err(_) => return,
+                Err(_) => return false,
             }
         }
     }
+    true
 }
 
 /// Measure latency before and during saturation.
@@ -170,12 +183,26 @@ pub fn run(
     let elapsed = started.elapsed().as_secs_f64();
     let moved = counter.load(Ordering::Relaxed).saturating_sub(start_bytes);
     stop.store(true, Ordering::Relaxed);
-    for w in workers {
-        let _ = w.join();
-    }
+    // Each worker reports whether it was still pulling when it was stopped;
+    // a thread that panicked counts as dead rather than as load.
+    res.streams_alive = workers
+        .into_iter()
+        .filter_map(|w| w.join().ok())
+        .filter(|still_pulling| *still_pulling)
+        .count();
+    res.bytes = counter.load(Ordering::Relaxed);
 
     if elapsed > 0.0 && moved > 0 {
         res.mbps = Some(moved as f64 * 8.0 / elapsed / 1_000_000.0);
+    }
+
+    // No load means no test. Reporting a grade here would present the absence
+    // of a measurement as a pass — and "silent under load" below would blame
+    // the line for going quiet under traffic that never arrived.
+    if res.streams_alive == 0 {
+        res.grade = Some(Grade::Unknown);
+        res.error = crate::i18n::bloat_no_load_str().into();
+        return res;
     }
 
     let loaded_rtts: Vec<f64> = loaded_samples.iter().flatten().copied().collect();
@@ -192,6 +219,9 @@ pub fn run(
     res.loaded_max = loaded_stats.max;
     res.bump_ms = Some(loaded_stats.avg.unwrap_or(0.0) - idle_stats.avg.unwrap_or(0.0));
     res.grade = Some(Grade::from_bump(res.bump_ms.unwrap_or(0.0)));
+    if res.streams_alive < STREAMS {
+        res.error = crate::i18n::bloat_partial_load(res.streams_alive, STREAMS);
+    }
 
     say(crate::i18n::bloat_prog_done(), 1.0);
     res
