@@ -3,7 +3,7 @@
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints, VLine};
 
-use super::{S_MD, S_SM, S_XS, T_BODY, T_META, latency_colour, stat_card, App, Job, ACCENT, FG_DIM, GREEN, RED, SERIES_COLOURS, YELLOW};
+use super::{btn_width, button, button_ex, latency_colour, stat_card, App, Emphasis, Job, ACCENT, FG_DIM, GREEN, RED, SERIES_COLOURS, S_MD, S_SM, S_XS, T_BODY, T_META, YELLOW};
 use crate::i18n;
 use crate::probe::icmp;
 
@@ -236,16 +236,26 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
 
 fn controls(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
+        // A toggle whose two labels are different lengths resizes itself on
+        // every click, and everything to its right slides with it. Reserve the
+        // width of the longer label and the row holds still.
         let paused = app.monitor.is_paused();
-        let btn = if paused { i18n::live_btn_resume() } else { i18n::live_btn_pause() };
-        if ui.button(btn).clicked() {
+        let toggle_label = if paused { i18n::live_btn_resume() } else { i18n::live_btn_pause() };
+        let toggle_w =
+            btn_width(ui, i18n::live_btn_pause()).max(btn_width(ui, i18n::live_btn_resume()));
+        if button_ex(ui, toggle_label, Emphasis::Secondary, true, toggle_w).clicked() {
             app.monitor.set_paused(!paused);
         }
 
-        if ui
-            .add_enabled(!app.tracing, egui::Button::new(i18n::live_btn_trace()))
-            .clicked()
-        {
+        // Traceroute is the only control here that goes and finds out
+        // something the page is not already showing, so it carries the row.
+        // While it runs it says so on its own face rather than greying out
+        // with the same label and leaving the user to guess whether the click
+        // registered.
+        let trace_label = if app.tracing { i18n::live_tracing() } else { i18n::live_btn_trace() };
+        let trace_w =
+            btn_width(ui, i18n::live_btn_trace()).max(btn_width(ui, i18n::live_tracing()));
+        if button_ex(ui, trace_label, Emphasis::Primary, !app.tracing, trace_w).clicked() {
             app.tracing = true;
             app.trace = vec![i18n::live_tracing().into()];
             let tx = app.tx.clone();
@@ -271,7 +281,9 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(i18n::live_btn_report()).clicked() {
+            // An export. It should be findable and not much more — it is not
+            // what anyone opened the live tab to do.
+            if button(ui, i18n::live_btn_report(), Emphasis::Ghost).clicked() {
                 match super::report::save(app) {
                     Ok(path) => {
                         let now = ui.input(|i| i.time);

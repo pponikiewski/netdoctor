@@ -17,7 +17,7 @@ pub fn build(app: &App) -> String {
 
     let _ = writeln!(
         out,
-        "{} — {}",
+        "{}, {}",
         i18n::rep_title(),
         format_datetime(crate::store::now())
     );
@@ -135,7 +135,7 @@ pub fn build(app: &App) -> String {
         let _ = writeln!(out, "  {:<14}: {:.0} Mbps", i18n::rep_throughput(), b.mbps.unwrap_or(0.0));
         let _ = writeln!(
             out,
-            "  {:<14}: {} — {}",
+            "  {:<14}: {}, {}",
             i18n::rep_grade(),
             b.grade_or_unknown().letter(),
             b.grade_or_unknown().verdict()

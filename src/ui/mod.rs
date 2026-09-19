@@ -307,7 +307,7 @@ impl App {
                 let text = format!(
                     "{}{}",
                     snap.status.headline(),
-                    if snap.note.is_empty() { String::new() } else { format!(" — {}", snap.note) }
+                    if snap.note.is_empty() { String::new() } else { format!(": {}", snap.note) }
                 );
                 self.toast(text, status_colour(snap.status), now);
             } else if self.last_status != Status::Ok {
@@ -407,9 +407,19 @@ impl eframe::App for App {
                             status_dot(ui, colour, 5.0);
                             ui.add_space(S_XS);
                             ui.label(egui::RichText::new(text).size(T_BODY).color(FG));
-                            if ui.button(crate::i18n::btn_dismiss()).clicked() {
-                                self.toast = None;
-                            }
+                            // Pushed to the far edge and kept quiet. The toast
+                            // is there to be read; the way to get rid of it
+                            // should not be the loudest thing in it.
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if button(ui, crate::i18n::btn_dismiss(), Emphasis::Ghost)
+                                        .clicked()
+                                    {
+                                        self.toast = None;
+                                    }
+                                },
+                            );
                         });
                     });
             } else {
@@ -443,56 +453,217 @@ impl App {
                         .strong()
                         .color(FG),
                 );
-                ui.label(egui::RichText::new(self.connection_line()).size(T_BODY).color(FG_DIM));
+                ui.add_space(S_XS * 0.5);
+                let facts = self.connection_facts();
+                if facts.is_empty() {
+                    ui.label(
+                        egui::RichText::new(crate::i18n::hdr_no_adapter())
+                            .size(T_BODY)
+                            .color(FG_DIM),
+                    );
+                } else {
+                    connection_row(ui, &facts);
+                }
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.elevated {
                     ui.label(egui::RichText::new(crate::i18n::hdr_administrator()).size(T_META).color(GREEN));
                 } else {
-                    if ui.button(crate::i18n::hdr_restart_elevated()).clicked() {
-                        match crate::autostart::relaunch_elevated() {
-                            Ok(()) => std::process::exit(0),
-                            Err(e) => {
-                                let now = ui.input(|i| i.time);
-                                self.toast(e.to_string(), RED, now);
+                    // The caveat used to sit to the *left* of the button, on
+                    // the same line, where it ate a third of the header's
+                    // width and crowded the connection facts into the corner.
+                    // Stacked under the button it reads as belonging to that
+                    // button — which is what it is, a note on what the button
+                    // is for — and the header gets its horizontal room back.
+                    //
+                    // `Align::Max` in a top-down layout is the right edge, so
+                    // the button and its note share one right margin with the
+                    // window.
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                        // Secondary, not primary. It is a standing offer that
+                        // sits in the header on every screen, and an
+                        // accent-filled button that never goes away is a
+                        // button nobody reads.
+                        if button(ui, crate::i18n::hdr_restart_elevated(), Emphasis::Secondary)
+                            .clicked()
+                        {
+                            match crate::autostart::relaunch_elevated() {
+                                Ok(()) => std::process::exit(0),
+                                Err(e) => {
+                                    let now = ui.input(|i| i.time);
+                                    self.toast(e.to_string(), RED, now);
+                                }
                             }
                         }
-                    }
-                    ui.label(
-                        egui::RichText::new(crate::i18n::hdr_standard_mode())
-                            .size(T_META)
-                            .color(FG_DIM),
-                    );
+                        ui.add_space(S_XS * 0.5);
+                        // Dropped a step to T_MICRO. It is a caveat, and the
+                        // scale reserves that step for exactly this: something
+                        // worth having on screen that nobody has to read twice.
+                        ui.label(
+                            egui::RichText::new(crate::i18n::hdr_standard_mode())
+                                .size(T_MICRO)
+                                .color(FG_DIM),
+                        );
+                    });
                 }
             });
         });
     }
 
-    fn connection_line(&self) -> String {
+    /// One fact from the connection line.
+    ///
+    /// The line used to be a single interpolated string: six unrelated facts
+    /// welded together with `·`, every one of them the same size and the same
+    /// grey. That reads as one long label rather than as six values, and the
+    /// separator between the network name and the signal looked exactly like
+    /// the separator between a channel and its band — so there was nothing to
+    /// tell you where one fact stopped. Splitting it lets the values carry
+    /// weight, the labels stay quiet, and the one value with thresholds get
+    /// the colour it deserves.
+    fn connection_facts(&self) -> Vec<Fact> {
         let n = &self.net;
+        let mut facts = Vec::new();
         if n.adapter_name.is_empty() {
-            return crate::i18n::hdr_no_adapter().into();
+            return facts;
         }
+
+        let dash = |s: String| if s.is_empty() { "—".to_string() } else { s };
+        let gateway = n.gateway.map(|g| g.to_string()).unwrap_or_else(|| "—".into());
+
         match n.medium {
-            crate::probe::netstate::Medium::Wifi => crate::i18n::conn_line_wifi(
-                &n.adapter_name,
-                if n.ssid.is_empty() { "?" } else { &n.ssid },
-                n.signal_pct.unwrap_or(0),
-                &n.rssi_dbm.map(|r| format!(" ({r} dBm)")).unwrap_or_default(),
-                &n.channel.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
-                &n.phy,
-                n.rx_mbps.unwrap_or(0),
-                &n.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into()),
-            ),
-            _ => crate::i18n::conn_line_wired(
-                &n.adapter_name,
-                n.link_speed_mbps,
-                &n.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into()),
-                &n.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", "),
-            ),
+            crate::probe::netstate::Medium::Wifi => {
+                // The network's name first. It is the one thing here the user
+                // chose, and the only one they would recognise at a glance.
+                facts.push(Fact::name(if n.ssid.is_empty() {
+                    "—".to_string()
+                } else {
+                    n.ssid.clone()
+                }));
+
+                if let Some(pct) = n.signal_pct {
+                    // Signal is the only fact on this line with thresholds, so
+                    // it is the only one that gets a colour. Colouring more
+                    // than one would mean none of them stood out.
+                    let value = match n.rssi_dbm {
+                        Some(r) => format!("{pct}% · {r} dBm"),
+                        None => format!("{pct}%"),
+                    };
+                    let colour = if pct >= 67 {
+                        GREEN
+                    } else if pct >= 34 {
+                        YELLOW
+                    } else {
+                        RED
+                    };
+                    facts.push(Fact::new(crate::i18n::word_signal(), value, colour));
+                }
+
+                if let Some(ch) = n.channel {
+                    // The band matters more than the channel number to anyone
+                    // who is not already debugging, so show both.
+                    let value = match n.band() {
+                        Some(band) => format!("{ch} · {band}"),
+                        None => ch.to_string(),
+                    };
+                    facts.push(Fact::new(crate::i18n::word_channel(), value, FG));
+                }
+
+                if let Some(rx) = n.rx_mbps {
+                    let value = if n.phy.is_empty() {
+                        format!("{rx} Mbps")
+                    } else {
+                        format!("{rx} Mbps · {}", n.phy)
+                    };
+                    facts.push(Fact::new(crate::i18n::word_link(), value, FG));
+                }
+
+                facts.push(Fact::new(crate::i18n::word_gateway(), gateway, FG));
+            }
+            _ => {
+                facts.push(Fact::name(crate::i18n::word_wired().to_string()));
+                facts.push(Fact::new(
+                    crate::i18n::word_link(),
+                    format!("{} Mbps", n.link_speed_mbps),
+                    FG,
+                ));
+                facts.push(Fact::new(crate::i18n::word_gateway(), gateway, FG));
+                facts.push(Fact::new(
+                    "DNS",
+                    dash(n.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")),
+                    FG,
+                ));
+            }
         }
+
+        // The adapter's name is the longest string on the line and the one
+        // least often needed, so it goes last and stays dim instead of pushing
+        // the network name and the signal off to the right.
+        facts.push(Fact::new(
+            crate::i18n::word_adapter(),
+            n.adapter_name.clone(),
+            FG_DIM,
+        ));
+        facts
     }
+}
+
+/// A labelled value in the header's connection line.
+struct Fact {
+    /// Sits in front of the value, quiet and small. Empty for a value that
+    /// names itself, like a network's SSID.
+    label: &'static str,
+    value: String,
+    colour: egui::Color32,
+}
+
+impl Fact {
+    fn new(label: &'static str, value: String, colour: egui::Color32) -> Self {
+        Fact { label, value, colour }
+    }
+
+    /// A value that needs no label.
+    fn name(value: String) -> Self {
+        Fact { label: "", value, colour: FG }
+    }
+}
+
+/// Draw the connection facts as a wrapping row of labelled values.
+///
+/// Wrapping rather than truncating: the old single line ran off the right edge
+/// of a narrow window and took the gateway with it, and a fact you cannot see
+/// is worse than a second row.
+fn connection_row(ui: &mut egui::Ui, facts: &[Fact]) {
+    ui.horizontal_wrapped(|ui| {
+        // Tighter than the app's default item spacing — a label and the value
+        // it names have to read as one unit, and at S_SM they read as two.
+        ui.spacing_mut().item_spacing.x = S_XS;
+
+        for (i, fact) in facts.iter().enumerate() {
+            if i > 0 {
+                // A painted rule instead of a `·`. The old separator was the
+                // same character used *inside* several of the values, so the
+                // boundaries between facts and the punctuation within them
+                // were indistinguishable.
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(S_SM, T_META), egui::Sense::hover());
+                ui.painter().vline(
+                    rect.center().x,
+                    egui::Rangef::new(rect.top() + 1.0, rect.bottom() - 1.0),
+                    egui::Stroke::new(1.0, LINE),
+                );
+            }
+
+            if !fact.label.is_empty() {
+                ui.label(egui::RichText::new(fact.label).size(T_MICRO).color(FG_DIM));
+            }
+            // Monospaced, like every other measurement in the app: these
+            // refresh as the link changes, and proportional digits make the
+            // whole row shuffle sideways when one of them does.
+            let text = figure(&fact.value, T_META, fact.colour);
+            ui.label(if fact.label.is_empty() { text.strong() } else { text });
+        }
+    });
 }
 
 /// Small stat card used on the live and load-test tabs.
@@ -519,6 +690,176 @@ pub fn stat_card(
                 ui.label(egui::RichText::new(sub).size(T_MICRO).color(FG_DIM));
             });
         });
+}
+
+// ---------------------------------------------------------------------------
+// Buttons
+// ---------------------------------------------------------------------------
+
+// Every button in the app was `ui.button`, which means every button looked the
+// same: the export sitting next to the diagnostic sitting next to the dismiss,
+// all in the same grey, all claiming the same weight. A row of equals is a row
+// with no entry point — the eye has to read all of it to find the one thing it
+// came for. These four levels exist so a row can say which button that is.
+//
+// They are painted rather than configured through `Visuals`, because egui
+// derives hover and pressed from the widget visuals, and an explicit `fill()`
+// on a `Button` freezes it in every state — the button stops answering the
+// pointer. A button that does not react to the cursor does not read as
+// clickable, and that is the one thing it has to say.
+
+/// One height for every button, so a row of them shares a baseline and a
+/// centre line regardless of what each one is labelled.
+pub const BTN_H: f32 = 30.0;
+/// Matches the 6.0 the stat cards and the note panels already use.
+pub const BTN_R: f32 = 6.0;
+/// Horizontal breathing room inside a button, on the same spacing scale.
+const BTN_PAD_X: f32 = S_MD;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Emphasis {
+    /// The action the row exists for. At most one per row — a second primary
+    /// makes both of them secondary.
+    Primary,
+    /// A real action that is not the point of the row.
+    Secondary,
+    /// A side action that should stay legible without competing: dismiss,
+    /// export, toggle a view.
+    Ghost,
+    /// Changes the machine, or cannot be taken back. Outlined rather than
+    /// filled: it should be findable, not inviting.
+    // Unused until the optimise tab is moved over — that is where the buttons
+    // that write to the registry live.
+    #[allow(dead_code)]
+    Danger,
+}
+
+/// Fill, stroke and text for a button in a given state.
+fn btn_colours(
+    emphasis: Emphasis,
+    enabled: bool,
+    hovered: bool,
+    pressed: bool,
+) -> (egui::Color32, egui::Color32, egui::Color32) {
+    use egui::Color32 as C;
+    const CLEAR: egui::Color32 = C::TRANSPARENT;
+
+    if !enabled {
+        // Dimmed rather than hidden. "Not now" is an answer, and a control
+        // that vanishes when unavailable teaches the user it was never there.
+        return (BG2, LINE.linear_multiply(0.6), FG_DIM.linear_multiply(0.55));
+    }
+
+    match emphasis {
+        Emphasis::Primary => {
+            let fill = if pressed {
+                C::from_rgb(0x3d, 0x8a, 0xdb)
+            } else if hovered {
+                C::from_rgb(0x6c, 0xb4, 0xff)
+            } else {
+                ACCENT
+            };
+            // Dark text on the accent. White on `#4da3ff` sits near 2.4:1;
+            // the page background against it clears 7:1.
+            (fill, CLEAR, BG)
+        }
+        Emphasis::Secondary => {
+            let fill = if pressed {
+                C::from_rgb(0x3a, 0x41, 0x50)
+            } else if hovered {
+                C::from_rgb(0x32, 0x38, 0x46)
+            } else {
+                BG3
+            };
+            (fill, LINE, FG)
+        }
+        Emphasis::Ghost => {
+            let fill = if pressed {
+                BG3
+            } else if hovered {
+                BG2
+            } else {
+                CLEAR
+            };
+            // The label lifts to full strength on hover, which is most of what
+            // tells you a ghost button is a button at all.
+            (fill, CLEAR, if hovered || pressed { FG } else { FG_DIM })
+        }
+        Emphasis::Danger => {
+            let fill = if pressed {
+                C::from_rgb(0x3a, 0x23, 0x28)
+            } else if hovered {
+                C::from_rgb(0x2e, 0x1e, 0x22)
+            } else {
+                CLEAR
+            };
+            (fill, RED.linear_multiply(0.55), RED)
+        }
+    }
+}
+
+/// Width a button needs for a label, before any minimum is applied.
+///
+/// A toggle whose two labels are different lengths resizes as you click it,
+/// and every button to its right slides. Measure both, pass the larger as
+/// `min_w`, and the row holds still.
+pub fn btn_width(ui: &egui::Ui, label: &str) -> f32 {
+    let font = egui::FontId::new(T_BODY, egui::FontFamily::Proportional);
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(label.to_string(), font, egui::Color32::PLACEHOLDER)
+    });
+    galley.size().x + BTN_PAD_X * 2.0
+}
+
+/// A button at a given emphasis. `min_w` of 0.0 means "fit the label".
+pub fn button_ex(
+    ui: &mut egui::Ui,
+    label: &str,
+    emphasis: Emphasis,
+    enabled: bool,
+    min_w: f32,
+) -> egui::Response {
+    let font = egui::FontId::new(T_BODY, egui::FontFamily::Proportional);
+    // Laid out in PLACEHOLDER so the paint call can supply the colour once the
+    // response says which state we are in.
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(label.to_string(), font, egui::Color32::PLACEHOLDER)
+    });
+
+    let w = (galley.size().x + BTN_PAD_X * 2.0).max(min_w);
+    let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(w, BTN_H), sense);
+
+    if ui.is_rect_visible(rect) {
+        let (fill, stroke, text) =
+            btn_colours(emphasis, enabled, response.hovered(), response.is_pointer_button_down_on());
+
+        ui.painter().rect(rect, BTN_R, fill, egui::Stroke::new(1.0, stroke));
+
+        // Keyboard focus, drawn outside the button so it never eats into the
+        // label or the fill.
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect.expand(2.0),
+                BTN_R + 2.0,
+                egui::Stroke::new(1.0, ACCENT),
+            );
+        }
+
+        let pos = rect.center() - galley.size() * 0.5;
+        ui.painter().galley(pos, galley, text);
+    }
+
+    if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+
+/// The common case: enabled, sized to its label.
+pub fn button(ui: &mut egui::Ui, label: &str, emphasis: Emphasis) -> egui::Response {
+    button_ex(ui, label, emphasis, true, 0.0)
 }
 
 fn apply_theme(ctx: &egui::Context) {

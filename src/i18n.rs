@@ -81,12 +81,21 @@ strings! {
     word_none => "none", "brak";
     word_router => "Router", "Router";
     word_isp_resolver => "ISP resolver", "Resolver ISP";
+    // Labels for the header's connection facts. Short on purpose: each one
+    // sits directly in front of the value it names, so it only has to say
+    // which value this is, not explain it.
+    word_signal => "signal", "sygnał";
+    word_channel => "channel", "kanał";
+    word_gateway => "gateway", "brama";
+    word_link => "link", "łącze";
+    word_adapter => "adapter", "karta";
+    word_wired => "Wired", "Kabel";
 
     hdr_administrator => "administrator", "administrator";
     hdr_restart_elevated => "Restart as administrator", "Uruchom ponownie jako administrator";
     hdr_standard_mode =>
-        "standard mode — changes need elevation",
-        "tryb zwykły — zmiany wymagają uprawnień administratora";
+        "standard mode, changes need elevation",
+        "tryb zwykły, zmiany wymagają uprawnień administratora";
     hdr_no_adapter => "No active adapter.", "Brak aktywnej karty sieciowej.";
 
     // -----------------------------------------------------------------------
@@ -95,7 +104,7 @@ strings! {
     medium_unknown => "unknown", "nieznane";
     ping_unreachable => "host unreachable", "host nieosiągalny";
     ping_timeout => "no reply", "brak odpowiedzi";
-    ping_no_route => "no route — adapter offline?", "brak trasy — karta offline?";
+    ping_no_route => "no route (adapter offline?)", "brak trasy (karta offline?)";
     dns_no_addresses => "resolver returned no addresses", "resolver nie zwrócił żadnych adresów";
 
     // -----------------------------------------------------------------------
@@ -296,8 +305,8 @@ poprosisz.";
     hist_btn_fix => "Open the fix", "Otwórz poprawkę";
     hist_btn_close => "Close", "Zamknij";
     hist_no_leadup =>
-        "No lead-up was recorded for this outage — it was logged by an earlier version.",
-        "Dla tej awarii nie zapisano przebiegu — wpis pochodzi z wcześniejszej wersji.";
+        "No lead-up was recorded for this outage. It was logged by an earlier version.",
+        "Dla tej awarii nie zapisano przebiegu. Wpis pochodzi z wcześniejszej wersji.";
     hist_no_state =>
         "No connection state was stored for this entry.",
         "Dla tego wpisu nie zapisano stanu połączenia.";
@@ -328,8 +337,8 @@ poprosisz.";
     step_done => "Done", "Gotowe";
 
     scan_all_healthy =>
-        "The network looks healthy — nothing needs attention.",
-        "Sieć wygląda zdrowo — nic nie wymaga uwagi.";
+        "The network looks healthy. Nothing needs attention.",
+        "Sieć wygląda zdrowo. Nic nie wymaga uwagi.";
 
     // -----------------------------------------------------------------------
     // findings: adapter and medium
@@ -465,8 +474,8 @@ poprosisz.";
     // -----------------------------------------------------------------------
     f_hist_none => "No outages recorded in the last 24 hours", "Brak awarii w ciągu ostatnich 24 godzin";
     f_hist_none_detail =>
-        "The monitor logs every interruption — leave it running to catch the next one.",
-        "Monitor zapisuje każdą przerwę — zostaw go włączonego, żeby złapał następną.";
+        "The monitor logs every interruption. Leave it running to catch the next one.",
+        "Monitor zapisuje każdą przerwę. Zostaw go włączonego, żeby złapał następną.";
     f_hist_lan => "Drops between this PC and the router", "Zrywy między tym komputerem a routerem";
     f_hist_lan_advice =>
         "The culprit is Wi-Fi, the adapter, or the router itself. Start with adapter power \
@@ -502,11 +511,11 @@ poprosisz.";
         "Internet reachable, but name resolution is failing",
         "Internet osiągalny, ale rozwiązywanie nazw zawodzi";
     mon_isp_down =>
-        "Router answers, internet does not — WAN/ISP problem",
-        "Router odpowiada, internet nie — problem WAN/ISP";
+        "Router answers, internet does not: WAN/ISP problem",
+        "Router odpowiada, internet nie: problem WAN/ISP";
     mon_lan_down =>
-        "Router not answering — problem between PC and router",
-        "Router nie odpowiada — problem między komputerem a routerem";
+        "Router not answering: problem between PC and router",
+        "Router nie odpowiada: problem między komputerem a routerem";
     mon_adapter_down => "Network adapter disconnected", "Karta sieciowa rozłączona";
 
     mon_wifi_deassociated =>
@@ -516,8 +525,8 @@ poprosisz.";
         "Neither the router nor the internet responded.",
         "Nie odpowiedział ani router, ani internet.";
     mon_no_gateway =>
-        "No default gateway — this machine has no route to the network.",
-        "Brak bramy domyślnej — ten komputer nie ma trasy do sieci.";
+        "No default gateway. This machine has no route to the network.",
+        "Brak bramy domyślnej. Ten komputer nie ma trasy do sieci.";
 
     // -----------------------------------------------------------------------
     // load test tab
@@ -549,21 +558,21 @@ poprosisz.";
     bloat_prog_done => "Done", "Gotowe";
 
     grade_a =>
-        "Excellent — the link does not bloat under load.",
-        "Doskonale — łącze nie puchnie pod obciążeniem.";
-    grade_b => "Good — a mild rise, unnoticeable in games.", "Dobrze — lekki wzrost, w grach niezauważalny.";
+        "Excellent. The link does not bloat under load.",
+        "Doskonale. Łącze nie puchnie pod obciążeniem.";
+    grade_b => "Good. A mild rise, unnoticeable in games.", "Dobrze. Lekki wzrost, w grach niezauważalny.";
     grade_c =>
-        "Fair — latency climbs noticeably while downloading.",
-        "Średnio — opóźnienie wyraźnie rośnie podczas pobierania.";
+        "Fair. Latency climbs noticeably while downloading.",
+        "Średnio. Opóźnienie wyraźnie rośnie podczas pobierania.";
     grade_d =>
-        "Poor — games will stutter during any download.",
-        "Słabo — gry będą się ciąć przy każdym pobieraniu.";
-    grade_f => "Very poor — textbook bufferbloat.", "Bardzo słabo — podręcznikowy bufferbloat.";
+        "Poor. Games will stutter during any download.",
+        "Słabo. Gry będą się ciąć przy każdym pobieraniu.";
+    grade_f => "Very poor. Textbook bufferbloat.", "Bardzo słabo. Podręcznikowy bufferbloat.";
     grade_unknown => "Not measured.", "Nie zmierzono.";
 
     bloat_silent_under_load =>
-        "Under load the host stopped replying entirely — that is itself the result.",
-        "Pod obciążeniem host przestał odpowiadać całkowicie — to już jest wynik.";
+        "Under load the host stopped replying entirely. That is itself the result.",
+        "Pod obciążeniem host przestał odpowiadać całkowicie. To już jest wynik.";
     bloat_advice_run => "Run the test to get a result.", "Uruchom test, żeby zobaczyć wynik.";
     bloat_advice_ok =>
         "Nothing to do — the link copes with load. If you still get lag, the cause is elsewhere \
@@ -632,8 +641,8 @@ poprosisz.";
         "Reverting requires administrator rights.",
         "Cofnięcie wymaga uprawnień administratora.";
     tw_no_snapshot =>
-        "No saved state for this change — nothing to revert to.",
-        "Brak zapisanego stanu dla tej zmiany — nie ma do czego wrócić.";
+        "No saved state for this change. Nothing to revert to.",
+        "Brak zapisanego stanu dla tej zmiany. Nie ma do czego wrócić.";
     tw_state_unreadable => "cannot read", "nie można odczytać";
     tw_not_set => "not set", "nie ustawione";
 
@@ -655,8 +664,8 @@ poprosisz.";
         "nie znaleziono karty w rejestrze";
     tw_power_off => "disabled", "wyłączone";
     tw_power_on_unset =>
-        "enabled — Windows may suspend the card (value not set)",
-        "włączone — Windows może uśpić kartę (wartość nieustawiona)";
+        "enabled, Windows may suspend the card (value not set)",
+        "włączone, Windows może uśpić kartę (wartość nieustawiona)";
     tw_power_applied =>
         "Power management disabled for the adapter. Takes effect after a restart (or disabling \
          and re-enabling the adapter).",
@@ -706,8 +715,8 @@ poprosisz.";
          internetu”: ping po IP działa, ale nic się nie ładuje.";
     tw_dns_none => "none / from DHCP", "brak / z DHCP";
     tw_dns_router_only_note =>
-        "  (router only — single point of failure)",
-        "  (tylko router — pojedynczy punkt awarii)";
+        "  (router only, single point of failure)",
+        "  (tylko router, pojedynczy punkt awarii)";
     tw_dns_applied => "DNS set to 1.1.1.1 and 8.8.8.8.", "DNS ustawiony na 1.1.1.1 i 8.8.8.8.";
     tw_dns_reverted_dhcp => "DNS returned to DHCP.", "DNS wrócił do DHCP.";
     tw_dns_reverted => "Previous DNS servers restored.", "Przywrócono poprzednie serwery DNS.";
@@ -780,8 +789,8 @@ poprosisz.";
         "Na wypadek, gdy połączenie już padło i nie wraca. Czyści zepsuty stan Winsock/IP, który \
          inaczej utrzymuje się aż do restartu.";
     tw_reset_state =>
-        "one-off action — nothing is permanently changed",
-        "akcja jednorazowa — nic nie zmienia się na stałe";
+        "one-off action, nothing is permanently changed",
+        "akcja jednorazowa, nic nie zmienia się na stałe";
     tw_reset_step_ok => "ok", "ok";
     tw_reset_step_failed => "failed", "niepowodzenie";
     tw_reset_irreversible => "This action cannot be undone.", "Tej akcji nie da się cofnąć.";
@@ -808,8 +817,8 @@ poprosisz.";
     opt_btn_apply_all => "Apply all safe changes", "Zastosuj wszystkie bezpieczne zmiany";
     opt_needs_admin => "Requires administrator rights", "Wymaga uprawnień administratora";
     opt_read_only =>
-        "read-only — restart as administrator to apply",
-        "tylko do odczytu — uruchom ponownie jako administrator, żeby zastosować";
+        "read-only (restart as administrator to apply)",
+        "tylko do odczytu (uruchom ponownie jako administrator, żeby zastosować)";
     opt_select_tweak =>
         "Select a change to see what it does.",
         "Wybierz zmianę, żeby zobaczyć, co robi.";
@@ -1134,8 +1143,8 @@ poprosisz.";
     st_todo => "worth changing", "do poprawy";
     st_na => "not available", "niedostępne";
     opt_revert_available =>
-        "changed by NetDoctor — can be undone",
-        "zmienione przez NetDoctor — można cofnąć";
+        "changed by NetDoctor (can be undone)",
+        "zmienione przez NetDoctor (można cofnąć)";
     opt_section_all_set => "all set", "wszystko ustawione";
     opt_show_unavailable => "show unavailable", "pokaż niedostępne";
     opt_show_unavailable_hint =>
@@ -1234,8 +1243,8 @@ pub fn tw_power_off_detail(value: u32) -> String {
 
 pub fn tw_power_on_detail(value: u32) -> String {
     match current() {
-        Lang::En => format!("enabled — Windows may suspend the card (PnPCapabilities={value})"),
-        Lang::Pl => format!("włączone — Windows może uśpić kartę (PnPCapabilities={value})"),
+        Lang::En => format!("enabled, Windows may suspend the card (PnPCapabilities={value})"),
+        Lang::Pl => format!("włączone, Windows może uśpić kartę (PnPCapabilities={value})"),
     }
 }
 
@@ -1304,8 +1313,8 @@ pub fn f_wired_detail(adapter: &str, mbps: u64) -> String {
 
 pub fn f_wifi_detail(adapter: &str, ssid: &str, mbps: u64) -> String {
     match current() {
-        Lang::En => format!("{adapter} — {ssid}, {mbps} Mbps link rate"),
-        Lang::Pl => format!("{adapter} — {ssid}, prędkość łącza {mbps} Mbps"),
+        Lang::En => format!("{adapter}: {ssid}, {mbps} Mbps link rate"),
+        Lang::Pl => format!("{adapter}: {ssid}, prędkość łącza {mbps} Mbps"),
     }
 }
 
@@ -1395,11 +1404,11 @@ pub fn f_jitter_high_advice(spread: f64) -> String {
     match current() {
         Lang::En => format!(
             "Latency swings by {spread:.0} ms between packets. This is what \"lagging despite a \
-             good ping\" actually is — typical of Wi-Fi and of a saturated link."
+             good ping\" actually is. It is typical of Wi-Fi and of a saturated link."
         ),
         Lang::Pl => format!(
             "Opóźnienie waha się o {spread:.0} ms między pakietami. To właśnie jest „lagowanie \
-             mimo dobrego pingu” — typowe dla Wi-Fi i wysyconego łącza."
+             mimo dobrego pingu”. Typowe dla Wi-Fi i wysyconego łącza."
         ),
     }
 }
@@ -1456,8 +1465,8 @@ pub fn f_mtu_ok_detail(best: u32) -> String {
 
 pub fn f_hist_title(title: &str, count: usize) -> String {
     match current() {
-        Lang::En => format!("{title} — {count}× in the last 24 h"),
-        Lang::Pl => format!("{title} — {count}× w ciągu ostatnich 24 h"),
+        Lang::En => format!("{title} ({count}× in the last 24 h)"),
+        Lang::Pl => format!("{title} ({count}× w ciągu ostatnich 24 h)"),
     }
 }
 
@@ -1471,8 +1480,8 @@ pub fn f_hist_detail(avg: f64, times: &str) -> String {
 /// The test could not reach the host at all.
 pub fn bloat_no_reply(host: &str) -> String {
     match current() {
-        Lang::En => format!("No reply from {host} — test aborted."),
-        Lang::Pl => format!("Brak odpowiedzi od {host} — test przerwany."),
+        Lang::En => format!("No reply from {host}. Test aborted."),
+        Lang::Pl => format!("Brak odpowiedzi od {host}. Test przerwany."),
     }
 }
 
@@ -1494,10 +1503,10 @@ pub fn bloat_advice_intro(bump: f64) -> String {
 pub fn bloat_advice_throughput(mbps: f64) -> String {
     match current() {
         Lang::En => {
-            format!("Throughput measured during the test: {mbps:.0} Mbps — use that to set the cap.")
+            format!("Throughput measured during the test: {mbps:.0} Mbps. Use that to set the cap.")
         }
         Lang::Pl => format!(
-            "Przepustowość zmierzona w teście: {mbps:.0} Mbps — na tej podstawie ustaw limit."
+            "Przepustowość zmierzona w teście: {mbps:.0} Mbps. Na tej podstawie ustaw limit."
         ),
     }
 }
@@ -1562,8 +1571,8 @@ pub fn cause_title(code: &str) -> String {
         ),
         "out_of_range" => ("Out of range of the access point", "Poza zasięgiem access pointa"),
         "adapter_or_driver" => (
-            "The adapter disappeared — driver or hardware",
-            "Karta zniknęła — sterownik albo sprzęt",
+            "The adapter disappeared: driver or hardware",
+            "Karta zniknęła: sterownik albo sprzęt",
         ),
         "roaming" => (
             "Handover to another access point",
@@ -1575,8 +1584,8 @@ pub fn cause_title(code: &str) -> String {
             "Kanał 2.4 GHz jest zatłoczony",
         ),
         "router_side" => (
-            "The radio was fine — the router side was not",
-            "Radio było w porządku — problem po stronie routera",
+            "The radio was fine, the router side was not",
+            "Radio było w porządku, problem po stronie routera",
         ),
         "weak_signal" => ("Weak signal at the moment of the drop", "Słaby sygnał w chwili zerwania"),
         "marginal_link" => ("The link was marginal", "Łącze było na granicy"),
@@ -1775,8 +1784,8 @@ pub fn ev_adapter_power_plan() -> String {
 
 pub fn ev_rssi_low(rssi: i32) -> String {
     match current() {
-        Lang::En => format!("signal was {rssi} dBm — below the usable threshold of about -75 dBm"),
-        Lang::Pl => format!("sygnał wynosił {rssi} dBm — poniżej progu używalności około -75 dBm"),
+        Lang::En => format!("signal was {rssi} dBm, below the usable threshold of about -75 dBm"),
+        Lang::Pl => format!("sygnał wynosił {rssi} dBm, poniżej progu używalności około -75 dBm"),
     }
 }
 
@@ -1804,9 +1813,9 @@ pub fn ev_roam_flag() -> String {
 pub fn ev_rssi_fade(from: i32, to: i32) -> String {
     let drop = from - to;
     match current() {
-        Lang::En => format!("signal slid from {from} to {to} dBm — {drop} dB lost before the drop"),
+        Lang::En => format!("signal slid from {from} to {to} dBm, {drop} dB lost before the drop"),
         Lang::Pl => {
-            format!("sygnał osunął się z {from} do {to} dBm — {drop} dB straty przed zerwaniem")
+            format!("sygnał osunął się z {from} do {to} dBm, {drop} dB straty przed zerwaniem")
         }
     }
 }
@@ -1952,18 +1961,18 @@ pub fn mon_loss_detail(pct: f64) -> String {
 pub fn mon_jitter_detail(jitter: f64) -> String {
     match current() {
         Lang::En => {
-            format!("Jitter {jitter:.0} ms — latency is swinging, which shows up as lag in games.")
+            format!("Jitter {jitter:.0} ms. Latency is swinging, which shows up as lag in games.")
         }
         Lang::Pl => format!(
-            "Jitter {jitter:.0} ms — opóźnienie skacze, co w grach objawia się jako lagi."
+            "Jitter {jitter:.0} ms. Opóźnienie skacze, co w grach objawia się jako lagi."
         ),
     }
 }
 
 pub fn mon_ping_detail(worst: f64) -> String {
     match current() {
-        Lang::En => format!("Ping {worst:.0} ms — above the playable threshold."),
-        Lang::Pl => format!("Ping {worst:.0} ms — powyżej progu grywalności."),
+        Lang::En => format!("Ping {worst:.0} ms, above the playable threshold."),
+        Lang::Pl => format!("Ping {worst:.0} ms, powyżej progu grywalności."),
     }
 }
 
@@ -2078,35 +2087,6 @@ pub fn set_save_failed(err: &str) -> String {
 
 /// One-line summary of a Wi-Fi link, under the headline.
 #[allow(clippy::too_many_arguments)]
-pub fn conn_line_wifi(
-    adapter: &str,
-    ssid: &str,
-    signal_pct: u32,
-    rssi: &str,
-    channel: &str,
-    phy: &str,
-    rx_mbps: u32,
-    gateway: &str,
-) -> String {
-    match current() {
-        Lang::En => format!(
-            "{adapter} · {ssid} · signal {signal_pct}%{rssi} · channel {channel} ({phy}) · \
-             {rx_mbps} Mbps · gateway {gateway}"
-        ),
-        Lang::Pl => format!(
-            "{adapter} · {ssid} · sygnał {signal_pct}%{rssi} · kanał {channel} ({phy}) · \
-             {rx_mbps} Mbps · brama {gateway}"
-        ),
-    }
-}
-
-/// One-line summary of a wired link, under the headline.
-pub fn conn_line_wired(adapter: &str, mbps: u64, gateway: &str, dns: &str) -> String {
-    match current() {
-        Lang::En => format!("{adapter} · {mbps} Mbps · gateway {gateway} · DNS {dns}"),
-        Lang::Pl => format!("{adapter} · {mbps} Mbps · brama {gateway} · DNS {dns}"),
-    }
-}
 
 /// The language is global, and `cargo test` runs tests in parallel. Any test
 /// that switches languages, or that asserts on translated text, holds this so
@@ -2139,22 +2119,22 @@ pub fn detect() -> Lang {
 
 pub fn tw_adv_wrong_medium(medium: &str) -> String {
     match current() {
-        Lang::En => format!("not applicable — this is a {medium} setting"),
-        Lang::Pl => format!("nie dotyczy — to ustawienie dla: {medium}"),
+        Lang::En => format!("not applicable, this is a {medium} setting"),
+        Lang::Pl => format!("nie dotyczy, to ustawienie dla: {medium}"),
     }
 }
 
 pub fn tw_adv_now_vs_wanted(now: &str, wanted: &str) -> String {
     match current() {
-        Lang::En => format!("{now} — could be {wanted}"),
-        Lang::Pl => format!("{now} — mogłoby być: {wanted}"),
+        Lang::En => format!("{now}, could be {wanted}"),
+        Lang::Pl => format!("{now}, mogłoby być: {wanted}"),
     }
 }
 
 pub fn tw_adv_unset(wanted: &str) -> String {
     match current() {
-        Lang::En => format!("driver default — could be {wanted}"),
-        Lang::Pl => format!("domyślne sterownika — mogłoby być: {wanted}"),
+        Lang::En => format!("driver default, could be {wanted}"),
+        Lang::Pl => format!("domyślne sterownika, mogłoby być: {wanted}"),
     }
 }
 
@@ -2178,8 +2158,8 @@ pub fn tw_dw_state(name: &str, value: u32) -> String {
 
 pub fn tw_dw_unset(name: &str) -> String {
     match current() {
-        Lang::En => format!("{name} not set — Windows default"),
-        Lang::Pl => format!("{name} nieustawione — domyślne Windows"),
+        Lang::En => format!("{name} not set, Windows default"),
+        Lang::Pl => format!("{name} nieustawione, domyślne Windows"),
     }
 }
 
@@ -2199,8 +2179,8 @@ pub fn tw_dw_reverted(name: &str, value: u32) -> String {
 
 pub fn tw_dw_removed(name: &str) -> String {
     match current() {
-        Lang::En => format!("{name} removed — back to the Windows default."),
-        Lang::Pl => format!("{name} usunięte — z powrotem domyślne Windows."),
+        Lang::En => format!("{name} removed, back to the Windows default."),
+        Lang::Pl => format!("{name} usunięte, z powrotem domyślne Windows."),
     }
 }
 
@@ -2250,8 +2230,8 @@ pub fn air_current_line(channel: u32, noise: Option<f64>) -> String {
 
 pub fn air_best_24(channel: u32, gain: f64) -> String {
     match current() {
-        Lang::En => format!("Ask the router for 2.4 GHz channel {channel} — {gain:.0} dB quieter"),
-        Lang::Pl => format!("Poproś router o kanał {channel} na 2,4 GHz — o {gain:.0} dB ciszej"),
+        Lang::En => format!("Ask the router for 2.4 GHz channel {channel}, {gain:.0} dB quieter"),
+        Lang::Pl => format!("Poproś router o kanał {channel} na 2,4 GHz, o {gain:.0} dB ciszej"),
     }
 }
 

@@ -65,7 +65,7 @@ fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size([1120.0, 760.0])
         .with_min_inner_size([900.0, 620.0])
-        .with_title(format!("NetDoctor {VERSION} — {}", i18n::app_tagline()))
+        .with_title(format!("NetDoctor {VERSION} · {}", i18n::app_tagline()))
         .with_visible(!minimised);
 
     let options = eframe::NativeOptions { viewport, ..Default::default() };
@@ -78,5 +78,5 @@ fn main() -> eframe::Result<()> {
 }
 
 fn print_help() {
-    println!("netdoctor {VERSION} — {}\n\n{}", i18n::app_tagline(), i18n::cli_help());
+    println!("netdoctor {VERSION} · {}\n\n{}", i18n::app_tagline(), i18n::cli_help());
 }
