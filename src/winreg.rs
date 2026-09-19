@@ -63,6 +63,33 @@ fn open(root: Root, path: &str, write: bool) -> Result<Key> {
     Ok(Key(hkey))
 }
 
+/// Creates a key if it is missing, and does nothing if it is already there.
+/// Policy keys such as the Delivery Optimization one are absent on a machine
+/// that has never had the policy set, so a tweak that writes one has to make
+/// it first.
+pub fn create_key(root: Root, path: &str) -> Result<()> {
+    use windows::Win32::System::Registry::{RegCreateKeyExW, REG_OPTION_NON_VOLATILE};
+    let mut hkey = HKEY::default();
+    let rc = unsafe {
+        RegCreateKeyExW(
+            root.hkey(),
+            PCWSTR(wide(path).as_ptr()),
+            0,
+            None,
+            REG_OPTION_NON_VOLATILE,
+            KEY_READ | KEY_SET_VALUE | KEY_WOW64_64KEY,
+            None,
+            &mut hkey,
+            None,
+        )
+    };
+    if rc != ERROR_SUCCESS {
+        return Err(anyhow!("cannot create {path}: {}", describe(rc)));
+    }
+    let _ = Key(hkey);
+    Ok(())
+}
+
 /// `Ok(None)` means the value simply is not there, which is a normal state.
 pub fn read_dword(root: Root, path: &str, name: &str) -> Result<Option<u32>> {
     let key = open(root, path, false)?;
@@ -189,6 +216,41 @@ pub fn subkeys(root: Root, path: &str) -> Vec<String> {
     out
 }
 
+/// Enumerate the value names under a path. Adapter driver parameters are
+/// listed this way: the option list of an advanced property is a key whose
+/// *value names* are what gets written and whose data is the wording Device
+/// Manager shows, so both halves are needed to pick an option by meaning.
+pub fn value_names(root: Root, path: &str) -> Vec<String> {
+    use windows::Win32::System::Registry::RegEnumValueW;
+    let Ok(key) = open(root, path, false) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut index = 0u32;
+    loop {
+        let mut name = [0u16; 512];
+        let mut len = name.len() as u32;
+        let rc = unsafe {
+            RegEnumValueW(
+                key.0,
+                index,
+                windows::core::PWSTR(name.as_mut_ptr()),
+                &mut len,
+                None,
+                None,
+                None,
+                None,
+            )
+        };
+        if rc != ERROR_SUCCESS {
+            break;
+        }
+        out.push(String::from_utf16_lossy(&name[..len as usize]));
+        index += 1;
+    }
+    out
+}
+
 fn describe(e: WIN32_ERROR) -> String {
     match e.0 {
         5 => "access denied (needs administrator)".into(),
@@ -236,22 +298,7 @@ mod tests {
         // HKCU is writable without elevation, so this exercises the write path
         // without needing admin in CI.
         let path = r"Software\NetDoctorTest";
-        let key = unsafe {
-            let mut h = HKEY::default();
-            windows::Win32::System::Registry::RegCreateKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR(wide(path).as_ptr()),
-                0,
-                None,
-                windows::Win32::System::Registry::REG_OPTION_NON_VOLATILE,
-                KEY_READ | KEY_SET_VALUE,
-                None,
-                &mut h,
-                None,
-            );
-            Key(h)
-        };
-        drop(key);
+        create_key(Root::CurrentUser, path).unwrap();
 
         write_dword(Root::CurrentUser, path, "probe", 42).unwrap();
         assert_eq!(read_dword(Root::CurrentUser, path, "probe").unwrap(), Some(42));

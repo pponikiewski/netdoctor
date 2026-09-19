@@ -91,7 +91,13 @@ one English label that would silently fail everywhere else.
 - **Load test** — bufferbloat: idle latency versus latency with the link
   saturated. Grade A–F and specific advice. This is usually the answer to
   "good ping, still lagging".
-- **Optimise** — every tweak with its current state and risk level.
+- **Optimise** — every tweak grouped by what it is about (power and sleep,
+  radio and range, names and addresses, throughput and latency, what else
+  uses the link, last resort), each row saying in words whether it is set,
+  worth changing, or not available on this machine — a Wi-Fi setting on a
+  cable and a property the driver does not expose both say so rather than
+  looking like a failure. Plus a scan of the surrounding Wi-Fi that works
+  out which channel to ask the router for.
 - **Outage history** — when, how long, whose fault, and on selecting an entry,
   why: cause, evidence, the lead-up plotted, and a route to the fix.
 - **Settings** — probe cadence, thresholds, extra ping targets (your game
@@ -124,8 +130,58 @@ it matters, since several of these only take effect after one.
 | MTU correction | medium | oversized MTU means pages that never finish loading |
 | Network stack reset | medium | rescue action when the link died; **not undoable** |
 
+### Inside the radio
+
+These are the entries on the adapter's Advanced tab in Device Manager, and they
+are where the range actually lives. All of them take effect after a restart.
+
+| Change | Risk | Why |
+| --- | --- | --- |
+| Transmit power to maximum | medium | laptops ship it lower; the router hears you worse than you hear it |
+| Roaming aggressiveness to highest | medium | stops the card clinging to a mesh node it has walked away from |
+| No power save on the radio | low | the stutter at the start of every call |
+| No MIMO power save | low | a parked second antenna costs about 3 dB where it matters |
+| 20 MHz channels on 2.4 GHz | medium | a 40 MHz link takes two of the three clean channels and collides with everything |
+| Prefer 5 GHz | medium | far more throughput, far worse through walls — wrong if the signal is already weak |
+| No interrupt moderation (wired) | medium | batching holds packets back for a fraction of a millisecond |
+| No Green Ethernet / EEE (wired) | low | every renegotiation is a short disconnect |
+
+The name of each property is the vendor's choice, and so is the number behind
+each option, so nothing here is hardcoded: each tweak carries the names the
+property goes by across vendors, takes the first the driver actually declares,
+and then picks the option by matching the driver's own wording out of
+`Ndi\Params\<name>\Enum`. "Highest transmit power" therefore stays "highest"
+on a card that numbers it 1..5 and on one that numbers it 0..100.
+
+### Deeper in the stack
+
+| Change | Risk | Why |
+| --- | --- | --- |
+| No negative DNS caching | low | why names stay broken for five minutes after the link comes back |
+| No Delivery Optimization uploads | low | Windows Update seeding to strangers over your uplink |
+| No auto-connect to open hotspots | low | Windows leaving a working network for a hotspot that wants a login |
+| BBR2 congestion control | high | CUBIC reads Wi-Fi interference as congestion and throws away throughput |
+| Prefer IPv4 over IPv6 | high | an ISP handing out IPv6 that does not route makes every page wait out a timeout |
+
 "Apply all safe changes" only touches low-risk, reversible items that are not
-already correct.
+already correct, so nothing in the medium or high rows is ever applied without
+being asked for by name.
+
+## Which channel to ask the router for
+
+Windows cannot change the router's channel — that setting lives in the router,
+and no API on this side reaches it. What the client can do is measure. Every
+access point in range beacons its channel and its signal strength, so Optimise
+scans for them and sums the interference each candidate channel would suffer,
+as power rather than as a count: one neighbour at -45 dBm hurts more than six
+at -85, and counting rows says the opposite.
+
+The result is a sentence to type into the router's admin page — "use 2.4 GHz
+channel 11, it is 9 dB quieter than 6" — with the evidence next to it. Our own
+access points are excluded from the interference, since a mesh is not competing
+with itself. On 5 GHz only radar-free channels are suggested: a DFS channel can
+be perfectly quiet and still cut the network for a minute when the router thinks
+it heard radar, which is exactly the outage this app exists to explain.
 
 ## Why the Windows APIs, not the command-line tools
 

@@ -623,6 +623,7 @@ poprosisz.";
     // -----------------------------------------------------------------------
     risk_low => "low", "niskie";
     risk_medium => "medium", "średnie";
+    risk_high => "high", "wysokie";
 
     tw_needs_admin =>
         "This change requires administrator rights.",
@@ -809,9 +810,6 @@ poprosisz.";
     opt_read_only =>
         "read-only — restart as administrator to apply",
         "tylko do odczytu — uruchom ponownie jako administrator, żeby zastosować";
-    opt_col_change => "Change", "Zmiana";
-    opt_col_state => "Current state", "Stan obecny";
-    opt_col_risk => "Risk", "Ryzyko";
     opt_select_tweak =>
         "Select a change to see what it does.",
         "Wybierz zmianę, żeby zobaczyć, co robi.";
@@ -821,6 +819,337 @@ poprosisz.";
     opt_all_ok =>
         "Everything safe is already set correctly.",
         "Wszystko, co bezpieczne, jest już ustawione poprawnie.";
+
+    // -----------------------------------------------------------------------
+    // tweaks: the radio itself
+    // -----------------------------------------------------------------------
+    tw_adv_unsupported =>
+        "this driver does not expose the setting",
+        "ten sterownik nie udostępnia tego ustawienia";
+    tw_adv_no_option =>
+        "the driver offers no matching option",
+        "sterownik nie oferuje pasującej opcji";
+
+    tw_tx_title =>
+        "Turn the Wi-Fi card's transmit power up to maximum",
+        "Podnieś moc nadawania karty Wi-Fi do maksimum";
+    tw_tx_what =>
+        "Sets the adapter's Transmit Power property to the highest level its driver offers.",
+        "Ustawia właściwość Transmit Power karty na najwyższy poziom oferowany przez \
+         sterownik.";
+    tw_tx_why =>
+        "Laptops ship this below maximum to save battery, which shortens the range in the \
+         direction that matters: the router hears the laptop less well than the laptop hears \
+         the router, so uploads and acknowledgements fail first at the edge of the flat.",
+        "Laptopy mają to fabrycznie poniżej maksimum, żeby oszczędzać baterię, co skraca \
+         zasięg w tę stronę, która boli: router słyszy laptopa gorzej niż laptop routera, \
+         więc na krańcu mieszkania pierwsze sypią się wysyłki i potwierdzenia.";
+
+    tw_roam_title =>
+        "Let the card switch to a stronger access point sooner",
+        "Pozwól karcie szybciej przełączać się na mocniejszy access point";
+    tw_roam_what =>
+        "Sets roaming aggressiveness to the highest level the driver offers.",
+        "Ustawia agresywność roamingu na najwyższy poziom oferowany przez sterownik.";
+    tw_roam_why =>
+        "With a mesh or a second access point, a cautious card clings to the one it joined \
+         first until the signal is nearly gone, and everything is slow in the meantime. This \
+         makes it hand over while there is still a good signal to hand over from. On a single \
+         access point it does nothing, and in a noisy block of flats it can make the card hop \
+         about — revert it if the connection starts stuttering.",
+        "Przy mesh lub drugim access poincie ostrożna karta trzyma się tego, z którym się \
+         połączyła, aż sygnał prawie zniknie, a w międzyczasie wszystko muli. To sprawia, że \
+         przełącza się, póki jest jeszcze z czego. Przy jednym access poincie nic nie zmienia, \
+         a w zagęszczonym bloku karta może zacząć skakać — wtedy cofnij.";
+
+    tw_psm_title =>
+        "Stop the Wi-Fi radio going to sleep between packets",
+        "Nie pozwól radiu Wi-Fi zasypiać między pakietami";
+    tw_psm_what =>
+        "Sets the adapter's power save mode to maximum performance.",
+        "Ustawia tryb oszczędzania energii karty na maksymalną wydajność.";
+    tw_psm_why =>
+        "Power save parks the radio between beacons, so the first packet after a quiet moment \
+         waits for it to wake. That is the tens of milliseconds that show up as a stutter at \
+         the start of every call and every click, and it is separate from the Windows device \
+         setting — the driver has its own.",
+        "Oszczędzanie energii parkuje radio między beaconami, więc pierwszy pakiet po chwili \
+         ciszy czeka na wybudzenie. To te kilkadziesiąt milisekund, które widać jako zacięcie \
+         na starcie każdej rozmowy i każdego kliknięcia — i jest to coś innego niż ustawienie \
+         urządzenia w Windows, sterownik ma własne.";
+
+    tw_mimo_title =>
+        "Keep every antenna listening (no MIMO power save)",
+        "Trzymaj wszystkie anteny włączone (bez MIMO power save)";
+    tw_mimo_what =>
+        "Disables spatial multiplexing power save, so the card does not shut down its extra \
+         receive chains while idle.",
+        "Wyłącza spatial multiplexing power save, żeby karta nie wyłączała dodatkowych torów \
+         odbiorczych w bezczynności.";
+    tw_mimo_why =>
+        "A two-antenna card that has powered one down hears a weak router roughly 3 dB worse, \
+         and 3 dB is the difference between a usable link and a dropping one at the far end of \
+         the flat.",
+        "Karta z dwiema antenami, która wyłączyła jedną, słyszy słaby router o jakieś 3 dB \
+         gorzej, a 3 dB to różnica między łączem używalnym a zrywającym się na drugim końcu \
+         mieszkania.";
+
+    tw_w24_title =>
+        "Use 20 MHz channels on 2.4 GHz",
+        "Używaj kanałów 20 MHz na 2,4 GHz";
+    tw_w24_what =>
+        "Stops the card bonding two 2.4 GHz channels into one 40 MHz channel.",
+        "Przestaje łączyć dwa kanały 2,4 GHz w jeden 40 MHz.";
+    tw_w24_why =>
+        "2.4 GHz has room for three non-overlapping channels. A 40 MHz link takes two of them, \
+         so it collides with every neighbour and gets retried to death; the narrower channel is \
+         slower on paper and faster in a block of flats, and it reaches further.",
+        "Na 2,4 GHz mieszczą się trzy nienachodzące na siebie kanały. Łącze 40 MHz zabiera dwa \
+         z nich, więc zderza się z każdym sąsiadem i zajezdza się retransmisjami; węższy kanał \
+         jest wolniejszy na papierze, a szybszy w bloku — i sięga dalej.";
+
+    tw_band_title =>
+        "Prefer 5 GHz when the signal allows",
+        "Preferuj 5 GHz, gdy sygnał pozwala";
+    tw_band_what =>
+        "Tells the card to pick the 5 GHz radio of a network that broadcasts on both bands.",
+        "Każe karcie wybierać radio 5 GHz w sieci nadającej na obu pasmach.";
+    tw_band_why =>
+        "5 GHz is nearly empty compared with 2.4 and carries several times the throughput, but \
+         it goes through walls far worse. Worth it in the same room as the router, wrong at the \
+         other end of the flat — if the signal is already weak where you sit, leave this alone.",
+        "5 GHz jest w porównaniu z 2,4 prawie puste i niesie kilka razy większą przepustowość, \
+         ale znacznie gorzej przechodzi przez ściany. Opłaca się w tym samym pokoju co router, \
+         szkodzi na drugim końcu mieszkania — jeśli sygnał u ciebie jest już słaby, zostaw to.";
+
+    tw_intmod_title =>
+        "Turn off interrupt moderation on the wired card",
+        "Wyłącz interrupt moderation na karcie przewodowej";
+    tw_intmod_what =>
+        "Makes the adapter raise an interrupt per packet instead of batching them.",
+        "Karta zgłasza przerwanie na każdy pakiet, zamiast zbierać je w paczki.";
+    tw_intmod_why =>
+        "Batching saves CPU by holding packets back for a fraction of a millisecond. That is \
+         invisible on a download and measurable on a game or a call. It costs a few percent of \
+         one core.",
+        "Zbieranie w paczki oszczędza CPU, przetrzymując pakiety przez ułamek milisekundy. \
+         Przy pobieraniu tego nie widać, przy grze albo rozmowie widać. Kosztuje kilka procent \
+         jednego rdzenia.";
+
+    tw_green_title =>
+        "Turn off Green Ethernet and energy-efficient Ethernet",
+        "Wyłącz Green Ethernet i energooszczędny Ethernet";
+    tw_green_what =>
+        "Stops the wired adapter reducing power on a short cable and idling the link between \
+         frames.",
+        "Karta przewodowa przestaje zmniejszać moc przy krótkim kablu i usypiać łącze między \
+         ramkami.";
+    tw_green_why =>
+        "Both features renegotiate the link, and a renegotiation is a short disconnect. On a \
+         worn cable or a cheap switch they cause exactly the kind of dropout that looks like \
+         the internet failing.",
+        "Obie funkcje renegocjują łącze, a renegocjacja to krótkie rozłączenie. Na zużytym \
+         kablu albo tanim switchu wywołują dokładnie taki zanik, jaki wygląda jak awaria \
+         internetu.";
+
+    // -----------------------------------------------------------------------
+    // tweaks: the stack
+    // -----------------------------------------------------------------------
+    tw_cong_title =>
+        "Use BBR2 congestion control for internet connections",
+        "Użyj kontroli przeciążenia BBR2 dla połączeń internetowych";
+    tw_cong_what =>
+        "Switches the TCP internet template from CUBIC to BBR2, falling back to CTCP on \
+         Windows 10, which has no BBR2.",
+        "Przełącza szablon TCP internet z CUBIC na BBR2, a na Windows 10, gdzie BBR2 nie ma, \
+         na CTCP.";
+    tw_cong_why =>
+        "CUBIC reads a lost packet as a full queue and halves its rate. On a cable that is \
+         correct; on Wi-Fi, where packets are lost to interference, it throws away throughput \
+         for congestion that was never there. BBR2 paces against measured bandwidth and \
+         round-trip time instead. The cost falls on the other half of the traffic: game \
+         launchers like Battle.net and the Riot client open hundreds of short TLS \
+         connections that finish before BBR2 has done measuring, and on a lost packet BBR2 \
+         waits out a full timeout where CUBIC retransmits at once. A launcher that gives up \
+         after a few seconds then sits on a spinner while the browser beside it is fine. It \
+         is a real change to how every connection behaves, so measure before and after in \
+         the load test, and revert if it does not help — or if something stops loading.",
+        "CUBIC czyta zgubiony pakiet jako pełną kolejkę i tnie tempo o połowę. Na kablu to \
+         słuszne; na Wi-Fi, gdzie pakiety giną przez zakłócenia, wyrzuca przepustowość za \
+         przeciążenie, którego nie było. BBR2 zamiast tego dostraja się do zmierzonej \
+         przepustowości i czasu obiegu. Koszt spada na drugą połowę ruchu: launchery gier \
+         jak Battle.net czy klient Riot otwierają setki krótkich połączeń TLS, które kończą \
+         się, zanim BBR2 skończy mierzyć, a po zgubionym pakiecie BBR2 czeka cały timeout \
+         tam, gdzie CUBIC retransmituje od razu. Launcher, który poddaje się po kilku \
+         sekundach, wisi wtedy na kręciołku, choć przeglądarka obok działa. To realna zmiana \
+         zachowania wszystkich połączeń, więc zmierz test obciążeniowy przed i po, i cofnij, \
+         jeśli nie pomaga — albo jeśli coś przestało się ładować.";
+    tw_cong_unreadable =>
+        "netsh did not report an algorithm",
+        "netsh nie podał algorytmu";
+
+    tw_negdns_title =>
+        "Stop Windows remembering failed name lookups",
+        "Nie pozwól Windows zapamiętywać nieudanych zapytań DNS";
+    tw_negdns_what =>
+        "Sets the negative DNS cache lifetime to zero.",
+        "Ustawia czas życia negatywnego cache DNS na zero.";
+    tw_negdns_why =>
+        "By default a lookup that failed is remembered as failed for five minutes. So the \
+         connection comes back, and the browser still says the site does not exist — the \
+         resolver is not asking. This is the reason a working link can still look broken for \
+         minutes after an outage.",
+        "Domyślnie nieudane zapytanie jest pamiętane jako nieudane przez pięć minut. Czyli \
+         połączenie wraca, a przeglądarka dalej twierdzi, że strony nie ma — resolver w ogóle \
+         nie pyta. To dlatego działające łącze potrafi jeszcze przez kilka minut po awarii \
+         wyglądać na zepsute.";
+
+    tw_do_title =>
+        "Stop Windows Update uploading to other machines",
+        "Nie pozwól Windows Update wysyłać aktualizacji innym komputerom";
+    tw_do_what =>
+        "Sets Delivery Optimization to download from Microsoft only, with no peer-to-peer \
+         sharing.",
+        "Ustawia Delivery Optimization na pobieranie wyłącznie od Microsoftu, bez wymiany \
+         peer-to-peer.";
+    tw_do_why =>
+        "Delivery Optimization seeds updates to strangers over the same uplink you are using. \
+         A saturated upload is the classic invisible cause of latency: the download still looks \
+         fine, and every acknowledgement is stuck behind the queue.",
+        "Delivery Optimization rozsiewa aktualizacje obcym komputerom tym samym łączem, z \
+         którego korzystasz. Zapchany upload to klasyczna niewidoczna przyczyna opóźnień: \
+         pobieranie dalej wygląda dobrze, a każde potwierdzenie stoi w kolejce.";
+
+    tw_hotspot_title =>
+        "Stop connecting automatically to open hotspots",
+        "Nie łącz się automatycznie z otwartymi hotspotami";
+    tw_hotspot_what =>
+        "Turns off the setting that lets Windows join suggested open networks on its own.",
+        "Wyłącza ustawienie pozwalające Windows samodzielnie dołączać do proponowanych \
+         otwartych sieci.";
+    tw_hotspot_why =>
+        "Windows will leave a working network for an operator hotspot it recognises, and the \
+         hotspot wants a login before anything works. The outage that follows has no cause \
+         visible from inside the machine, which is what makes it maddening.",
+        "Windows potrafi porzucić działającą sieć na rzecz rozpoznanego hotspotu operatora, a \
+         hotspot chce logowania, zanim cokolwiek zadziała. Powstała awaria nie ma przyczyny \
+         widocznej z wnętrza komputera i właśnie dlatego doprowadza do szału.";
+
+    tw_ipv4_title =>
+        "Prefer IPv4 over IPv6",
+        "Preferuj IPv4 zamiast IPv6";
+    tw_ipv4_what =>
+        "Reorders the address preference table so IPv4 is tried first. IPv6 stays enabled.",
+        "Zmienia kolejność w tablicy preferencji adresów, żeby IPv4 był próbowany pierwszy. \
+         IPv6 zostaje włączone.";
+    tw_ipv4_why =>
+        "Where an ISP hands out IPv6 that does not actually route, every connection tries it \
+         first and waits out the timeout before falling back. Pages take seconds to start and \
+         nothing in Windows says why. Wrong on a network that is genuinely IPv6-first, so \
+         revert it if things get worse rather than better.",
+        "Gdy operator daje IPv6, które faktycznie nie routuje, każde połączenie próbuje go \
+         najpierw i odczekuje timeout, zanim zejdzie na IPv4. Strony ruszają po kilku \
+         sekundach, a Windows nic nie tłumaczy. Szkodliwe w sieci naprawdę opartej na IPv6 — \
+         jeśli będzie gorzej zamiast lepiej, cofnij.";
+
+    // -----------------------------------------------------------------------
+    // the air scan
+    // -----------------------------------------------------------------------
+    air_no_service =>
+        "the Windows WLAN service is not running",
+        "usługa WLAN systemu Windows nie działa";
+    air_no_adapter =>
+        "no Wi-Fi adapter to scan with",
+        "brak karty Wi-Fi, którą można skanować";
+    air_title =>
+        "What else is on the air",
+        "Co jeszcze jest w eterze";
+    air_blurb =>
+        "Every access point in range beacons its channel and its signal, so the interference \
+         each channel would suffer can be measured. The channel itself is set in the router, \
+         not here — this works out which one to ask it for.",
+        "Każdy access point w zasięgu rozgłasza swój kanał i sygnał, więc zakłócenia na każdym \
+         kanale da się zmierzyć. Sam kanał ustawia się w routerze, nie tutaj — to wylicza, o \
+         który go poprosić.";
+    air_btn_scan => "Scan the air", "Skanuj eter";
+    air_scan_cost =>
+        "Costs about a second of connectivity: the card has to leave your channel to \\
+         listen to the others. The monitor is paused meanwhile, so it is not filed as \\
+         an outage.",
+        "Kosztuje około sekundy łączności: karta musi zejść z twojego kanału, żeby \\
+         posłuchać pozostałych. Monitor jest na ten czas wstrzymany, więc nie trafia to \\
+         do historii jako awaria.";
+    air_scanning => "scanning, about four seconds…", "skanowanie, około czterech sekund…";
+    air_empty => "Nothing scanned yet.", "Jeszcze nic nie zeskanowano.";
+    air_quiet_here =>
+        "Your channel is already the quietest of the three. Nothing to ask the router for.",
+        "Twój kanał jest już najspokojniejszy z trzech. Nie ma o co prosić routera.";
+    air_router_note =>
+        "Change this on the router's settings page, under the 2.4 GHz wireless channel. Set a \
+         fixed channel rather than auto: auto picks at boot and then never reconsiders.",
+        "Zmień to na stronie ustawień routera, przy kanale bezprzewodowym 2,4 GHz. Ustaw kanał \
+         na stałe zamiast auto: auto wybiera przy starcie i potem już nigdy tego nie rozważa.";
+    air_dfs_note =>
+        "Only radar-free channels are suggested on 5 GHz. A DFS channel can be perfectly quiet \
+         and still cut the network for a minute when the router thinks it heard radar.",
+        "Na 5 GHz proponowane są tylko kanały wolne od radaru. Kanał DFS może być idealnie \
+         cichy i mimo to uciąć sieć na minutę, gdy routerowi wyda się, że usłyszał radar.";
+    air_dfs_move =>
+        "Move off it: pick 36, 40, 44 or 48 for range, or 149 and up for the least \\
+         crowded air. Both groups are radar-free and never go quiet on their own.",
+        "Zejdź z niego: wybierz 36, 40, 44 albo 48 dla zasięgu, albo 149 i wyżej dla \\
+         najmniej zatłoczonego eteru. Obie grupy są wolne od radaru i nigdy nie milkną \\
+         same z siebie.";
+    // -----------------------------------------------------------------------
+    // the optimise list: sections and status
+    // -----------------------------------------------------------------------
+    cat_power => "Power and sleep", "Zasilanie i uśpienie";
+    cat_power_blurb =>
+        "Windows and the driver switching hardware off underneath you. Most drops \
+         \"for no reason\" start here.",
+        "Windows i sterownik wyłączają sprzęt pod tobą. Tu zaczyna się większość zrywów \
+         „bez powodu”.";
+    cat_reach => "Radio and range", "Radio i zasięg";
+    cat_reach_blurb =>
+        "How far the card reaches, and which access point it holds on to.",
+        "Jak daleko sięga karta i którego access pointa się trzyma.";
+    cat_naming => "Names and addresses", "Nazwy i adresy";
+    cat_naming_blurb =>
+        "Turning names into addresses, and which version of IP wins.",
+        "Zamiana nazw na adresy i to, która wersja IP wygrywa.";
+    cat_throughput => "Throughput and latency", "Przepustowość i opóźnienia";
+    cat_throughput_blurb =>
+        "How fast bytes move once the link is up.",
+        "Jak szybko lecą bajty, kiedy łącze już stoi.";
+    cat_neighbours => "What else uses the link", "Kto jeszcze zużywa łącze";
+    cat_neighbours_blurb =>
+        "Things on this machine helping themselves to the uplink.",
+        "Rzeczy na tym komputerze, które biorą pasmo bez pytania.";
+    cat_last_resort => "Last resort", "Ostateczność";
+    cat_last_resort_blurb =>
+        "Blunt instruments for when the link is already broken.",
+        "Narzędzia na sytuację, w której łącze jest już popsute.";
+
+    st_set => "set", "ustawione";
+    st_todo => "worth changing", "do poprawy";
+    st_na => "not available", "niedostępne";
+    opt_revert_available =>
+        "changed by NetDoctor — can be undone",
+        "zmienione przez NetDoctor — można cofnąć";
+    opt_section_all_set => "all set", "wszystko ustawione";
+    opt_show_unavailable => "show unavailable", "pokaż niedostępne";
+    opt_show_unavailable_hint =>
+        "Changes this machine cannot take: a Wi-Fi setting on a cable, or one the \\
+         driver does not expose. The section counts ignore them either way.",
+        "Zmiany, których ta maszyna nie przyjmie: ustawienie Wi-Fi przy kablu albo takie, \\
+         którego sterownik nie udostępnia. Liczniki sekcji i tak ich nie liczą.";
+    opt_section_none => "nothing applies here", "nic tu nie dotyczy";
+
+    air_col_network => "Network", "Sieć";
+    air_col_channel => "Channel", "Kanał";
+    air_col_signal => "Signal", "Sygnał";
+    air_hidden_ssid => "(hidden)", "(ukryta)";
+    air_yours => "yours", "twoja";
 }
 
 // ---------------------------------------------------------------------------
@@ -1804,6 +2133,186 @@ pub fn detect() -> Lang {
 #[cfg(not(windows))]
 pub fn detect() -> Lang {
     Lang::En
+}
+
+// --- the radio and the stack -----------------------------------------------
+
+pub fn tw_adv_wrong_medium(medium: &str) -> String {
+    match current() {
+        Lang::En => format!("not applicable — this is a {medium} setting"),
+        Lang::Pl => format!("nie dotyczy — to ustawienie dla: {medium}"),
+    }
+}
+
+pub fn tw_adv_now_vs_wanted(now: &str, wanted: &str) -> String {
+    match current() {
+        Lang::En => format!("{now} — could be {wanted}"),
+        Lang::Pl => format!("{now} — mogłoby być: {wanted}"),
+    }
+}
+
+pub fn tw_adv_unset(wanted: &str) -> String {
+    match current() {
+        Lang::En => format!("driver default — could be {wanted}"),
+        Lang::Pl => format!("domyślne sterownika — mogłoby być: {wanted}"),
+    }
+}
+
+pub fn tw_adv_applied(name: &str, label: &str) -> String {
+    match current() {
+        Lang::En => format!("{name} set to {label}. Takes effect after a restart."),
+        Lang::Pl => format!("{name} ustawione na {label}. Zadziała po ponownym uruchomieniu."),
+    }
+}
+
+pub fn tw_adv_reverted(name: &str) -> String {
+    match current() {
+        Lang::En => format!("{name} restored. Takes effect after a restart."),
+        Lang::Pl => format!("{name} przywrócone. Zadziała po ponownym uruchomieniu."),
+    }
+}
+
+pub fn tw_dw_state(name: &str, value: u32) -> String {
+    format!("{name} = {value}")
+}
+
+pub fn tw_dw_unset(name: &str) -> String {
+    match current() {
+        Lang::En => format!("{name} not set — Windows default"),
+        Lang::Pl => format!("{name} nieustawione — domyślne Windows"),
+    }
+}
+
+pub fn tw_dw_applied(name: &str, value: u32) -> String {
+    match current() {
+        Lang::En => format!("{name} set to {value}."),
+        Lang::Pl => format!("{name} ustawione na {value}."),
+    }
+}
+
+pub fn tw_dw_reverted(name: &str, value: u32) -> String {
+    match current() {
+        Lang::En => format!("{name} restored to {value}."),
+        Lang::Pl => format!("{name} przywrócone do {value}."),
+    }
+}
+
+pub fn tw_dw_removed(name: &str) -> String {
+    match current() {
+        Lang::En => format!("{name} removed — back to the Windows default."),
+        Lang::Pl => format!("{name} usunięte — z powrotem domyślne Windows."),
+    }
+}
+
+pub fn tw_cong_applied(provider: &str) -> String {
+    match current() {
+        Lang::En => format!("Internet connections now use {provider}."),
+        Lang::Pl => format!("Połączenia internetowe używają teraz {provider}."),
+    }
+}
+
+pub fn tw_cong_applied_fallback(provider: &str) -> String {
+    match current() {
+        Lang::En => format!("This Windows has no BBR2, so {provider} was set instead."),
+        Lang::Pl => format!("Ten Windows nie ma BBR2, więc ustawiono {provider}."),
+    }
+}
+
+pub fn tw_cong_reverted(provider: &str) -> String {
+    match current() {
+        Lang::En => format!("Congestion control restored to {provider}."),
+        Lang::Pl => format!("Kontrola przeciążenia przywrócona do {provider}."),
+    }
+}
+
+// --- the air scan ----------------------------------------------------------
+
+pub fn air_seen(networks: usize, co_channel: usize) -> String {
+    match current() {
+        Lang::En => format!("{networks} networks in range, {co_channel} of them on your channel"),
+        Lang::Pl => format!("{networks} sieci w zasięgu, {co_channel} na twoim kanale"),
+    }
+}
+
+pub fn air_current_line(channel: u32, noise: Option<f64>) -> String {
+    let noise = match noise {
+        Some(n) => format!("{n:.0} dBm"),
+        None => match current() {
+            Lang::En => "nothing else heard".to_string(),
+            Lang::Pl => "nic innego nie słychać".to_string(),
+        },
+    };
+    match current() {
+        Lang::En => format!("You are on channel {channel}; interference there: {noise}"),
+        Lang::Pl => format!("Jesteś na kanale {channel}; zakłócenia tam: {noise}"),
+    }
+}
+
+pub fn air_best_24(channel: u32, gain: f64) -> String {
+    match current() {
+        Lang::En => format!("Ask the router for 2.4 GHz channel {channel} — {gain:.0} dB quieter"),
+        Lang::Pl => format!("Poproś router o kanał {channel} na 2,4 GHz — o {gain:.0} dB ciszej"),
+    }
+}
+
+pub fn air_on_dfs(channel: u32) -> String {
+    match current() {
+        Lang::En => format!(
+            "Channel {channel} is a radar channel. The router has to vacate it within \
+             ten seconds of thinking it heard radar, and stay off for thirty minutes — \
+             an outage with no cause visible from here."
+        ),
+        Lang::Pl => format!(
+            "Kanał {channel} to kanał radarowy. Router musi go opuścić w ciągu dziesięciu \
+             sekund od chwili, gdy wyda mu się, że usłyszał radar, i nie wraca przez pół \
+             godziny — czyli awaria bez przyczyny widocznej z tej strony."
+        ),
+    }
+}
+
+pub fn air_best_5(channel: u32) -> String {
+    match current() {
+        Lang::En => format!("Quietest radar-free 5 GHz channel: {channel}"),
+        Lang::Pl => format!("Najspokojniejszy kanał 5 GHz bez radaru: {channel}"),
+    }
+}
+
+pub fn air_load_cell(channel: u32, aps: usize, noise: Option<f64>) -> String {
+    let noise = match noise {
+        Some(n) => format!("{n:.0} dBm"),
+        None => "—".to_string(),
+    };
+    match current() {
+        Lang::En => format!("ch {channel}: {aps} networks, {noise}"),
+        Lang::Pl => format!("kan. {channel}: {aps} sieci, {noise}"),
+    }
+}
+
+pub fn air_channel_cell(channel: u32, band: &str) -> String {
+    format!("{channel} · {band}")
+}
+
+pub fn air_failed(err: &str) -> String {
+    match current() {
+        Lang::En => format!("scan failed: {err}"),
+        Lang::Pl => format!("skanowanie nie powiodło się: {err}"),
+    }
+}
+
+// --- the optimise list -----------------------------------------------------
+
+pub fn opt_summary(set: usize, todo: usize, na: usize) -> String {
+    match current() {
+        Lang::En => format!("{set} set · {todo} worth changing · {na} not available"),
+        Lang::Pl => format!("{set} ustawionych · {todo} do poprawy · {na} niedostępnych"),
+    }
+}
+
+pub fn opt_section_count(set: usize, total: usize) -> String {
+    match current() {
+        Lang::En => format!("{set} of {total} set"),
+        Lang::Pl => format!("{set} z {total} ustawione"),
+    }
 }
 
 #[cfg(test)]

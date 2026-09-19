@@ -68,6 +68,7 @@ pub enum Job {
     BloatProgress(String, f32),
     BloatDone(Box<BloatResult>),
     Traceroute(Vec<String>),
+    AirDone(Box<crate::probe::airscan::AirScan>),
 }
 
 pub struct App {
@@ -98,6 +99,16 @@ pub struct App {
 
     pub tweak_states: Vec<(String, String, Option<bool>)>,
     pub selected_tweak: Option<usize>,
+
+    /// What the Wi-Fi card can hear around it, and the channel advice read
+    /// off it. Empty until the first scan is asked for.
+    pub air: crate::probe::airscan::AirScan,
+    pub air_scanning: bool,
+    /// Whether the optimise list shows the tweaks that cannot be applied
+    /// on this machine. They are shown by default, because "this one is
+    /// not on offer here" is an answer; hiding them is for once that has
+    /// been read.
+    pub show_unavailable: bool,
     /// Row id of the outage whose cause panel is open, if any.
     pub selected_outage: Option<i64>,
     pub elevated: bool,
@@ -139,6 +150,9 @@ impl App {
             tracing: false,
             tweak_states: Vec::new(),
             selected_tweak: None,
+            air: Default::default(),
+            air_scanning: false,
+            show_unavailable: true,
             selected_outage: None,
             elevated: crate::optimize::is_elevated(),
             autostart_on: crate::autostart::is_enabled(),
@@ -190,6 +204,11 @@ impl App {
                     self.bloat_running = false;
                     self.bloat_label = crate::i18n::bloat_test_done().into();
                     self.bloat_progress = 1.0;
+                    self.monitor.set_paused(false);
+                }
+                Job::AirDone(scan) => {
+                    self.air = *scan;
+                    self.air_scanning = false;
                     self.monitor.set_paused(false);
                 }
                 Job::Traceroute(lines) => {

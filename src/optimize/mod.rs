@@ -5,6 +5,9 @@
 //! exact state the machine was in — including after a reboot, which is when it
 //! matters most, because several of these only take effect after one.
 
+pub mod radio;
+pub mod stack;
+
 use std::collections::HashMap;
 use std::process::Command;
 
@@ -18,10 +21,68 @@ use crate::winreg::{self, Root};
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// What a tweak is *about*, so the list can be read a section at a time
+/// instead of as twenty-one unrelated switches. The order here is the order
+/// they appear in, and it runs from the causes of outright dropouts down to
+/// the ones that only shave milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Category {
+    /// Windows or the driver switching hardware off underneath you.
+    Power,
+    /// How far the radio reaches and which access point it holds on to.
+    Reach,
+    /// Turning names into addresses, and which address family wins.
+    Naming,
+    /// How fast bytes move once the link is up.
+    Throughput,
+    /// Other things on this machine helping themselves to the uplink.
+    Neighbours,
+    /// Blunt instruments for when the link is already broken.
+    LastResort,
+}
+
+impl Category {
+    pub const ALL: [Category; 6] = [
+        Category::Power,
+        Category::Reach,
+        Category::Naming,
+        Category::Throughput,
+        Category::Neighbours,
+        Category::LastResort,
+    ];
+
+    pub fn title(&self) -> &'static str {
+        match self {
+            Category::Power => crate::i18n::cat_power(),
+            Category::Reach => crate::i18n::cat_reach(),
+            Category::Naming => crate::i18n::cat_naming(),
+            Category::Throughput => crate::i18n::cat_throughput(),
+            Category::Neighbours => crate::i18n::cat_neighbours(),
+            Category::LastResort => crate::i18n::cat_last_resort(),
+        }
+    }
+
+    /// One line saying what the section is for, shown under its heading.
+    pub fn blurb(&self) -> &'static str {
+        match self {
+            Category::Power => crate::i18n::cat_power_blurb(),
+            Category::Reach => crate::i18n::cat_reach_blurb(),
+            Category::Naming => crate::i18n::cat_naming_blurb(),
+            Category::Throughput => crate::i18n::cat_throughput_blurb(),
+            Category::Neighbours => crate::i18n::cat_neighbours_blurb(),
+            Category::LastResort => crate::i18n::cat_last_resort_blurb(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Risk {
     Low,
     Medium,
+    /// Changes how the machine reaches the network rather than how fast it
+    /// does so. Reversible, but wrong for some setups, so it is never part of
+    /// "apply everything safe".
+    High,
 }
 
 impl Risk {
@@ -29,6 +90,7 @@ impl Risk {
         match self {
             Risk::Low => crate::i18n::risk_low(),
             Risk::Medium => crate::i18n::risk_medium(),
+            Risk::High => crate::i18n::risk_high(),
         }
     }
 }
@@ -56,6 +118,9 @@ pub trait Tweak: Send + Sync {
     fn what(&self) -> &'static str;
     fn why(&self) -> &'static str;
     fn risk(&self) -> Risk;
+    /// Which section of the list this belongs under. Deliberately has no
+    /// default: a new tweak has to say where it goes, or it does not compile.
+    fn category(&self) -> Category;
 
     fn reversible(&self) -> bool {
         true
@@ -149,7 +214,7 @@ pub fn is_elevated() -> bool {
 }
 
 /// Run a console tool without flashing a window.
-fn run(program: &str, args: &[&str]) -> Result<String> {
+pub(crate) fn run(program: &str, args: &[&str]) -> Result<String> {
     #[cfg(windows)]
     use std::os::windows::process::CommandExt;
 
@@ -179,7 +244,7 @@ const NET_CLASS: &str =
     r"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}";
 
 /// Finds the driver subkey belonging to an adapter GUID.
-fn adapter_class_key(net: &NetState) -> Option<String> {
+pub(crate) fn adapter_class_key(net: &NetState) -> Option<String> {
     if net.adapter_guid.is_empty() {
         return None;
     }
@@ -218,6 +283,9 @@ impl Tweak for AdapterPowerSaving {
     }
     fn risk(&self) -> Risk {
         Risk::Low
+    }
+    fn category(&self) -> Category {
+        Category::Power
     }
     fn needs_reboot(&self) -> bool {
         true
@@ -287,6 +355,9 @@ impl Tweak for WlanPowerPlan {
     }
     fn risk(&self) -> Risk {
         Risk::Low
+    }
+    fn category(&self) -> Category {
+        Category::Power
     }
 
     fn read(&self, _net: &NetState) -> State {
@@ -405,6 +476,9 @@ impl Tweak for FastDns {
     fn risk(&self) -> Risk {
         Risk::Low
     }
+    fn category(&self) -> Category {
+        Category::Naming
+    }
 
     fn read(&self, net: &NetState) -> State {
         let current: Vec<String> = net.dns_servers.iter().map(|d| d.to_string()).collect();
@@ -472,6 +546,9 @@ impl Tweak for TcpAutotuning {
     fn risk(&self) -> Risk {
         Risk::Low
     }
+    fn category(&self) -> Category {
+        Category::Throughput
+    }
 
     fn read(&self, _net: &NetState) -> State {
         let out = match run("netsh", &["int", "tcp", "show", "global"]) {
@@ -535,6 +612,9 @@ impl Tweak for NagleOff {
     }
     fn risk(&self) -> Risk {
         Risk::Medium
+    }
+    fn category(&self) -> Category {
+        Category::Throughput
     }
     fn needs_reboot(&self) -> bool {
         true
@@ -601,6 +681,9 @@ impl Tweak for NetworkThrottling {
     }
     fn risk(&self) -> Risk {
         Risk::Medium
+    }
+    fn category(&self) -> Category {
+        Category::Throughput
     }
     fn needs_reboot(&self) -> bool {
         true
@@ -698,6 +781,9 @@ impl Tweak for MtuFix {
     fn risk(&self) -> Risk {
         Risk::Medium
     }
+    fn category(&self) -> Category {
+        Category::Throughput
+    }
 
     fn read(&self, net: &NetState) -> State {
         match Self::current(net) {
@@ -742,6 +828,9 @@ impl Tweak for StackReset {
     fn risk(&self) -> Risk {
         Risk::Medium
     }
+    fn category(&self) -> Category {
+        Category::LastResort
+    }
     fn reversible(&self) -> bool {
         false
     }
@@ -778,7 +867,7 @@ impl Tweak for StackReset {
 }
 
 pub fn all() -> Vec<Box<dyn Tweak>> {
-    vec![
+    let mut tweaks: Vec<Box<dyn Tweak>> = vec![
         Box::new(AdapterPowerSaving),
         Box::new(WlanPowerPlan),
         Box::new(FastDns),
@@ -787,7 +876,10 @@ pub fn all() -> Vec<Box<dyn Tweak>> {
         Box::new(NetworkThrottling),
         Box::new(MtuFix),
         Box::new(StackReset),
-    ]
+    ];
+    tweaks.extend(radio::all());
+    tweaks.extend(stack::all());
+    tweaks
 }
 
 #[cfg(test)]
@@ -804,7 +896,26 @@ mod tests {
             assert!(!t.what().is_empty(), "{} has no description", t.id());
             assert!(!t.why().is_empty(), "{} does not say why it helps", t.id());
         }
-        assert_eq!(tweaks.len(), 8);
+        // The number is here to catch a tweak silently dropped from `all()`:
+        // eight core ones, plus the radio and stack modules.
+        assert_eq!(tweaks.len(), 8 + radio::all().len() + stack::all().len());
+        assert_eq!(tweaks.len(), 21);
+    }
+
+    #[test]
+    fn every_tweak_lands_in_a_section_and_no_section_is_empty() {
+        let tweaks = all();
+        for category in Category::ALL {
+            assert!(
+                tweaks.iter().any(|t| t.category() == category),
+                "{category:?} would render as an empty heading"
+            );
+        }
+        let grouped: usize = Category::ALL
+            .iter()
+            .map(|c| tweaks.iter().filter(|t| t.category() == *c).count())
+            .sum();
+        assert_eq!(grouped, tweaks.len(), "a tweak belongs to no section and would vanish");
     }
 
     #[test]
