@@ -2,6 +2,7 @@
 // and for `--version`/`--report` on the command line.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod advise;
 mod autostart;
 mod bandwidth;
 mod cause;

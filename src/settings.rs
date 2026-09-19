@@ -55,6 +55,16 @@ pub struct Settings {
     /// `None` until the user picks one, which lets the first run follow the
     /// Windows UI language without freezing that choice in the file.
     pub lang: Option<Lang>,
+
+    /// TypeSafe API key for the tweak ranking in the optimise tab. Empty
+    /// means the feature is off and nothing ever leaves the machine, which
+    /// is the default and the state most installs stay in.
+    ///
+    /// This file is plain JSON in the user's local app data, so the key is
+    /// stored in the clear. `TYPESAFE_API_KEY` in the environment takes
+    /// precedence and is the way to use the feature without writing the key
+    /// down; the settings tab says so.
+    pub typesafe_key: String,
 }
 
 impl Default for Settings {
@@ -79,6 +89,7 @@ impl Default for Settings {
             keep_days: 14,
 
             lang: None,
+            typesafe_key: String::new(),
         }
     }
 }

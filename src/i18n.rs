@@ -988,6 +988,50 @@ poprosisz.";
         "netsh did not report an algorithm",
         "netsh nie podał algorytmu";
 
+    // -----------------------------------------------------------------------
+    // the tweak ranking
+    // -----------------------------------------------------------------------
+    adv_btn_rank =>
+        "Rank for this connection",
+        "Ustal priorytety dla tego łącza";
+    adv_btn_clear => "Clear ranking", "Wyczyść ranking";
+    adv_working => "asking…", "pytam…";
+    adv_no_key =>
+        "Needs a TypeSafe API key — set one in Settings.",
+        "Wymaga klucza API TypeSafe — ustaw go w Ustawieniach.";
+    adv_nothing_pending =>
+        "Nothing pending to rank: everything readable is already set.",
+        "Nie ma czego szeregować: wszystko, co da się odczytać, jest już ustawione.";
+    adv_sends_note =>
+        "Sends the link type, signal, ping statistics and the names of the pending \
+         tweaks to TypeSafe. No SSID, no addresses, nothing that identifies you.",
+        "Wysyła do TypeSafe rodzaj łącza, sygnał, statystyki pingów i nazwy \
+         oczekujących tweaków. Bez SSID, bez adresów, bez niczego, co cię identyfikuje.";
+    adv_verdict_heading =>
+        "For this connection",
+        "Dla tego łącza";
+    adv_breakage_warning =>
+        "Flagged as likely to break everyday applications on this link. Apply it on \
+         its own and check what you use before applying anything else.",
+        "Oznaczone jako prawdopodobnie psujące codzienne aplikacje na tym łączu. \
+         Zastosuj je osobno i sprawdź, czego używasz, zanim włączysz cokolwiek innego.";
+    adv_settings_title => "Tweak ranking", "Ranking tweaków";
+    adv_settings_hint =>
+        "Optional. With a key, the Optimise tab can sort the pending tweaks by how \
+         much they would help this connection. Leave it empty and the app never \
+         contacts anything but your own network.",
+        "Opcjonalne. Z kluczem zakładka Optymalizacja potrafi posortować oczekujące \
+         tweaki według tego, ile dadzą na tym łączu. Zostaw puste, a aplikacja nie \
+         łączy się z niczym poza twoją własną siecią.";
+    adv_settings_env =>
+        "Stored as plain text in the settings file. TYPESAFE_API_KEY in the \
+         environment overrides it and is not written to disk.",
+        "Zapisywany jawnym tekstem w pliku ustawień. TYPESAFE_API_KEY ze zmiennych \
+         środowiskowych ma pierwszeństwo i nie trafia na dysk.";
+    adv_settings_env_active =>
+        "Using TYPESAFE_API_KEY from the environment; this field is ignored.",
+        "Używany jest TYPESAFE_API_KEY ze środowiska; to pole jest ignorowane.";
+
     tw_negdns_title =>
         "Stop Windows remembering failed name lookups",
         "Nie pozwól Windows zapamiętywać nieudanych zapytań DNS";
@@ -2222,6 +2266,45 @@ pub fn tw_cong_reverted(provider: &str) -> String {
     match current() {
         Lang::En => format!("Congestion control restored to {provider}."),
         Lang::Pl => format!("Kontrola przeciążenia przywrócona do {provider}."),
+    }
+}
+
+// --- the tweak ranking -----------------------------------------------------
+
+pub fn adv_ranked(n: usize) -> String {
+    match current() {
+        Lang::En => format!("{n} ranked against the last five minutes"),
+        Lang::Pl => format!("{n} ocenionych względem ostatnich pięciu minut"),
+    }
+}
+
+pub fn adv_failed(err: &str) -> String {
+    match current() {
+        Lang::En => format!("Ranking failed: {err}"),
+        Lang::Pl => format!("Ranking się nie udał: {err}"),
+    }
+}
+
+/// The badge itself. A word, not a number: the score is a position on a
+/// scale the reader never saw, and printing it would invite arithmetic on it.
+pub fn adv_badge(score: f64) -> String {
+    match (current(), score >= 2.5) {
+        (Lang::En, true) => "TRY FIRST".into(),
+        (Lang::En, false) => "WORTH IT".into(),
+        (Lang::Pl, true) => "ZACZNIJ OD TEGO".into(),
+        (Lang::Pl, false) => "WARTO".into(),
+    }
+}
+
+pub fn adv_badge_hint(level: &str, confidence: f64) -> String {
+    format!("{level}\n{}", adv_confidence(confidence))
+}
+
+pub fn adv_confidence(confidence: f64) -> String {
+    let pct = (confidence * 100.0).round();
+    match current() {
+        Lang::En => format!("confidence {pct:.0}%"),
+        Lang::Pl => format!("pewność {pct:.0}%"),
     }
 }
 

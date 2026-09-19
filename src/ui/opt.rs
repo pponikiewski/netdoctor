@@ -2,7 +2,8 @@
 
 use eframe::egui;
 
-use super::{App, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{App, Job, FG, FG_DIM, GREEN, RED, YELLOW};
+use crate::advise::{self, Candidate, Priority};
 use crate::i18n;
 use crate::optimize::{self, Risk};
 
@@ -49,6 +50,8 @@ impl Status {
 /// Height of the detail panel with a tweak open, and with nothing
 /// selected. Kept here because the list above is sized against them.
 const DETAIL_OPEN: f32 = 185.0;
+/// The same panel with a ranking verdict in it, which is two more lines.
+const DETAIL_RANKED: f32 = 225.0;
 const DETAIL_EMPTY: f32 = 44.0;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -83,8 +86,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     });
     ui.add_space(10.0);
 
+    rank_panel(app, ui);
+    ui.add_space(10.0);
+
     air_panel(app, ui);
     ui.add_space(10.0);
+
+    // Escape backs out of a selection. The detail panel is the only thing on
+    // this tab that holds a mode, and reaching for the mouse to leave it is
+    // the kind of friction nobody reports and everybody feels.
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        app.selected_tweak = None;
+    }
 
     let tweaks = optimize::all();
 
@@ -92,7 +105,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // than a hardcoded height that overflows on a short window. With nothing
     // selected that panel is one line of text, so it shrinks and the list
     // gets the difference instead of leaving a dead grey box on screen.
-    let detail_height = if app.selected_tweak.is_some() { DETAIL_OPEN } else { DETAIL_EMPTY };
+    let detail_height = match app.selected_tweak.and_then(|i| tweaks.get(i)) {
+        Some(t) if app.priorities.contains_key(t.id()) => DETAIL_RANKED,
+        Some(_) => DETAIL_OPEN,
+        None => DETAIL_EMPTY,
+    };
     let list_height = (ui.available_height() - detail_height - 40.0).max(160.0);
     egui::ScrollArea::vertical().max_height(list_height).show(ui, |ui| {
         for category in optimize::Category::ALL {
@@ -139,13 +156,37 @@ fn section(
     let set = all_rows.iter().filter(|i| status_at(**i) == Status::Set).count();
     let available = all_rows.iter().filter(|i| status_at(**i) != Status::Unavailable).count();
 
-    let rows: Vec<usize> = all_rows
+    let mut rows: Vec<usize> = all_rows
         .into_iter()
         .filter(|i| app.show_unavailable || status_at(*i) != Status::Unavailable)
         .collect();
     if rows.is_empty() {
         return;
     }
+
+    // What is left to do comes first, what is already set after it, and what
+    // cannot be touched here last. Within the pending rows the ranking
+    // decides the order when there is one. Declaration order is the tie
+    // break, so the list is stable between frames and between runs.
+    let scores = &app.priorities;
+    rows.sort_by(|a, b| {
+        let rank = |i: &usize| match status_at(*i) {
+            Status::Todo => 0,
+            Status::Set => 1,
+            Status::Unavailable => 2,
+        };
+        let score = |i: &usize| {
+            tweaks
+                .get(*i)
+                .and_then(|t| scores.get(t.id()))
+                .filter(|p| p.is_recommendation())
+                .map_or(f64::MIN, |p| p.score)
+        };
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| score(b).total_cmp(&score(a)))
+            .then(a.cmp(b))
+    });
 
     egui::Frame::none()
         .fill(super::BG2)
@@ -191,9 +232,22 @@ fn section(
                         let title = egui::RichText::new(t.title()).size(12.0).color(
                             if status == Status::Unavailable { FG_DIM } else { FG },
                         );
-                        if ui.selectable_label(selected, title).clicked() {
-                            app.selected_tweak = Some(i);
-                        }
+                        // The badge shares the title cell rather than taking
+                        // a column of its own, which would sit empty on every
+                        // row until a ranking has been asked for.
+                        ui.horizontal(|ui| {
+                            if let Some(p) = scores.get(t.id()) {
+                                if let Some((text, colour)) = badge(p) {
+                                    ui.label(
+                                        egui::RichText::new(text).size(10.0).strong().color(colour),
+                                    )
+                                    .on_hover_text(i18n::adv_badge_hint(&p.level, p.confidence));
+                                }
+                            }
+                            if ui.selectable_label(selected, title).clicked() {
+                                app.selected_tweak = Some(i);
+                            }
+                        });
 
                         ui.label(egui::RichText::new(text).size(12.0).color(FG_DIM));
 
@@ -215,6 +269,125 @@ fn section(
                     }
                 });
         });
+}
+
+// ---------------------------------------------------------------------------
+// Ranking
+// ---------------------------------------------------------------------------
+
+/// The tweak ranking: one button, its result, and what it costs.
+///
+/// Off unless a key is configured, and it says so rather than showing a
+/// button that cannot work. The privacy line is not a footnote — this is the
+/// one feature in the app that sends anything anywhere, so it says what
+/// leaves the machine on the same screen as the button that sends it.
+fn rank_panel(app: &mut App, ui: &mut egui::Ui) {
+    let configured = advise::key(&app.settings).is_some();
+    let pending = candidates(app).len();
+
+    ui.horizontal(|ui| {
+        let enabled = configured && !app.advising && pending > 0;
+        let button = ui
+            .add_enabled(enabled, egui::Button::new(i18n::adv_btn_rank()))
+            .on_hover_text(i18n::adv_sends_note());
+        let button = if !configured {
+            button.on_disabled_hover_text(i18n::adv_no_key())
+        } else if pending == 0 {
+            button.on_disabled_hover_text(i18n::adv_nothing_pending())
+        } else {
+            button
+        };
+        if button.clicked() {
+            start_rank(app, ui.ctx().clone());
+        }
+
+        if app.advising {
+            ui.spinner();
+            ui.label(egui::RichText::new(i18n::adv_working()).size(11.0).color(FG_DIM));
+        } else if !app.priorities.is_empty() {
+            ui.label(
+                egui::RichText::new(i18n::adv_ranked(app.priorities.len()))
+                    .size(11.0)
+                    .color(FG_DIM),
+            );
+            if ui.small_button(i18n::adv_btn_clear()).clicked() {
+                app.priorities.clear();
+                app.advice_error = None;
+            }
+        } else if !configured {
+            ui.label(egui::RichText::new(i18n::adv_no_key()).size(11.0).color(FG_DIM));
+        }
+    });
+
+    if let Some(err) = &app.advice_error {
+        ui.label(egui::RichText::new(i18n::adv_failed(err)).size(11.0).color(YELLOW));
+    }
+}
+
+/// The tweaks worth ranking: readable, not already applied, and applicable
+/// here. Ranking a tweak that is already set, or one the driver does not
+/// expose, would spend a question on an answer nobody can act on.
+fn candidates(app: &App) -> Vec<Candidate> {
+    let tweaks = optimize::all();
+    let mut out = Vec::new();
+    for (i, t) in tweaks.iter().enumerate() {
+        let Some((_, text, optimal)) = app.tweak_states.get(i) else { continue };
+        if *optimal != Some(false) {
+            continue;
+        }
+        if t.needs_admin() && !app.elevated {
+            continue;
+        }
+        out.push(Candidate {
+            id: t.id().to_string(),
+            title: t.title().to_string(),
+            changes: t.what().to_string(),
+            rationale: t.why().to_string(),
+            risk: advise::risk_word(t.risk()).to_string(),
+            current: text.clone(),
+        });
+    }
+    advise::cap(out)
+}
+
+/// Builds the state on the UI thread, where the store and the settings are,
+/// then hands the request to a worker. Nothing about the machine is read
+/// after this point, so the ranking describes the moment the button was
+/// pressed rather than whenever the reply happened to arrive.
+fn start_rank(app: &mut App, ctx: egui::Context) {
+    let Some(key) = advise::key(&app.settings) else { return };
+    let candidates = candidates(app);
+    if candidates.is_empty() {
+        return;
+    }
+    let state = advise::state(
+        &app.net,
+        &app.last,
+        &app.store,
+        &app.settings,
+        &app.air,
+        &candidates,
+    );
+
+    app.advising = true;
+    app.advice_error = None;
+    let tx = app.tx.clone();
+    std::thread::spawn(move || {
+        let result = advise::rank(&key, &state, &candidates).map_err(|e| e.to_string());
+        let _ = tx.send(Job::AdviceDone(result));
+        ctx.request_repaint();
+    });
+}
+
+/// The badge that marks a ranked row. Only the rows the model actually
+/// recommends get one: a badge on every row would rank the list without
+/// saying anything, which is how a priority column becomes decoration.
+fn badge(p: &Priority) -> Option<(String, egui::Color32)> {
+    if !p.is_recommendation() {
+        return None;
+    }
+    let colour = if p.is_risky() { YELLOW } else { GREEN };
+    Some((i18n::adv_badge(p.score), colour))
 }
 
 /// The channel advice. Collapsed by default: it is a different question from
@@ -432,6 +605,7 @@ fn detail_panel(
                     egui::RichText::new(i18n::opt_revert_available()).size(11.0).color(super::ACCENT),
                 );
             }
+            verdict(app, ui, t.id());
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 let can_apply = app.elevated || !t.needs_admin();
@@ -489,6 +663,28 @@ fn detail_panel(
             }
             ui.label(egui::RichText::new(notes.join(" · ")).size(11.0).color(YELLOW));
         });
+}
+
+/// What the ranking said about the selected tweak, if it was in the batch.
+///
+/// Shown as the level's own words rather than as a number: "2.4 out of 3"
+/// invites the reader to treat a probability-weighted position as a
+/// measurement of this machine, which it is not. The confidence sits beside
+/// it because a split answer and a firm one should not read the same.
+fn verdict(app: &App, ui: &mut egui::Ui, id: &str) {
+    let Some(p) = app.priorities.get(id) else { return };
+    ui.add_space(8.0);
+
+    let colour = if p.is_recommendation() { GREEN } else { FG_DIM };
+    ui.label(egui::RichText::new(i18n::adv_verdict_heading()).size(11.0).color(FG_DIM));
+    ui.label(egui::RichText::new(&p.level).size(12.0).color(colour));
+    ui.label(
+        egui::RichText::new(i18n::adv_confidence(p.confidence)).size(10.0).color(FG_DIM),
+    );
+
+    if p.is_risky() {
+        ui.label(egui::RichText::new(i18n::adv_breakage_warning()).size(11.0).color(YELLOW));
+    }
 }
 
 /// Applies every low-risk, reversible tweak that is not already in place.

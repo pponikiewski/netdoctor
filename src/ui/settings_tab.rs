@@ -19,6 +19,28 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 num_i64(ui, i18n::set_keep_days(), &mut app.draft.keep_days);
             });
 
+            section(left, i18n::adv_settings_title(), |ui| {
+                hint(ui, i18n::adv_settings_hint());
+                // Masked: the field sits on a tab people screenshot when
+                // they are asking someone else about their thresholds.
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.draft.typesafe_key)
+                        .password(true)
+                        .hint_text("sk-…")
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add_space(4.0);
+                if std::env::var("TYPESAFE_API_KEY").is_ok() {
+                    ui.label(
+                        egui::RichText::new(i18n::adv_settings_env_active())
+                            .size(10.0)
+                            .color(YELLOW),
+                    );
+                } else {
+                    hint(ui, i18n::adv_settings_env());
+                }
+            });
+
             section(left, i18n::set_sec_targets(), |ui| {
                 hint(ui, i18n::set_targets_hint());
                 ui.add(
