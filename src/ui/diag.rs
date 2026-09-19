@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 
-use super::{App, Job, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{S_MD, S_SM, T_BODY, T_HEAD, T_TITLE, App, Job, FG, FG_DIM, GREEN, RED, YELLOW};
 use crate::diagnose::{self, Severity};
 use crate::i18n;
 
@@ -25,18 +25,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         {
             start_scan(app);
         }
-        ui.label(egui::RichText::new(&app.scan_label).size(12.0).color(FG_DIM));
+        ui.label(egui::RichText::new(&app.scan_label).size(T_BODY).color(FG_DIM));
     });
 
     if app.scanning {
         ui.add(egui::ProgressBar::new(app.scan_progress).desired_height(6.0));
     }
-    ui.add_space(8.0);
+    ui.add_space(S_SM);
 
     if app.findings.is_empty() {
         ui.label(
             egui::RichText::new(i18n::diag_no_scan_yet())
-            .size(13.0)
+            .size(T_HEAD)
             .color(FG_DIM),
         );
         return;
@@ -46,11 +46,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let has_critical = app.findings.iter().any(|f| f.severity == Severity::Critical);
     ui.label(
         egui::RichText::new(summary)
-            .size(16.0)
+            .size(T_TITLE)
             .strong()
             .color(if has_critical { RED } else { FG }),
     );
-    ui.add_space(10.0);
+    ui.add_space(S_MD);
 
     ui.columns(2, |cols| {
         egui::ScrollArea::vertical().id_salt("findings").show(&mut cols[0], |ui| {
@@ -61,7 +61,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     selected,
                     egui::RichText::new(format!("{:>8}  {}", f.severity.label(), f.title))
                         .color(severity_colour(f.severity))
-                        .size(13.0),
+                        .size(T_HEAD),
                 );
                 if row.clicked() {
                     app.selected_finding = Some(i);
@@ -74,7 +74,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         egui::Frame::none()
             .fill(super::BG2)
             .rounding(6.0)
-            .inner_margin(egui::Margin::same(12.0))
+            .inner_margin(egui::Margin::same(S_MD))
             .show(detail_col, |ui| {
                 ui.set_min_height(240.0);
                 match app.selected_finding.and_then(|i| app.findings.get(i)).cloned() {
@@ -86,20 +86,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     Some(f) => {
                         ui.label(
                             egui::RichText::new(&f.title)
-                                .size(15.0)
+                                .size(T_TITLE)
                                 .strong()
                                 .color(severity_colour(f.severity)),
                         );
-                        ui.add_space(6.0);
+                        ui.add_space(S_SM);
                         if !f.detail.is_empty() {
-                            ui.label(egui::RichText::new(&f.detail).size(12.0).color(FG));
-                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new(&f.detail).size(T_BODY).color(FG));
+                            ui.add_space(S_SM);
                         }
                         if !f.advice.is_empty() {
-                            ui.label(egui::RichText::new(&f.advice).size(12.0).color(FG_DIM));
+                            ui.label(egui::RichText::new(&f.advice).size(T_BODY).color(FG_DIM));
                         }
                         if let Some(id) = &f.tweak_id {
-                            ui.add_space(10.0);
+                            ui.add_space(S_MD);
                             if ui.button(i18n::diag_btn_fix()).clicked() {
                                 app.tab = super::Tab::Optimise;
                                 app.refresh_tweaks();

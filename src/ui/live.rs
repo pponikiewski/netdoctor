@@ -3,19 +3,19 @@
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints, VLine};
 
-use super::{latency_colour, stat_card, App, Job, ACCENT, FG_DIM, GREEN, RED, SERIES_COLOURS, YELLOW};
+use super::{S_MD, S_SM, S_XS, T_BODY, T_META, latency_colour, stat_card, App, Job, ACCENT, FG_DIM, GREEN, RED, SERIES_COLOURS, YELLOW};
 use crate::i18n;
 use crate::probe::icmp;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     plot(app, ui);
-    ui.add_space(10.0);
+    ui.add_space(S_MD);
     cards(app, ui);
-    ui.add_space(10.0);
+    ui.add_space(S_MD);
     controls(app, ui);
 
     if !app.last.note.is_empty() || app.last.roamed {
-        ui.add_space(8.0);
+        ui.add_space(S_SM);
         let mut note = app.last.note.clone();
         if app.last.roamed {
             if !note.is_empty() {
@@ -26,11 +26,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         egui::Frame::none()
             .fill(super::BG2)
             .rounding(6.0)
-            .inner_margin(egui::Margin::same(10.0))
+            .inner_margin(egui::Margin::same(S_MD))
             .show(ui, |ui| {
-                ui.label(egui::RichText::new(note).size(12.0).color(FG_DIM));
+                ui.label(egui::RichText::new(note).size(T_BODY).color(FG_DIM));
             });
     }
+}
+
+/// The legend's colour key, drawn to match the line it stands for.
+///
+/// This was a `▬` character tinted to the series colour, so its length and
+/// weight came from the font rather than from the plot. A legend key should
+/// look like a short piece of the line it names.
+fn swatch(ui: &mut egui::Ui, colour: egui::Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 3.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 1.5, colour);
 }
 
 fn plot(app: &mut App, ui: &mut egui::Ui) {
@@ -103,8 +113,9 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
 
     ui.horizontal_wrapped(|ui| {
         for (i, (label, colour, _)) in series.iter().enumerate() {
-            ui.colored_label(*colour, "▬");
-            let resp = ui.label(egui::RichText::new(label).size(11.0).color(FG_DIM));
+            swatch(ui, *colour);
+            ui.add_space(S_XS);
+            let resp = ui.label(egui::RichText::new(label).size(T_BODY).color(FG_DIM));
 
             // Show the live per-target state on hover: which probe is failing
             // and why is exactly what you want when something is wrong.
@@ -118,11 +129,11 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
                     resp.on_hover_text(tip);
                 }
             }
-            ui.add_space(8.0);
+            ui.add_space(S_SM);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(i18n::live_red_line()).size(11.0).color(FG_DIM),
+                egui::RichText::new(i18n::live_red_line()).size(T_META).color(FG_DIM),
             );
         });
     });
@@ -276,15 +287,15 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
     });
 
     if !app.trace.is_empty() {
-        ui.add_space(8.0);
+        ui.add_space(S_SM);
         egui::Frame::none()
             .fill(super::BG2)
             .rounding(6.0)
-            .inner_margin(egui::Margin::same(10.0))
+            .inner_margin(egui::Margin::same(S_MD))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
                     for line in &app.trace {
-                        ui.label(egui::RichText::new(line).monospace().size(11.0).color(ACCENT));
+                        ui.label(egui::RichText::new(line).monospace().size(T_META).color(ACCENT));
                     }
                 });
             });

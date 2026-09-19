@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 
-use super::{stat_card, App, Job, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_LEAD, stat_card, App, Job, FG, FG_DIM, GREEN, RED, YELLOW};
 use crate::bandwidth::{self, Grade};
 use crate::i18n;
 
@@ -18,14 +18,14 @@ fn grade_colour(g: Grade) -> egui::Color32 {
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    ui.label(egui::RichText::new(i18n::bloat_title()).size(18.0).strong().color(FG));
-    ui.add_space(4.0);
+    ui.label(egui::RichText::new(i18n::bloat_title()).size(T_LEAD).strong().color(FG));
+    ui.add_space(S_XS);
     ui.label(
         egui::RichText::new(i18n::bloat_blurb())
-        .size(12.0)
+        .size(T_BODY)
         .color(FG_DIM),
     );
-    ui.add_space(12.0);
+    ui.add_space(S_MD);
 
     ui.horizontal(|ui| {
         if ui
@@ -34,12 +34,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         {
             start(app);
         }
-        ui.label(egui::RichText::new(&app.bloat_label).size(12.0).color(FG_DIM));
+        ui.label(egui::RichText::new(&app.bloat_label).size(T_BODY).color(FG_DIM));
     });
     if app.bloat_running {
         ui.add(egui::ProgressBar::new(app.bloat_progress).desired_height(6.0));
     }
-    ui.add_space(12.0);
+    ui.add_space(S_MD);
 
     let r = app.bloat.clone();
     ui.horizontal(|ui| {
@@ -71,27 +71,27 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         stat_card(ui, i18n::bloat_card_grade(), g.letter(), "", grade_colour(g));
     });
 
-    ui.add_space(14.0);
+    ui.add_space(S_LG);
     egui::Frame::none()
         .fill(super::BG2)
         .rounding(6.0)
-        .inner_margin(egui::Margin::same(14.0))
+        .inner_margin(egui::Margin::same(S_LG))
         .show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let g = r.grade_or_unknown();
                 if g != Grade::Unknown {
-                    ui.label(egui::RichText::new(g.verdict()).size(13.0).strong().color(grade_colour(g)));
-                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(g.verdict()).size(T_HEAD).strong().color(grade_colour(g)));
+                    ui.add_space(S_SM);
                 }
                 if let (Some(max), true) = (r.loaded_max, r.loaded_avg.is_some()) {
                     ui.label(
                         egui::RichText::new(i18n::bloat_worst(max, r.loaded_loss_pct))
-                        .size(12.0)
+                        .size(T_BODY)
                         .color(FG),
                     );
-                    ui.add_space(6.0);
+                    ui.add_space(S_SM);
                 }
-                ui.label(egui::RichText::new(bandwidth::advice(&r)).size(12.0).color(FG_DIM));
+                ui.label(egui::RichText::new(bandwidth::advice(&r)).size(T_BODY).color(FG_DIM));
             });
         });
 }

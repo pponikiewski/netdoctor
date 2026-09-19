@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use super::{App, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{figure, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE, App, FG, FG_DIM, GREEN, RED, YELLOW};
 use crate::i18n;
 use crate::optimize::{self, Risk};
 
@@ -52,8 +52,8 @@ const DETAIL_OPEN: f32 = 185.0;
 const DETAIL_EMPTY: f32 = 44.0;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    ui.label(egui::RichText::new(i18n::opt_blurb()).size(12.0).color(FG_DIM));
-    ui.add_space(8.0);
+    ui.label(egui::RichText::new(i18n::opt_blurb()).size(T_BODY).color(FG_DIM));
+    ui.add_space(S_SM);
 
     ui.horizontal(|ui| {
         if ui.button(i18n::btn_refresh()).clicked() {
@@ -67,24 +67,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             apply_all_safe(app, ui);
         }
         if !app.elevated {
-            ui.label(egui::RichText::new(i18n::opt_read_only()).size(11.0).color(YELLOW));
+            ui.label(egui::RichText::new(i18n::opt_read_only()).size(T_META).color(YELLOW));
         }
 
         // The tally sits on the same line, right-aligned: it answers "is
         // there anything left to do here" without reading a single row.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (set, todo, na) = tally(app);
-            ui.label(egui::RichText::new(i18n::opt_summary(set, todo, na)).size(11.0).color(FG_DIM));
+            ui.label(egui::RichText::new(i18n::opt_summary(set, todo, na)).size(T_META).color(FG_DIM));
             if na > 0 {
                 ui.checkbox(&mut app.show_unavailable, i18n::opt_show_unavailable())
                     .on_hover_text(i18n::opt_show_unavailable_hint());
             }
         });
     });
-    ui.add_space(10.0);
+    ui.add_space(S_MD);
 
     air_panel(app, ui);
-    ui.add_space(10.0);
+    ui.add_space(S_MD);
+
+    // Escape backs out of a selection. The detail panel is the only thing on
+    // this tab that holds a mode, and reaching for the mouse to leave it is
+    // the kind of friction nobody reports and everybody feels.
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        app.selected_tweak = None;
+    }
 
     let tweaks = optimize::all();
 
@@ -100,7 +107,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
     });
 
-    ui.add_space(12.0);
+    ui.add_space(S_MD);
     detail_panel(app, ui, &tweaks, detail_height);
 }
 
@@ -139,7 +146,7 @@ fn section(
     let set = all_rows.iter().filter(|i| status_at(**i) == Status::Set).count();
     let available = all_rows.iter().filter(|i| status_at(**i) != Status::Unavailable).count();
 
-    let rows: Vec<usize> = all_rows
+    let mut rows: Vec<usize> = all_rows
         .into_iter()
         .filter(|i| app.show_unavailable || status_at(*i) != Status::Unavailable)
         .collect();
@@ -147,14 +154,30 @@ fn section(
         return;
     }
 
+    // What is left to do comes first, what is already set after it, and what
+    // cannot be touched here last. Declaration order breaks ties, so the list
+    // is stable between frames and between runs. Before this the three kinds
+    // were interleaved in declaration order, which meant finding the pending
+    // ones was a read of every row in the section.
+    rows.sort_by_key(|i| {
+        (
+            match status_at(*i) {
+                Status::Todo => 0,
+                Status::Set => 1,
+                Status::Unavailable => 2,
+            },
+            *i,
+        )
+    });
+
     egui::Frame::none()
         .fill(super::BG2)
         .rounding(6.0)
-        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
+        .inner_margin(egui::Margin::symmetric(S_MD, S_MD))
         .outer_margin(egui::Margin { bottom: 8.0, right: 4.0, ..Default::default() })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(category.title()).size(13.0).strong().color(FG));
+                ui.label(egui::RichText::new(category.title()).size(T_HEAD).strong().color(FG));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let summary = if available == 0 {
                         i18n::opt_section_none().to_string()
@@ -164,11 +187,11 @@ fn section(
                         i18n::opt_section_count(set, available)
                     };
                     let colour = if available > 0 && set == available { GREEN } else { FG_DIM };
-                    ui.label(egui::RichText::new(summary).size(11.0).color(colour));
+                    ui.label(egui::RichText::new(summary).size(T_META).color(colour));
                 });
             });
-            ui.label(egui::RichText::new(category.blurb()).size(11.0).color(FG_DIM));
-            ui.add_space(6.0);
+            ui.label(egui::RichText::new(category.blurb()).size(T_META).color(FG_DIM));
+            ui.add_space(S_SM);
 
             egui::Grid::new(("tweaks", category.title()))
                 .num_columns(4)
@@ -184,25 +207,25 @@ fn section(
                         let t = &tweaks[i];
 
                         ui.label(
-                            egui::RichText::new(status.label()).size(11.0).color(status.colour()),
+                            egui::RichText::new(status.label()).size(T_META).color(status.colour()),
                         );
 
                         let selected = app.selected_tweak == Some(i);
-                        let title = egui::RichText::new(t.title()).size(12.0).color(
+                        let title = egui::RichText::new(t.title()).size(T_BODY).color(
                             if status == Status::Unavailable { FG_DIM } else { FG },
                         );
                         if ui.selectable_label(selected, title).clicked() {
                             app.selected_tweak = Some(i);
                         }
 
-                        ui.label(egui::RichText::new(text).size(12.0).color(FG_DIM));
+                        ui.label(egui::RichText::new(text).size(T_BODY).color(FG_DIM));
 
                         // A tweak nobody can apply has no risk to report.
                         if status == Status::Unavailable {
-                            ui.label(egui::RichText::new("\u{2014}").size(11.0).color(FG_DIM));
+                            ui.label(egui::RichText::new("\u{2014}").size(T_META).color(FG_DIM));
                         } else {
                             ui.label(
-                                egui::RichText::new(t.risk().label()).size(11.0).color(
+                                egui::RichText::new(t.risk().label()).size(T_META).color(
                                     match t.risk() {
                                         Risk::Low => GREEN,
                                         Risk::Medium => YELLOW,
@@ -221,11 +244,11 @@ fn section(
 /// the rest of the tab — everything else here changes this machine, and this
 /// one produces a sentence to type into the router.
 fn air_panel(app: &mut App, ui: &mut egui::Ui) {
-    egui::CollapsingHeader::new(egui::RichText::new(i18n::air_title()).size(13.0).color(FG))
+    egui::CollapsingHeader::new(egui::RichText::new(i18n::air_title()).size(T_HEAD).color(FG))
         .id_salt("air_scan")
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(i18n::air_blurb()).size(11.0).color(FG_DIM));
-            ui.add_space(6.0);
+            ui.label(egui::RichText::new(i18n::air_blurb()).size(T_META).color(FG_DIM));
+            ui.add_space(S_SM);
 
             ui.horizontal(|ui| {
                 if ui
@@ -236,22 +259,22 @@ fn air_panel(app: &mut App, ui: &mut egui::Ui) {
                     start_air_scan(app, ui.ctx().clone());
                 }
                 if app.air_scanning {
-                    ui.label(egui::RichText::new(i18n::air_scanning()).size(11.0).color(FG_DIM));
+                    ui.label(egui::RichText::new(i18n::air_scanning()).size(T_META).color(FG_DIM));
                 }
             });
-            ui.add_space(6.0);
+            ui.add_space(S_SM);
 
             if let Some(err) = &app.air.error {
-                ui.label(egui::RichText::new(i18n::air_failed(err)).size(12.0).color(YELLOW));
+                ui.label(egui::RichText::new(i18n::air_failed(err)).size(T_BODY).color(YELLOW));
                 return;
             }
             if app.air.aps.is_empty() {
-                ui.label(egui::RichText::new(i18n::air_empty()).size(12.0).color(FG_DIM));
+                ui.label(egui::RichText::new(i18n::air_empty()).size(T_BODY).color(FG_DIM));
                 return;
             }
 
             air_advice(app, ui);
-            ui.add_space(8.0);
+            ui.add_space(S_SM);
             air_table(app, ui);
         });
 }
@@ -260,30 +283,30 @@ fn air_advice(app: &App, ui: &mut egui::Ui) {
     let air = &app.air;
     ui.label(
         egui::RichText::new(i18n::air_seen(air.aps.len(), air.co_channel()))
-            .size(12.0)
+            .size(T_BODY)
             .color(FG),
     );
     if let Some(cur) = air.current {
         let noise = air.load_24.iter().chain(air.load_5.iter()).find(|l| l.channel == cur);
         ui.label(
             egui::RichText::new(i18n::air_current_line(cur, noise.and_then(|l| l.noise_dbm)))
-                .size(12.0)
+                .size(T_BODY)
                 .color(FG_DIM),
         );
     }
-    ui.add_space(6.0);
+    ui.add_space(S_SM);
 
     if air.worth_moving_24() {
         // `worth_moving_24` has already established both numbers exist.
         let best = air.best_24.unwrap_or(1);
         let gain = gain_24(app, best);
-        ui.label(egui::RichText::new(i18n::air_best_24(best, gain)).size(13.0).strong().color(GREEN));
-        ui.label(egui::RichText::new(i18n::air_router_note()).size(11.0).color(FG_DIM));
+        ui.label(egui::RichText::new(i18n::air_best_24(best, gain)).size(T_HEAD).strong().color(GREEN));
+        ui.label(egui::RichText::new(i18n::air_router_note()).size(T_META).color(FG_DIM));
     } else if air.current.map(|c| (1..=14).contains(&c)).unwrap_or(false) {
-        ui.label(egui::RichText::new(i18n::air_quiet_here()).size(12.0).color(GREEN));
+        ui.label(egui::RichText::new(i18n::air_quiet_here()).size(T_BODY).color(GREEN));
     }
 
-    ui.add_space(4.0);
+    ui.add_space(S_XS);
     ui.label(
         egui::RichText::new(
             crate::probe::airscan::CLEAN_24
@@ -293,25 +316,25 @@ fn air_advice(app: &App, ui: &mut egui::Ui) {
                 .collect::<Vec<_>>()
                 .join("   ·   "),
         )
-        .size(11.0)
+        .size(T_META)
         .color(FG_DIM),
     );
 
     if air.on_dfs() {
-        ui.add_space(6.0);
+        ui.add_space(S_SM);
         ui.label(
             egui::RichText::new(i18n::air_on_dfs(air.current.unwrap_or(0)))
-                .size(13.0)
+                .size(T_HEAD)
                 .strong()
                 .color(YELLOW),
         );
-        ui.label(egui::RichText::new(i18n::air_dfs_move()).size(11.0).color(FG_DIM));
+        ui.label(egui::RichText::new(i18n::air_dfs_move()).size(T_META).color(FG_DIM));
     }
 
     if let Some(best5) = air.best_5 {
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new(i18n::air_best_5(best5)).size(12.0).color(FG));
-        ui.label(egui::RichText::new(i18n::air_dfs_note()).size(11.0).color(FG_DIM));
+        ui.add_space(S_XS);
+        ui.label(egui::RichText::new(i18n::air_best_5(best5)).size(T_BODY).color(FG));
+        ui.label(egui::RichText::new(i18n::air_dfs_note()).size(T_META).color(FG_DIM));
     }
 }
 
@@ -334,7 +357,7 @@ fn air_table(app: &App, ui: &mut egui::Ui) {
             (i18n::air_col_channel(), ()),
             (i18n::air_col_signal(), ()),
         ] {
-            ui.label(egui::RichText::new(label).size(11.0).color(FG_DIM));
+            ui.label(egui::RichText::new(label).size(T_META).color(FG_DIM));
         }
         ui.end_row();
 
@@ -348,7 +371,7 @@ fn air_table(app: &App, ui: &mut egui::Ui) {
             };
             ui.label(
                 egui::RichText::new(name)
-                    .size(12.0)
+                    .size(T_BODY)
                     .color(if ap.ours { GREEN } else { FG }),
             )
             // Mesh nodes share an SSID, so the only thing telling two rows
@@ -356,14 +379,16 @@ fn air_table(app: &App, ui: &mut egui::Ui) {
             .on_hover_text(&ap.bssid);
             ui.label(
                 egui::RichText::new(i18n::air_channel_cell(ap.channel, ap.band.label()))
-                    .size(12.0)
+                    .size(T_BODY)
                     .color(FG_DIM),
             );
-            ui.label(
-                egui::RichText::new(format!("{} dBm", ap.rssi_dbm))
-                    .size(12.0)
-                    .color(if ap.rssi_dbm > -70 { FG } else { FG_DIM }),
-            );
+            // Signal is the column this table is sorted and read by, so its
+            // digits line up rather than drifting with the glyph widths.
+            ui.label(figure(
+                format!("{} dBm", ap.rssi_dbm),
+                T_BODY,
+                if ap.rssi_dbm > -70 { FG } else { FG_DIM },
+            ));
             ui.end_row();
         }
     });
@@ -398,7 +423,7 @@ fn detail_panel(
     egui::Frame::none()
         .fill(super::BG2)
         .rounding(6.0)
-        .inner_margin(egui::Margin::same(14.0))
+        .inner_margin(egui::Margin::same(S_LG))
         .show(ui, |ui| {
             ui.set_min_height(height);
             // Without this the empty state shrinks to the width of its one
@@ -411,8 +436,8 @@ fn detail_panel(
             };
             let Some(t) = tweaks.get(i) else { return };
 
-            ui.label(egui::RichText::new(t.title()).size(15.0).strong().color(FG));
-            ui.add_space(4.0);
+            ui.label(egui::RichText::new(t.title()).size(T_TITLE).strong().color(FG));
+            ui.add_space(S_XS);
 
             // Repeat the status here. The row that was clicked scrolls out of
             // sight on a short window, and "what is it now" is the first
@@ -424,15 +449,15 @@ fn detail_panel(
                 .unwrap_or_default();
             let status = Status::of(optimal);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(status.label()).size(11.0).color(status.colour()));
-                ui.label(egui::RichText::new(state_text).size(11.0).color(FG_DIM));
+                ui.label(egui::RichText::new(status.label()).size(T_META).color(status.colour()));
+                ui.label(egui::RichText::new(state_text).size(T_META).color(FG_DIM));
             });
             if optimize::has_snapshot(t.id()) {
                 ui.label(
-                    egui::RichText::new(i18n::opt_revert_available()).size(11.0).color(super::ACCENT),
+                    egui::RichText::new(i18n::opt_revert_available()).size(T_META).color(super::ACCENT),
                 );
             }
-            ui.add_space(10.0);
+            ui.add_space(S_MD);
             ui.horizontal(|ui| {
                 let can_apply = app.elevated || !t.needs_admin();
                 if ui
@@ -474,11 +499,11 @@ fn detail_panel(
                     app.refresh_tweaks();
                 }
             });
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new(i18n::opt_what_it_does(t.what())).size(12.0).color(FG));
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new(i18n::opt_why_it_helps(t.why())).size(12.0).color(FG_DIM));
-            ui.add_space(6.0);
+            ui.add_space(S_SM);
+            ui.label(egui::RichText::new(i18n::opt_what_it_does(t.what())).size(T_BODY).color(FG));
+            ui.add_space(S_XS);
+            ui.label(egui::RichText::new(i18n::opt_why_it_helps(t.why())).size(T_BODY).color(FG_DIM));
+            ui.add_space(S_SM);
 
             let mut notes = vec![i18n::opt_risk_note(t.risk().label())];
             if t.needs_reboot() {
@@ -487,7 +512,7 @@ fn detail_panel(
             if !t.reversible() {
                 notes.push(i18n::opt_irreversible().into());
             }
-            ui.label(egui::RichText::new(notes.join(" · ")).size(11.0).color(YELLOW));
+            ui.label(egui::RichText::new(notes.join(" · ")).size(T_META).color(YELLOW));
         });
 }
 

@@ -28,7 +28,12 @@ pub const BG: egui::Color32 = egui::Color32::from_rgb(0x14, 0x16, 0x1a);
 pub const BG2: egui::Color32 = egui::Color32::from_rgb(0x1c, 0x1f, 0x26);
 pub const BG3: egui::Color32 = egui::Color32::from_rgb(0x24, 0x28, 0x32);
 pub const FG: egui::Color32 = egui::Color32::from_rgb(0xe6, 0xe8, 0xed);
-pub const FG_DIM: egui::Color32 = egui::Color32::from_rgb(0x8b, 0x93, 0xa3);
+/// Secondary text. Lifted from `#8b93a3`, which cleared 4.5:1 against the
+/// page but only just against `BG3` — and most of what it labels is set in
+/// the two smallest steps of the scale, where "only just" is not enough.
+pub const FG_DIM: egui::Color32 = egui::Color32::from_rgb(0x9a, 0xa3, 0xb4);
+/// A hairline. Dark enough to read as a rule rather than as another panel.
+pub const LINE: egui::Color32 = egui::Color32::from_rgb(0x2c, 0x31, 0x3c);
 pub const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x4d, 0xa3, 0xff);
 pub const GREEN: egui::Color32 = egui::Color32::from_rgb(0x3d, 0xdc, 0x84);
 pub const YELLOW: egui::Color32 = egui::Color32::from_rgb(0xff, 0xc4, 0x4d);
@@ -42,6 +47,74 @@ pub const SERIES_COLOURS: [egui::Color32; 6] = [
     egui::Color32::from_rgb(0x4d, 0xd0, 0xe1),
     egui::Color32::from_rgb(0xff, 0x8f, 0xab),
 ];
+
+// ---------------------------------------------------------------------------
+// Type scale
+// ---------------------------------------------------------------------------
+
+// Six steps at roughly 1.13 between them, which is the tight ratio a dense
+// tool wants: there are a lot of text elements per screen here and a wide
+// ratio turns hierarchy into noise. This replaces ten ad-hoc sizes that had
+// grown to sit one point apart in places, where the difference read as a
+// rendering fault rather than as a level.
+//
+// The floor moved up. The old scale bottomed out at 10pt for hints and units
+// and did most of its work at 11pt, which is small enough to be skipped —
+// and what it was labelling was the units and the caveats, the parts that
+// decide whether a number means anything.
+
+/// Units, timestamps, caveats. Never a whole sentence anyone must read.
+pub const T_MICRO: f32 = 11.0;
+/// Secondary labels and state text, next to the thing they qualify.
+pub const T_META: f32 = 12.0;
+/// The default. Anything meant to be read as prose is at least this size.
+pub const T_BODY: f32 = 13.5;
+/// Section headings, tab labels, the name of a row in a detail panel.
+pub const T_HEAD: f32 = 15.0;
+/// The title of a panel or a finding.
+pub const T_TITLE: f32 = 17.0;
+/// The one-line verdict in the header.
+pub const T_LEAD: f32 = 19.5;
+/// The single number a stat card exists for.
+pub const T_METRIC: f32 = 24.0;
+
+// Spacing. Four steps, used as a rhythm rather than picked per call site:
+// a group is separated by S_XS, a block from its neighbour by S_SM, and a
+// section from the next by S_MD. S_LG is for the gap above a heading, which
+// is always larger than the gap below it — that asymmetry is what makes a
+// heading belong to what follows rather than float between two blocks.
+pub const S_XS: f32 = 4.0;
+pub const S_SM: f32 = 8.0;
+pub const S_MD: f32 = 12.0;
+pub const S_LG: f32 = 18.0;
+/// The window's left and right edge. Every top-level panel uses it, so the
+/// header, the tabs and the content share one left edge.
+pub const GUTTER: f32 = 14.0;
+
+/// A measurement, in the monospaced face so its digits keep their column.
+///
+/// The live tables redraw every second. In a proportional face a `1` is
+/// narrower than a `4`, so a latency that ticks from 14 ms to 41 ms shifts
+/// the whole cell sideways, and a column of them never lines up. Reading a
+/// table like that means reading every row instead of scanning the shape of
+/// the column.
+pub fn figure(text: impl Into<String>, size: f32, colour: egui::Color32) -> egui::RichText {
+    egui::RichText::new(text).size(size).color(colour).family(egui::FontFamily::Monospace)
+}
+
+/// The status indicator, painted rather than typed.
+///
+/// This was a `●` glyph sized against the text around it, which left its
+/// optical size and vertical position up to whichever font happened to
+/// supply the character. A circle is two numbers; it should not depend on a
+/// font's idea of a bullet.
+pub fn status_dot(ui: &mut egui::Ui, colour: egui::Color32, radius: f32) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(radius * 2.0, radius * 2.0),
+        egui::Sense::hover(),
+    );
+    ui.painter().circle_filled(rect.center(), radius, colour);
+}
 
 pub fn status_colour(s: Status) -> egui::Color32 {
     match s {
@@ -264,12 +337,16 @@ impl eframe::App for App {
         // keeps the chart live without spinning the GPU.
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
 
+        // All three panels indent to the same GUTTER, so the header, the tab
+        // labels and whatever the tab draws share one left edge. They were
+        // at 16, 12 and 14 before, which is not a visible misalignment so
+        // much as a permanent faint wrongness down the side of the window.
         egui::TopBottomPanel::top("header")
-            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(16.0, 12.0)))
+            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(GUTTER, S_MD)))
             .show(ctx, |ui| self.header(ui));
 
         egui::TopBottomPanel::top("tabs")
-            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(12.0, 0.0)))
+            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(GUTTER, 0.0)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     for (tab, label) in [
@@ -281,7 +358,26 @@ impl eframe::App for App {
                         (Tab::Settings, crate::i18n::tab_settings()),
                     ] {
                         let selected = self.tab == tab;
-                        if ui.selectable_label(selected, egui::RichText::new(label).size(14.0)).clicked() {
+                        // Weight and colour carry the selection, and an
+                        // underline anchors it to the rule below. The tinted
+                        // pill egui gives a selected `selectable_label` reads
+                        // as a pressed button, which is the wrong promise for
+                        // something that is already the current view.
+                        let text = egui::RichText::new(label)
+                            .size(T_HEAD)
+                            .color(if selected { FG } else { FG_DIM });
+                        let text = if selected { text.strong() } else { text };
+
+                        let response = ui.selectable_label(selected, text);
+                        if selected {
+                            let r = response.rect;
+                            ui.painter().hline(
+                                r.x_range(),
+                                r.bottom() + 3.0,
+                                egui::Stroke::new(2.0, ACCENT),
+                            );
+                        }
+                        if response.clicked() {
                             self.tab = tab;
                             if tab == Tab::Optimise {
                                 self.refresh_tweaks();
@@ -289,17 +385,28 @@ impl eframe::App for App {
                         }
                     }
                 });
-                ui.add_space(6.0);
+                ui.add_space(S_SM);
+
+                // The rule that the selected tab's underline sits on. Without
+                // it the tab strip and the content below are one undivided
+                // field of the same colour.
+                let rect = ui.max_rect();
+                ui.painter().hline(
+                    rect.x_range(),
+                    ui.cursor().top(),
+                    egui::Stroke::new(1.0, LINE),
+                );
             });
 
         if let Some((text, colour, until)) = self.toast.clone() {
             if now < until {
                 egui::TopBottomPanel::bottom("toast")
-                    .frame(egui::Frame::none().fill(BG2).inner_margin(egui::Margin::symmetric(16.0, 10.0)))
+                    .frame(egui::Frame::none().fill(BG2).inner_margin(egui::Margin::symmetric(GUTTER, S_SM)))
                     .show(ctx, |ui| {
                         ui.horizontal(|ui| {
-                            ui.colored_label(colour, "●");
-                            ui.colored_label(FG, text);
+                            status_dot(ui, colour, 5.0);
+                            ui.add_space(S_XS);
+                            ui.label(egui::RichText::new(text).size(T_BODY).color(FG));
                             if ui.button(crate::i18n::btn_dismiss()).clicked() {
                                 self.toast = None;
                             }
@@ -311,7 +418,7 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::same(14.0)))
+            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::same(GUTTER)))
             .show(ctx, |ui| match self.tab {
                 Tab::Live => live::show(self, ui),
                 Tab::Diagnose => diag::show(self, ui),
@@ -327,20 +434,21 @@ impl App {
     fn header(&mut self, ui: &mut egui::Ui) {
         let status = self.last.status;
         ui.horizontal(|ui| {
-            ui.colored_label(status_colour(status), egui::RichText::new("●").size(20.0));
+            status_dot(ui, status_colour(status), 7.0);
+            ui.add_space(S_XS);
             ui.vertical(|ui| {
                 ui.label(
                     egui::RichText::new(status.headline())
-                        .size(18.0)
+                        .size(T_LEAD)
                         .strong()
                         .color(FG),
                 );
-                ui.label(egui::RichText::new(self.connection_line()).size(12.0).color(FG_DIM));
+                ui.label(egui::RichText::new(self.connection_line()).size(T_BODY).color(FG_DIM));
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.elevated {
-                    ui.label(egui::RichText::new(crate::i18n::hdr_administrator()).size(11.0).color(GREEN));
+                    ui.label(egui::RichText::new(crate::i18n::hdr_administrator()).size(T_META).color(GREEN));
                 } else {
                     if ui.button(crate::i18n::hdr_restart_elevated()).clicked() {
                         match crate::autostart::relaunch_elevated() {
@@ -353,7 +461,7 @@ impl App {
                     }
                     ui.label(
                         egui::RichText::new(crate::i18n::hdr_standard_mode())
-                            .size(11.0)
+                            .size(T_META)
                             .color(FG_DIM),
                     );
                 }
@@ -398,13 +506,17 @@ pub fn stat_card(
     egui::Frame::none()
         .fill(BG2)
         .rounding(6.0)
-        .inner_margin(egui::Margin::same(12.0))
+        .inner_margin(egui::Margin::same(S_MD))
         .show(ui, |ui| {
             ui.set_min_width(140.0);
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(label).size(11.0).color(FG_DIM));
-                ui.label(egui::RichText::new(value).size(22.0).strong().color(colour));
-                ui.label(egui::RichText::new(sub).size(10.0).color(FG_DIM));
+                ui.label(egui::RichText::new(label).size(T_META).color(FG_DIM));
+                // The value is the reason the card exists and it changes every
+                // second, so it is the one that most needs its digits to stay
+                // in place between frames.
+                ui.label(figure(value, T_METRIC, colour).strong());
+                ui.add_space(S_XS * 0.5);
+                ui.label(egui::RichText::new(sub).size(T_MICRO).color(FG_DIM));
             });
         });
 }
@@ -420,11 +532,36 @@ fn apply_theme(ctx: &egui::Context) {
     visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(0x32, 0x38, 0x46);
     visuals.widgets.active.bg_fill = ACCENT;
     visuals.selection.bg_fill = ACCENT.linear_multiply(0.4);
+
+    // Keyboard focus was the default 1px white-ish rect, which on this
+    // palette is nearly invisible against BG3. The accent is the colour
+    // selection already uses, so focus and selection read as one idea.
+    visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(0x32, 0x38, 0x46);
+    visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT);
+    visuals.window_stroke = egui::Stroke::new(1.0, LINE);
+
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-    style.spacing.button_padding = egui::vec2(12.0, 6.0);
+    style.spacing.item_spacing = egui::vec2(S_SM, S_SM);
+    style.spacing.button_padding = egui::vec2(S_MD, 6.0);
+
+    // Widgets that are never given an explicit RichText — buttons, checkbox
+    // labels, drag values, text fields — were taking egui's own scale, which
+    // is a different scale from the one the rest of the app is drawn on. The
+    // settings tab was the worst of it: hand-sized labels next to
+    // default-sized controls, on every row.
+    use egui::{FontFamily, FontId, TextStyle};
+    style.text_styles = [
+        (TextStyle::Small, FontId::new(T_MICRO, FontFamily::Proportional)),
+        (TextStyle::Body, FontId::new(T_BODY, FontFamily::Proportional)),
+        (TextStyle::Button, FontId::new(T_BODY, FontFamily::Proportional)),
+        (TextStyle::Heading, FontId::new(T_TITLE, FontFamily::Proportional)),
+        (TextStyle::Monospace, FontId::new(T_BODY, FontFamily::Monospace)),
+    ]
+    .into();
+
     ctx.set_style(style);
 }
 

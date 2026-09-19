@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use super::{App, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{S_LG, S_MD, S_SM, T_BODY, T_HEAD, T_META, App, FG, FG_DIM, GREEN, RED, YELLOW};
 use crate::i18n;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -81,14 +81,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 if crate::autostart::is_stale() {
                     ui.label(
                         egui::RichText::new(i18n::set_autostart_stale())
-                        .size(11.0)
+                        .size(T_META)
                         .color(YELLOW),
                     );
                 }
             });
         });
 
-        ui.add_space(12.0);
+        ui.add_space(S_MD);
         ui.horizontal(|ui| {
             if ui.button(i18n::set_btn_save()).clicked() {
                 save(app, ui);
@@ -150,23 +150,29 @@ fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::none()
         .fill(super::BG2)
         .rounding(6.0)
-        .inner_margin(egui::Margin::same(14.0))
+        .inner_margin(egui::Margin::same(S_LG))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(title).size(14.0).strong().color(FG));
-            ui.add_space(8.0);
+            ui.label(egui::RichText::new(title).size(T_HEAD).strong().color(FG));
+            ui.add_space(S_MD);
             body(ui);
         });
-    ui.add_space(10.0);
+    ui.add_space(S_MD);
 }
 
+/// The line under a control that says what it is for.
+///
+/// It was set one step below the smallest label on the screen, which made
+/// the explanation harder to read than the setting it explains. It is now
+/// the same step as the other secondary text, and the gap below it is what
+/// ties it to the control rather than the size.
 fn hint(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).size(10.0).color(FG_DIM));
-    ui.add_space(4.0);
+    ui.label(egui::RichText::new(text).size(T_META).color(FG_DIM));
+    ui.add_space(S_SM);
 }
 
 fn row(ui: &mut egui::Ui, label: &str, widget: impl FnOnce(&mut egui::Ui)) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).size(12.0).color(FG));
+        ui.label(egui::RichText::new(label).size(T_BODY).color(FG));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), widget);
     });
 }

@@ -9,7 +9,7 @@
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
 
-use super::{App, Tab, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{figure, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE, App, Tab, FG, FG_DIM, GREEN, RED, YELLOW};
 use crate::cause::{self, Cause, Confidence};
 use crate::diagnose::format_datetime;
 use crate::i18n;
@@ -22,7 +22,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if day.is_empty() {
         ui.label(
             egui::RichText::new(i18n::hist_none_24h())
-                .size(16.0)
+                .size(T_TITLE)
                 .strong()
                 .color(GREEN),
         );
@@ -40,19 +40,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         };
         ui.label(
             egui::RichText::new(i18n::hist_summary(day.len(), where_text))
-            .size(16.0)
+            .size(T_TITLE)
             .strong()
             .color(RED),
         );
     }
 
-    ui.add_space(4.0);
+    ui.add_space(S_XS);
     ui.label(
         egui::RichText::new(i18n::hist_blurb())
-        .size(12.0)
+        .size(T_BODY)
         .color(FG_DIM),
     );
-    ui.add_space(10.0);
+    ui.add_space(S_MD);
 
     let events = app.store.recent_events(300);
     if events.is_empty() {
@@ -77,17 +77,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         });
 
     let Some(id) = app.selected_outage else {
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new(i18n::hist_select_hint()).size(11.0).color(FG_DIM));
+        ui.add_space(S_SM);
+        ui.label(egui::RichText::new(i18n::hist_select_hint()).size(T_META).color(FG_DIM));
         return;
     };
     let Some(event) = events.iter().find(|e| e.id == id) else {
         return;
     };
 
-    ui.add_space(8.0);
+    ui.add_space(S_SM);
     ui.separator();
-    ui.add_space(6.0);
+    ui.add_space(S_SM);
     egui::ScrollArea::vertical()
         .id_salt("history_detail")
         .show(ui, |ui| detail(app, ui, event, &events));
@@ -105,7 +105,7 @@ fn table(app: &mut App, ui: &mut egui::Ui, events: &[Event]) {
                 i18n::hist_col_kind(),
                 i18n::hist_col_detail(),
             ] {
-                ui.label(egui::RichText::new(h).size(11.0).color(FG_DIM));
+                ui.label(egui::RichText::new(h).size(T_META).color(FG_DIM));
             }
             ui.end_row();
 
@@ -118,23 +118,25 @@ fn table(app: &mut App, ui: &mut egui::Ui, events: &[Event]) {
                 let started = ui.selectable_label(
                     selected,
                     egui::RichText::new(format_datetime(e.ts_start))
-                        .size(11.0)
+                        .size(T_META)
                         .monospace()
                         .color(FG),
                 );
                 if started.clicked() {
                     app.selected_outage = if selected { None } else { Some(e.id) };
                 }
-                ui.label(
-                    egui::RichText::new(match e.duration_s() {
+                // A duration column is read by comparing rows, which only
+                // works if the digits sit in the same place on each one.
+                ui.label(figure(
+                    match e.duration_s() {
                         Some(d) => format!("{d:.0} s"),
                         None => i18n::hist_ongoing().into(),
-                    })
-                    .size(11.0)
-                    .color(colour),
-                );
-                ui.label(egui::RichText::new(i18n::event_kind(&e.kind)).size(11.0).color(colour));
-                ui.label(egui::RichText::new(&e.detail).size(11.0).color(FG_DIM));
+                    },
+                    T_META,
+                    colour,
+                ));
+                ui.label(egui::RichText::new(i18n::event_kind(&e.kind)).size(T_META).color(colour));
+                ui.label(egui::RichText::new(&e.detail).size(T_META).color(FG_DIM));
                 ui.end_row();
             }
         });
@@ -144,7 +146,7 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(i18n::hist_cause_for(&format_datetime(event.ts_start)))
-                .size(15.0)
+                .size(T_TITLE)
                 .strong()
                 .color(FG),
         );
@@ -154,23 +156,23 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
             }
         });
     });
-    ui.add_space(6.0);
+    ui.add_space(S_SM);
 
     // Changes applied in the hour before the outage: the correlation the app
     // has always had the data for and never drawn.
     let tweaks = app.store.tweaks_between(event.ts_start - 3600.0, event.ts_start);
     let causes = cause::analyse(event, events, &tweaks);
 
-    ui.label(egui::RichText::new(i18n::hist_cause_heading()).size(12.0).strong().color(FG_DIM));
-    ui.add_space(2.0);
+    ui.label(egui::RichText::new(i18n::hist_cause_heading()).size(T_BODY).strong().color(FG_DIM));
+    ui.add_space(S_XS);
     for c in &causes {
         cause_row(app, ui, c);
     }
 
     if !tweaks.is_empty() {
-        ui.add_space(8.0);
+        ui.add_space(S_SM);
         ui.label(
-            egui::RichText::new(i18n::hist_tweaks_heading()).size(12.0).strong().color(FG_DIM),
+            egui::RichText::new(i18n::hist_tweaks_heading()).size(T_BODY).strong().color(FG_DIM),
         );
         for t in &tweaks {
             ui.label(
@@ -180,17 +182,17 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
                     i18n::tweak_name(&t.tweak_id),
                     t.action
                 ))
-                .size(11.0)
+                .size(T_META)
                 .monospace()
                 .color(FG_DIM),
             );
         }
     }
 
-    ui.add_space(10.0);
+    ui.add_space(S_MD);
     lead_up(app, ui, event);
 
-    ui.add_space(10.0);
+    ui.add_space(S_MD);
     ui.columns(2, |cols| {
         state_block(&mut cols[0], i18n::hist_state_heading(), event.context_json());
         let recovery = event.context_end_json();
@@ -198,9 +200,9 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
             state_block(&mut cols[1], i18n::hist_recovery_heading(), recovery);
         } else {
             cols[1].label(
-                egui::RichText::new(i18n::hist_recovery_heading()).size(12.0).strong().color(FG_DIM),
+                egui::RichText::new(i18n::hist_recovery_heading()).size(T_BODY).strong().color(FG_DIM),
             );
-            cols[1].label(egui::RichText::new(i18n::hist_no_recovery()).size(11.0).color(YELLOW));
+            cols[1].label(egui::RichText::new(i18n::hist_no_recovery()).size(T_META).color(YELLOW));
         }
     });
 }
@@ -213,13 +215,13 @@ fn cause_row(app: &mut App, ui: &mut egui::Ui, c: &Cause) {
     };
     egui::Frame::none()
         .fill(egui::Color32::from_black_alpha(40))
-        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+        .inner_margin(egui::Margin::symmetric(S_MD, S_SM))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(c.title()).size(13.0).strong().color(colour));
+                ui.label(egui::RichText::new(c.title()).size(T_HEAD).strong().color(colour));
                 ui.label(
                     egui::RichText::new(format!("({})", c.confidence.label()))
-                        .size(11.0)
+                        .size(T_META)
                         .color(FG_DIM),
                 );
                 if let Some(tweak) = c.fix_tweak {
@@ -230,14 +232,14 @@ fn cause_row(app: &mut App, ui: &mut egui::Ui, c: &Cause) {
                     });
                 }
             });
-            ui.label(egui::RichText::new(&c.evidence).size(11.0).italics().color(FG_DIM));
+            ui.label(egui::RichText::new(&c.evidence).size(T_META).italics().color(FG_DIM));
             let advice = c.advice();
             if !advice.is_empty() {
-                ui.add_space(2.0);
-                ui.label(egui::RichText::new(advice).size(11.0).color(FG));
+                ui.add_space(S_XS);
+                ui.label(egui::RichText::new(advice).size(T_META).color(FG));
             }
         });
-    ui.add_space(4.0);
+    ui.add_space(S_XS);
 }
 
 /// Jumps to the Optimise tab with the relevant tweak already selected, so the
@@ -267,7 +269,7 @@ fn parse_lead(event: &Event) -> Vec<LeadSample> {
 /// router that stops answering while the signal never moves.
 fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event) {
     let lead = parse_lead(event);
-    ui.label(egui::RichText::new(i18n::hist_leadup_heading()).size(12.0).strong().color(FG_DIM));
+    ui.label(egui::RichText::new(i18n::hist_leadup_heading()).size(T_BODY).strong().color(FG_DIM));
 
     let t0 = event.ts_start;
     let from = lead.first().map(|s| s.ts).unwrap_or(t0 - 180.0);
@@ -294,11 +296,11 @@ fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event) {
         .collect();
 
     if lead.is_empty() && rtt.points().is_empty() {
-        ui.label(egui::RichText::new(i18n::hist_no_leadup()).size(11.0).color(FG_DIM));
+        ui.label(egui::RichText::new(i18n::hist_no_leadup()).size(T_META).color(FG_DIM));
         return;
     }
 
-    ui.add_space(2.0);
+    ui.add_space(S_XS);
     Plot::new("lead_up")
         .height(140.0)
         .allow_drag(false)
@@ -311,7 +313,7 @@ fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event) {
         });
 
     if lead.is_empty() {
-        ui.label(egui::RichText::new(i18n::hist_no_leadup()).size(11.0).color(FG_DIM));
+        ui.label(egui::RichText::new(i18n::hist_no_leadup()).size(T_META).color(FG_DIM));
     }
 }
 
@@ -322,9 +324,9 @@ const LOST_PING_MS: f64 = 250.0;
 /// The stored state, rendered as the fields that mean something to a person.
 /// The raw JSON is never shown: it is a storage format, not a report.
 fn state_block(ui: &mut egui::Ui, heading: &str, state: Option<serde_json::Value>) {
-    ui.label(egui::RichText::new(heading).size(12.0).strong().color(FG_DIM));
+    ui.label(egui::RichText::new(heading).size(T_BODY).strong().color(FG_DIM));
     let Some(v) = state else {
-        ui.label(egui::RichText::new(i18n::hist_no_state()).size(11.0).color(FG_DIM));
+        ui.label(egui::RichText::new(i18n::hist_no_state()).size(T_META).color(FG_DIM));
         return;
     };
 
@@ -346,8 +348,8 @@ fn state_block(ui: &mut egui::Ui, heading: &str, state: Option<serde_json::Value
 
     egui::Grid::new(heading).num_columns(2).spacing([10.0, 3.0]).show(ui, |ui| {
         for (k, val) in rows {
-            ui.label(egui::RichText::new(k).size(11.0).color(FG_DIM));
-            ui.label(egui::RichText::new(val).size(11.0).monospace().color(FG));
+            ui.label(egui::RichText::new(k).size(T_META).color(FG_DIM));
+            ui.label(egui::RichText::new(val).size(T_META).monospace().color(FG));
             ui.end_row();
         }
     });
