@@ -50,6 +50,11 @@ pub struct Stats {
     pub count: usize,
     pub loss_pct: f64,
     pub avg: Option<f64>,
+    /// The middle reading. Where "what is normal for this line" is the
+    /// question, this is the answer and `avg` is not: one bad evening inside
+    /// the window drags the mean up for as long as the window lasts, and a
+    /// baseline that absorbs the fault stops reporting it.
+    pub median: Option<f64>,
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub jitter: Option<f64>,
@@ -130,7 +135,47 @@ impl Store {
         conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn);
-        Ok(Store { conn: Mutex::new(conn) })
+        let store = Store { conn: Mutex::new(conn) };
+        store.close_orphans();
+        Ok(store)
+    }
+
+    /// Closes outages that a previous run left open.
+    ///
+    /// `run_loop` closes the open event when it exits cleanly, so a row still
+    /// open at startup means the process was killed, crashed, or the machine
+    /// lost power mid-outage. Nothing used to reconcile those, and an outage
+    /// with no end is not inert: retention keeps it forever, the history tab
+    /// asks the event log for everything between its start and *now*, and the
+    /// cause rules then read months of unrelated faults as evidence for it.
+    ///
+    /// The last sample we managed to record is the best estimate of when the
+    /// app stopped watching, so that is the end time. `context_end` records
+    /// that the end was inferred rather than observed, which is the honest
+    /// thing to store and lets the UI say so.
+    fn close_orphans(&self) {
+        let conn = self.held();
+        let last_sample: Option<f64> =
+            conn.query_row("SELECT MAX(ts) FROM samples", [], |r| r.get(0)).ok().flatten();
+        let _ = conn.execute(
+            "UPDATE events \
+                SET ts_end = MAX(ts_start, COALESCE(?1, ts_start)), \
+                    context_end = ?2 \
+              WHERE ts_end IS NULL",
+            params![last_sample, r#"{"closed_by":"restart"}"#],
+        );
+    }
+
+    /// Backdates or stretches every event, so a test can build a history
+    /// that would otherwise take an hour of wall clock to produce.
+    #[cfg(test)]
+    pub(crate) fn reshape_events_for_test(&self, start_delta: f64, duration: f64) {
+        let conn = self.held();
+        conn.execute(
+            "UPDATE events SET ts_start = ts_start + ?1, ts_end = ts_start + ?1 + ?2",
+            params![start_delta, duration],
+        )
+        .unwrap();
     }
 
     #[cfg(test)]
@@ -205,7 +250,10 @@ impl Store {
         let cutoff = now() - (keep_days.max(1) as f64) * 86400.0;
         let conn = self.held();
         conn.execute("DELETE FROM samples WHERE ts < ?", params![cutoff])?;
-        // An outage still open has no end yet and is never old enough to drop.
+        // An outage still open has no end yet and is never old enough to
+        // drop. `close_orphans` runs at startup so this only ever spares one
+        // that is genuinely still running, rather than every row a crash
+        // left behind.
         conn.execute(
             "DELETE FROM events WHERE ts_start < ? AND ts_end IS NOT NULL",
             params![cutoff],
@@ -367,7 +415,11 @@ fn migrate(conn: &Connection) {
     }
 }
 
-/// Loss, average, extremes and mean consecutive deviation (jitter).
+/// Loss, average, median, extremes and mean consecutive deviation (jitter).
+///
+/// `rtts` must be in the order they were sampled — jitter is the mean gap
+/// between *consecutive* readings, so sorting them here would silently turn
+/// it into something else. The median takes its own sorted copy.
 pub fn summarise(total: usize, rtts: &[f64]) -> Stats {
     if total == 0 {
         return Stats::default();
@@ -386,7 +438,28 @@ pub fn summarise(total: usize, rtts: &[f64]) -> Stats {
     } else {
         None
     };
-    Stats { count: total, loss_pct, avg: Some(avg), min: Some(min), max: Some(max), jitter }
+    Stats {
+        count: total,
+        loss_pct,
+        avg: Some(avg),
+        median: Some(median(rtts)),
+        min: Some(min),
+        max: Some(max),
+        jitter,
+    }
+}
+
+/// The middle reading of a non-empty slice, averaging the two middles on an
+/// even count. Takes a copy: the caller's order carries meaning.
+fn median(rtts: &[f64]) -> f64 {
+    let mut sorted = rtts.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mid = sorted.len() / 2;
+    if sorted.len() % 2 == 0 {
+        (sorted[mid - 1] + sorted[mid]) / 2.0
+    } else {
+        sorted[mid]
+    }
 }
 
 #[cfg(test)]
@@ -495,6 +568,59 @@ mod tests {
         assert!(!span[0].3, "and it is the failed one");
         assert_eq!(store.tweaks_between(t - 60.0, t + 60.0).len(), 1);
         assert!(store.tweaks_between(t + 3600.0, t + 7200.0).is_empty());
+    }
+
+    #[test]
+    fn the_median_ignores_the_spike_the_mean_absorbs() {
+        // Nineteen ordinary readings and one bad one. "What is normal for
+        // this line" is 10 ms; the mean says 59 and would raise the bar high
+        // enough to hide the next fault for a week.
+        let mut rtts = vec![10.0; 19];
+        rtts.push(1_000.0);
+        let s = summarise(rtts.len(), &rtts);
+        assert_eq!(s.median, Some(10.0));
+        assert!(s.avg.unwrap() > 55.0, "the mean is exactly the problem");
+    }
+
+    #[test]
+    fn the_median_averages_the_middle_pair_on_an_even_count() {
+        let s = summarise(4, &[4.0, 1.0, 3.0, 2.0]);
+        assert_eq!(s.median, Some(2.5), "and the caller's order is not relied on");
+    }
+
+    #[test]
+    fn an_outage_left_open_by_a_crash_is_closed_at_startup() {
+        // `run_loop` closes its event on a clean exit, so a row still open
+        // when the app starts means the last run was killed mid-outage.
+        // Left alone it is never pruned, and the history tab asks the event
+        // log for everything between its start and now.
+        let store = Store::open_in_memory().unwrap();
+        let t = now();
+        store.add_samples(&[(t - 600.0, "x".into(), Some(1.0), true)]).unwrap();
+        let orphan = store.open_event("outage", "lan", "killed mid-outage", "{}").unwrap();
+
+        store.close_orphans();
+
+        let row = store.recent_events(10).into_iter().find(|e| e.id == orphan).unwrap();
+        let end = row.ts_end.expect("the orphan must have been given an end");
+        assert!(end >= row.ts_start, "an outage cannot end before it started");
+        assert!(
+            row.context_end.unwrap().contains("restart"),
+            "the end was inferred, and the row has to say so"
+        );
+    }
+
+    #[test]
+    fn closing_orphans_leaves_a_genuinely_running_outage_alone() {
+        let store = Store::open_in_memory().unwrap();
+        let closed = store.open_event("outage", "lan", "done", "{}").unwrap();
+        store.close_event(closed, "{}").unwrap();
+        store.close_orphans();
+
+        // A fresh outage opened after the reconciliation stays open.
+        let running = store.open_event("outage", "lan", "now", "{}").unwrap();
+        let row = store.recent_events(10).into_iter().find(|e| e.id == running).unwrap();
+        assert!(row.ts_end.is_none());
     }
 
     #[test]

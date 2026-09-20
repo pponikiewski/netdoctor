@@ -3193,10 +3193,26 @@ pub fn opt_section_count(set: usize, total: usize) -> String {
 mod tests {
     use super::*;
 
-    /// Restores English afterwards: the table is global, and the other test
-    /// modules assume the default.
-    fn in_polish<T>(body: impl FnOnce() -> T) -> T {
+    /// Holds the language lock for a whole test.
+    ///
+    /// Every assertion on translated text belongs inside one of these —
+    /// including the English ones. The table is global, so a test reading
+    /// English while another test sits inside its Polish block fails for a
+    /// reason that has nothing to do with either of them. Locking only around
+    /// the Polish half left exactly that race, and it showed up as an
+    /// occasional failure in whichever test happened to lose.
+    fn with_language_lock<T>(body: impl FnOnce() -> T) -> T {
         let _guard = test_lock();
+        set(Lang::En);
+        let out = body();
+        set(Lang::En);
+        out
+    }
+
+    /// Switches to Polish inside a `with_language_lock` block. Deliberately
+    /// takes no lock of its own: `std::sync::Mutex` is not reentrant, so
+    /// doing so would deadlock the caller that already holds it.
+    fn in_polish<T>(body: impl FnOnce() -> T) -> T {
         set(Lang::Pl);
         let out = body();
         set(Lang::En);
@@ -3205,43 +3221,49 @@ mod tests {
 
     #[test]
     fn switching_language_changes_the_accessors() {
-        assert_eq!(tab_live(), "Live");
-        assert_eq!(sev_critical(), "CRITICAL");
+        with_language_lock(|| {
+            assert_eq!(tab_live(), "Live");
+            assert_eq!(sev_critical(), "CRITICAL");
 
-        in_polish(|| {
-            assert_eq!(tab_live(), "Na żywo");
-            assert_eq!(sev_critical(), "KRYTYCZNE");
+            in_polish(|| {
+                assert_eq!(tab_live(), "Na żywo");
+                assert_eq!(sev_critical(), "KRYTYCZNE");
+            });
+
+            assert_eq!(tab_live(), "Live");
         });
-
-        assert_eq!(tab_live(), "Live");
     }
 
     #[test]
     fn parameterised_strings_follow_the_language_too() {
-        assert!(scan_critical(2, "MTU").starts_with("2 serious"));
-        in_polish(|| {
-            let pl = scan_critical(2, "MTU");
-            assert!(pl.starts_with("Znaleziono"), "{pl}");
-            assert!(pl.contains("MTU"), "the argument must survive: {pl}");
+        with_language_lock(|| {
+            assert!(scan_critical(2, "MTU").starts_with("2 serious"));
+            in_polish(|| {
+                let pl = scan_critical(2, "MTU");
+                assert!(pl.starts_with("Znaleziono"), "{pl}");
+                assert!(pl.contains("MTU"), "the argument must survive: {pl}");
+            });
         });
     }
 
     #[test]
     fn event_kinds_translate_and_unknown_codes_pass_through() {
-        assert_eq!(event_kind("lan_down"), "router unreachable");
-        in_polish(|| assert_eq!(event_kind("lan_down"), "router nieosiągalny"));
-        // A code written by a future version must not become an empty cell.
-        assert_eq!(event_kind("something_new"), "something_new");
+        with_language_lock(|| {
+            assert_eq!(event_kind("lan_down"), "router unreachable");
+            in_polish(|| assert_eq!(event_kind("lan_down"), "router nieosiągalny"));
+            // A code written by a future version must not become an empty cell.
+            assert_eq!(event_kind("something_new"), "something_new");
+        });
     }
 
     #[test]
     fn polish_text_is_actually_polish() {
-        in_polish(|| {
+        with_language_lock(|| in_polish(|| {
             // Guards against a key added with the English string pasted into
             // both slots, which compiles and silently ships untranslated.
             assert_ne!(mon_ok(), "Connection healthy");
             assert_ne!(f_wired(), "Wired connection");
             assert_ne!(tw_power_title(), "Stop Windows powering down the network adapter");
-        });
+        }));
     }
 }

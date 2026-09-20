@@ -202,18 +202,31 @@ impl Measurements {
     /// round trip each probe happens to report. A hop that answers in 40 ms
     /// when the router answers in 38 is not slow; it inherited 38 of them.
     fn shares(&self) -> Option<(f64, f64, f64)> {
-        let lan = Self::avg(&self.gateway)?;
-        let far = Self::avg(&self.internet)?;
+        let measured = Self::avg(&self.internet)?;
+        // Every share is a slice of the one end-to-end measurement, so each
+        // boundary is clamped between the one before it and that total. A hop
+        // reporting *less* than the hop before it is ordinary — routers
+        // deprioritise ICMP addressed to themselves, and jitter moves every
+        // reading — but subtracting the raw numbers then invents milliseconds
+        // the round trip never contained, and the split is shown to the user
+        // as a measurement.
+        let lan = Self::avg(&self.gateway)?.clamp(0.0, measured);
         match self.edge.as_ref().and_then(|(_, s)| s.avg) {
             // A hop that is still the user's own equipment extends the local
             // chain instead of starting the provider's; charging its
             // milliseconds to the ISP is how a double-NAT household ends up
             // filing a support ticket about its own spare router.
-            Some(edge) if self.edge_is_local => Some((edge, 0.0, (far - edge).max(0.0))),
-            Some(edge) => Some((lan, (edge - lan).max(0.0), (far - edge).max(0.0))),
+            Some(edge) => {
+                let edge = edge.clamp(lan, measured);
+                if self.edge_is_local {
+                    Some((edge, 0.0, measured - edge))
+                } else {
+                    Some((lan, edge - lan, measured - edge))
+                }
+            }
             // Without the middle hop the remainder cannot be attributed, so it
             // is reported whole rather than guessed at.
-            None => Some((lan, 0.0, (far - lan).max(0.0))),
+            None => Some((lan, 0.0, measured - lan)),
         }
     }
 }
@@ -306,7 +319,7 @@ pub fn scan(
 
     // Worst first, stable within a severity so related findings stay together.
     out.sort_by_key(|f| std::cmp::Reverse(f.severity));
-    let verdict = judge(&out, &m);
+    let verdict = judge(&out, &m, settings);
     Scan { findings: out, verdict }
 }
 
@@ -317,7 +330,7 @@ pub fn scan(
 /// segment that merely contributed the most milliseconds is an inference. The
 /// first rule that fires wins, so a hard break is never buried under a
 /// millisecond comparison.
-pub fn judge(findings: &[Finding], m: &Measurements) -> Verdict {
+pub fn judge(findings: &[Finding], m: &Measurements, cfg: &Settings) -> Verdict {
     let shares = m.shares();
     let split = shares.map(|(lan, isp, far)| i18n::verdict_split(lan, isp, far));
 
@@ -355,12 +368,19 @@ pub fn judge(findings: &[Finding], m: &Measurements) -> Verdict {
 
     // 2. Loss, attributed to the first segment that shows it. Loss that is
     //    already present at the router did not come from the internet.
-    let loss_seg = loss_origin(m);
+    let loss_seg = loss_origin(m, cfg.loss_ok_pct);
     if let Some((seg, pct)) = loss_seg {
         v.segment = seg;
         v.confidence = Confidence::Likely;
         v.cost = i18n::cost_loss(pct);
+        // The `loss` finding is filed under Internet because that is where it
+        // was measured, but the origin above may be nearer. Without this the
+        // verdict "your LAN is dropping packets" can arrive with no next step
+        // at all, because the one finding that has advice was filtered out.
         v.actions = worst_of(seg);
+        if v.actions.is_empty() {
+            v.actions = actions_for_key(findings, "loss");
+        }
         return v;
     }
 
@@ -382,11 +402,18 @@ pub fn judge(findings: &[Finding], m: &Measurements) -> Verdict {
     //    so a satellite link is not told it is broken for being satellite.
     if let Some((lan, isp, far)) = shares {
         let total = lan + isp + far;
-        let over_baseline = m
-            .baseline
-            .map(|(usual, _)| total > usual * 1.6 && total - usual > 15.0)
-            .unwrap_or(false);
-        if over_baseline || has("ping") {
+        // Where this machine has a history, that history decides — and it
+        // decides *both ways*. Falling back to the fixed threshold whenever
+        // it happens to fire was the same as not having a baseline at all: a
+        // satellite or LTE link sits above `ping_bad_ms` permanently, so
+        // every scan named the provider on a line running exactly as it
+        // always does. The settings threshold is what we use when we have no
+        // history to compare against, not an override for when we do.
+        let latency_is_a_fault = match m.baseline {
+            Some((usual, _)) => total > usual * 1.6 && total - usual > 15.0,
+            None => has("ping"),
+        };
+        if latency_is_a_fault {
             let seg = if lan >= isp && lan >= far {
                 Segment::Lan
             } else if isp >= far {
@@ -469,25 +496,40 @@ pub fn judge(findings: &[Finding], m: &Measurements) -> Verdict {
 }
 
 /// The first segment along the chain where packets start going missing.
-fn loss_origin(m: &Measurements) -> Option<(Segment, f64)> {
+///
+/// `tolerated` is the user's own threshold. It used to be hardcoded at 1%
+/// while the findings honoured the setting, so a scan could report loss as
+/// acceptable in the list and blame a segment for it in the verdict.
+fn loss_origin(m: &Measurements, tolerated: f64) -> Option<(Segment, f64)> {
     let lan = m.gateway.as_ref().map(|s| s.loss_pct).unwrap_or(0.0);
     let edge = m.edge.as_ref().map(|(_, s)| s.loss_pct).unwrap_or(0.0);
     let far = m.internet.as_ref().map(|s| s.loss_pct).unwrap_or(0.0);
     // A hop that deprioritises its own ICMP replies reports loss that the
     // traffic through it never sees, so the middle hop only counts as the
     // origin when the far end is losing packets too.
-    if lan > 1.0 {
+    if lan > tolerated {
         Some((Segment::Lan, lan))
-    } else if edge > 1.0 && far > 1.0 {
+    } else if edge > tolerated && far > tolerated {
         // Same rule as the latency split: a hop we walked to that is still the
         // user's own equipment is part of their LAN, whatever it costs.
         let seg = if m.edge_is_local { Segment::Lan } else { Segment::Isp };
         Some((seg, edge.max(far)))
-    } else if far > 1.0 {
+    } else if far > tolerated {
         Some((Segment::Internet, far))
     } else {
         None
     }
+}
+
+/// The advice carried by one named finding, as an action. Used when a rule
+/// knows which finding drove it but the finding is filed under a different
+/// segment than the verdict landed on.
+fn actions_for_key(findings: &[Finding], key: &str) -> Vec<Action> {
+    findings
+        .iter()
+        .filter(|f| f.key == key && !f.advice.is_empty())
+        .map(|f| Action { text: f.advice.clone(), tweak_id: f.tweak_id.clone() })
+        .collect()
 }
 
 /// The findings that belong to a segment, worst first, as at most three
@@ -944,7 +986,10 @@ fn report_internet(
     // one in front of the user, and only it can say "worse than usual".
     let history = store.stats(ANCHOR_KEY, BASELINE_WINDOW_S);
     if history.count >= BASELINE_MIN_SAMPLES {
-        if let Some(usual) = history.avg {
+        // The median, not the mean. A week that contained one bad evening has
+        // a mean pulled up by it, and a baseline that has absorbed the fault
+        // is a baseline that will not report the next one.
+        if let Some(usual) = history.median {
             m.baseline = Some((usual, history.count));
         }
     }
@@ -1147,6 +1192,10 @@ fn check_tcp(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     out
 }
 
+/// Total time down in one scope, over the last day, that is worth calling
+/// critical on its own. Five minutes off the network is a lost meeting.
+const HIST_CRITICAL_DOWN_S: f64 = 300.0;
+
 fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding> {
     let events = store.events_since(24.0 * 3600.0);
     if events.is_empty() {
@@ -1184,10 +1233,11 @@ fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding
         };
 
         let durations: Vec<f64> = items.iter().filter_map(|e| e.duration_s()).collect();
+        let total_down: f64 = durations.iter().sum();
         let avg = if durations.is_empty() {
             0.0
         } else {
-            durations.iter().sum::<f64>() / durations.len() as f64
+            total_down / durations.len() as f64
         };
         let times: Vec<String> = items
             .iter()
@@ -1199,7 +1249,15 @@ fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding
             Finding::new(
                 &format!("hist_{scope}"),
                 i18n::f_hist_title(title, items.len()),
-                if items.len() >= 3 { Severity::Critical } else { Severity::Warn },
+                // Counting outages alone made three two-second blips
+                // CRITICAL and one four-hour blackout a WARNING, which is
+                // the opposite of what the user lived through. Either a
+                // pattern or a long total is enough to promote it.
+                if items.len() >= 3 || total_down >= HIST_CRITICAL_DOWN_S {
+                    Severity::Critical
+                } else {
+                    Severity::Warn
+                },
                 i18n::f_hist_detail(avg, &times.join(", ")),
             )
             .advise(advice),
@@ -1319,6 +1377,7 @@ mod tests {
             count: 10,
             loss_pct: loss,
             avg: Some(avg),
+            median: Some(avg),
             min: Some(avg),
             max: Some(avg),
             jitter: Some(0.0),
@@ -1341,7 +1400,7 @@ mod tests {
         assert_eq!(far, 4.0);
 
         let findings = vec![Finding::new("ping", "high", Severity::Warn, "")];
-        assert_eq!(judge(&findings, &m).segment, Segment::Isp);
+        assert_eq!(judge(&findings, &m, &Settings::default()).segment, Segment::Isp);
     }
 
     #[test]
@@ -1355,7 +1414,7 @@ mod tests {
             ..Default::default()
         };
         let findings = vec![Finding::new("ping", "high", Severity::Warn, "")];
-        assert_eq!(judge(&findings, &m).segment, Segment::Lan);
+        assert_eq!(judge(&findings, &m, &Settings::default()).segment, Segment::Lan);
     }
 
     #[test]
@@ -1377,7 +1436,7 @@ mod tests {
         assert_eq!(far, 4.0);
 
         let findings = vec![Finding::new("ping", "high", Severity::Warn, "")];
-        assert_eq!(judge(&findings, &m).segment, Segment::Lan);
+        assert_eq!(judge(&findings, &m, &Settings::default()).segment, Segment::Lan);
     }
 
     #[test]
@@ -1399,7 +1458,136 @@ mod tests {
             internet: Some(stats(20.0, 5.0)),
             ..Default::default()
         };
-        assert_eq!(loss_origin(&m), Some((Segment::Lan, 6.0)));
+        assert_eq!(loss_origin(&m, Settings::default().loss_ok_pct), Some((Segment::Lan, 6.0)));
+    }
+
+    #[test]
+    fn one_long_blackout_outranks_three_blinks() {
+        // Counting outages alone made three two-second blips CRITICAL and a
+        // single hour-long blackout a WARNING — the opposite of what the
+        // user lived through.
+        let blips = Store::open_in_memory().unwrap();
+        for _ in 0..3 {
+            let id = blips.open_event("outage", "lan", "blink", "{}").unwrap();
+            blips.close_event(id, "{}").unwrap();
+        }
+        let long = Store::open_in_memory().unwrap();
+        let id = long.open_event("outage", "lan", "blackout", "{}").unwrap();
+        long.close_event(id, "{}").unwrap();
+        // close_event stamps `now`; stretch it into a real blackout.
+        long.reshape_events_for_test(0.0, 3600.0);
+
+        let net = NetState::default();
+        let cfg = Settings::default();
+        let sev = |s: &Store| {
+            check_history(&net, s, &cfg)
+                .iter()
+                .find(|f| f.key == "hist_lan")
+                .map(|f| f.severity)
+                .expect("a lan scope finding")
+        };
+
+        assert_eq!(sev(&blips), Severity::Critical, "a pattern still counts");
+        assert_eq!(sev(&long), Severity::Critical, "and so does an hour off the network");
+    }
+
+    #[test]
+    fn a_link_that_is_always_slow_is_not_reported_as_broken_every_scan() {
+        // Satellite: 600 ms is what this machine has always seen, and a week
+        // of samples says so. The fixed threshold from the settings file
+        // (ping_bad_ms = 120) fires regardless, and used to win — so every
+        // scan named the provider on a line running exactly as it always has.
+        let m = Measurements {
+            gateway: Some(stats(20.0, 0.0)),
+            edge: Some((Ipv4Addr::new(100, 64, 0, 1), stats(300.0, 0.0))),
+            internet: Some(stats(600.0, 0.0)),
+            baseline: Some((610.0, 5_000)),
+            ..Default::default()
+        };
+        let findings = vec![Finding::new("ping", "high", Severity::Warn, "")];
+        assert_eq!(judge(&findings, &m, &Settings::default()).segment, Segment::Healthy);
+    }
+
+    #[test]
+    fn the_same_link_getting_worse_than_its_own_history_is_reported() {
+        // The other half of the rule: the baseline must still be able to
+        // convict. Same 610 ms line, now answering in 1200.
+        let m = Measurements {
+            gateway: Some(stats(20.0, 0.0)),
+            edge: Some((Ipv4Addr::new(100, 64, 0, 1), stats(300.0, 0.0))),
+            internet: Some(stats(1_200.0, 0.0)),
+            baseline: Some((610.0, 5_000)),
+            ..Default::default()
+        };
+        assert_eq!(judge(&[], &m, &Settings::default()).segment, Segment::Internet);
+    }
+
+    #[test]
+    fn without_a_baseline_the_settings_threshold_still_decides() {
+        // A fresh install has no history, and must not go quiet because of it.
+        let m = Measurements {
+            gateway: Some(stats(20.0, 0.0)),
+            edge: Some((Ipv4Addr::new(100, 64, 0, 1), stats(300.0, 0.0))),
+            internet: Some(stats(600.0, 0.0)),
+            ..Default::default()
+        };
+        let findings = vec![Finding::new("ping", "high", Severity::Warn, "")];
+        assert_eq!(judge(&findings, &m, &Settings::default()).segment, Segment::Internet);
+    }
+
+    #[test]
+    fn the_split_never_adds_up_to_more_than_was_measured() {
+        // Jitter made the middle hop answer faster than the router. The three
+        // shares are a partition of the 40 ms round trip, not three readings
+        // subtracted from each other, so they have to total 40.
+        let m = Measurements {
+            gateway: Some(stats(30.0, 0.0)),
+            edge: Some((Ipv4Addr::new(100, 64, 0, 1), stats(25.0, 0.0))),
+            internet: Some(stats(40.0, 0.0)),
+            ..Default::default()
+        };
+        let (lan, isp, far) = m.shares().unwrap();
+        assert!((lan + isp + far - 40.0).abs() < 1e-9, "got {lan} + {isp} + {far}");
+
+        // And the other direction: a router slower than the far end.
+        let odd = Measurements {
+            gateway: Some(stats(50.0, 0.0)),
+            internet: Some(stats(20.0, 0.0)),
+            ..Default::default()
+        };
+        let (lan, isp, far) = odd.shares().unwrap();
+        assert!((lan + isp + far - 20.0).abs() < 1e-9, "got {lan} + {isp} + {far}");
+        assert!(far >= 0.0, "no segment may contribute negative milliseconds");
+    }
+
+    #[test]
+    fn the_users_own_loss_threshold_is_what_the_verdict_uses() {
+        let m = Measurements {
+            gateway: Some(stats(3.0, 1.5)),
+            internet: Some(stats(20.0, 1.5)),
+            ..Default::default()
+        };
+        // Default tolerance is 2%: 1.5% is noise, not a verdict.
+        assert_eq!(loss_origin(&m, Settings::default().loss_ok_pct), None);
+        // A user who cares about every packet says so, and is listened to.
+        assert_eq!(loss_origin(&m, 0.5), Some((Segment::Lan, 1.5)));
+    }
+
+    #[test]
+    fn a_loss_verdict_always_arrives_with_something_to_do() {
+        // The `loss` finding is filed under Internet because that is where it
+        // was measured, but the origin is the LAN. Filtering actions by
+        // segment alone left this verdict with no next step at all.
+        let m = Measurements {
+            gateway: Some(stats(3.0, 8.0)),
+            internet: Some(stats(20.0, 9.0)),
+            ..Default::default()
+        };
+        let findings =
+            vec![Finding::new("loss", "packets lost", Severity::Critical, "").advise("check cable")];
+        let v = judge(&findings, &m, &Settings::default());
+        assert_eq!(v.segment, Segment::Lan);
+        assert!(!v.actions.is_empty(), "a verdict with no action is not a diagnosis");
     }
 
     #[test]
@@ -1409,7 +1597,7 @@ mod tests {
             internet: Some(stats(20.0, 9.0)),
             ..Default::default()
         };
-        assert_eq!(loss_origin(&lan), Some((Segment::Lan, 8.0)));
+        assert_eq!(loss_origin(&lan, Settings::default().loss_ok_pct), Some((Segment::Lan, 8.0)));
 
         // A middle hop that rate-limits its own replies is not an outage, so
         // loss there only counts when the far end loses packets too.
@@ -1419,7 +1607,7 @@ mod tests {
             internet: Some(stats(20.0, 0.0)),
             ..Default::default()
         };
-        assert_eq!(loss_origin(&quiet_hop), None);
+        assert_eq!(loss_origin(&quiet_hop, Settings::default().loss_ok_pct), None);
     }
 
     #[test]
@@ -1437,7 +1625,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let v = judge(&[], &m);
+        let v = judge(&[], &m, &Settings::default());
         assert_eq!(v.segment, Segment::Uplink);
         assert_eq!(v.confidence, Confidence::Certain);
     }
@@ -1454,7 +1642,7 @@ mod tests {
 
     #[test]
     fn a_healthy_chain_names_no_segment() {
-        assert_eq!(judge(&[], &clean()).segment, Segment::Healthy);
+        assert_eq!(judge(&[], &clean(), &Settings::default()).segment, Segment::Healthy);
     }
 
     #[test]
@@ -1466,7 +1654,7 @@ mod tests {
             Finding::new("medium", "Connected over Wi-Fi", Severity::Info, "")
                 .advise("a cable is steadier"),
         ];
-        assert_eq!(judge(&findings, &clean()).segment, Segment::Healthy);
+        assert_eq!(judge(&findings, &clean(), &Settings::default()).segment, Segment::Healthy);
     }
 
     #[test]
@@ -1476,7 +1664,7 @@ mod tests {
             Finding::new("hist_other", "degraded quality", Severity::Critical, ""),
             Finding::new("hist_isp", "WAN drops", Severity::Critical, "").advise("report it"),
         ];
-        let v = judge(&findings, &clean());
+        let v = judge(&findings, &clean(), &Settings::default());
         assert_eq!(v.segment, Segment::Isp);
         // Thirty seconds of clean measurements cannot confirm last night.
         assert_eq!(v.confidence, Confidence::Possible);

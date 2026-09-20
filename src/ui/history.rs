@@ -241,6 +241,13 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
 const LOG_BEFORE_S: f64 = 120.0;
 const LOG_AFTER_S: f64 = 60.0;
 
+/// The widest slice of log worth asking `wevtutil` for, whatever the row
+/// says. An outage still marked as running — one the reconciliation at
+/// startup has not reached yet, or one genuinely in progress — would
+/// otherwise widen this query by a day for every day it stays open, and the
+/// read is a process launch that blocks on the result.
+const LOG_MAX_SPAN_S: f64 = 2.0 * 3600.0;
+
 /// Starts the event log read for a newly selected outage, at most once.
 ///
 /// `wevtutil` is a process launch and a few hundred milliseconds, which is
@@ -255,7 +262,8 @@ fn request_log(app: &mut App, event: &Event) {
     app.syslog_pending = Some(event.id);
     let id = event.id;
     let from = event.ts_start - LOG_BEFORE_S;
-    let to = event.ts_end.unwrap_or_else(crate::store::now) + LOG_AFTER_S;
+    let ended = event.ts_end.unwrap_or_else(crate::store::now);
+    let to = ended.min(event.ts_start + LOG_MAX_SPAN_S) + LOG_AFTER_S;
     let tx = app.tx.clone();
     std::thread::spawn(move || {
         let _ = tx.send(super::Job::SysLog(id, crate::probe::eventlog::window(from, to)));

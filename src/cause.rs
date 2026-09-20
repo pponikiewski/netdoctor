@@ -251,6 +251,19 @@ pub fn analyse(
 /// to cover the gap between the last sweep and the log line.
 const SLEEP_WINDOW_S: f64 = 180.0;
 
+/// How long before an outage, and how long after it ended, a log line is
+/// still about it.
+///
+/// The caller fetches a narrow slice of the log, and every rule here used to
+/// rely on that entirely. An outage that was never closed — the app was
+/// killed or the machine lost power while it was running — has no end, so
+/// that slice runs to the present and grows by a day every day. Any driver
+/// fault or DHCP failure logged since would then be read as `Certain`
+/// evidence for an outage it has nothing to do with. The rules carry their
+/// own bound now, so the reading cannot be wider than the claim.
+const LOG_LEAD_S: f64 = 180.0;
+const LOG_TRAIL_S: f64 = 120.0;
+
 /// Verdicts read straight out of the Windows event log.
 ///
 /// Everything else in this module argues from a latency series. These do not
@@ -261,6 +274,16 @@ const SLEEP_WINDOW_S: f64 = 180.0;
 fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
     let t0 = event.ts_start;
     let at = |e: &SysEvent| i18n::clock_offset(e.offset_from(t0));
+    // Counted from here, not from `out.len() == 0`. A cause pushed before
+    // this function ran — `after_tweak` always is — used to suppress the
+    // link-down rule below, so a tweak applied twenty minutes earlier could
+    // hide the log line saying the interface went down, and a registry tweak
+    // that cannot unplug a cable became the headline explanation for one.
+    let before = out.len();
+    // An open outage has no end to measure from, so the trailing edge is
+    // pinned to its start rather than to "now".
+    let t_end = event.ts_end.unwrap_or(t0);
+    let near = |e: &&SysEvent| e.ts >= t0 - LOG_LEAD_S && e.ts <= t_end + LOG_TRAIL_S;
 
     if let Some(e) = log
         .iter()
@@ -277,7 +300,7 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
         out.push(Cause::new("log_resume", Confidence::Likely, i18n::ev_log_resume(&at(e))));
     }
 
-    if let Some(e) = log.iter().find(|e| e.kind == Kind::DriverFault) {
+    if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::DriverFault) {
         out.push(
             Cause::new(
                 "log_driver_fault",
@@ -288,9 +311,9 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
         );
     }
 
-    if let Some(e) = log.iter().find(|e| e.kind == Kind::WlanDisconnect) {
+    if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::WlanDisconnect) {
         out.push(wlan_disconnect_cause(e, &at(e)));
-    } else if let Some(e) = log.iter().find(|e| e.kind == Kind::WlanAuthFail) {
+    } else if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::WlanAuthFail) {
         out.push(Cause::new(
             "log_wlan_auth",
             Confidence::Certain,
@@ -298,11 +321,11 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
         ));
     }
 
-    if let Some(e) = log.iter().find(|e| e.kind == Kind::DhcpFail) {
+    if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::DhcpFail) {
         out.push(Cause::new("log_dhcp", Confidence::Certain, i18n::ev_log_dhcp(&at(e))));
     }
 
-    if let Some(e) = log.iter().find(|e| e.kind == Kind::DuplicateIp) {
+    if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::DuplicateIp) {
         out.push(Cause::new(
             "log_duplicate_ip",
             Confidence::Certain,
@@ -310,10 +333,10 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
         ));
     }
 
-    // The interface going down is only news when nothing more specific
-    // already said why it did.
-    if out.is_empty() {
-        if let Some(e) = log.iter().find(|e| e.kind == Kind::LinkDown) {
+    // The interface going down is only news when nothing more specific in the
+    // log already said why it did.
+    if out.len() == before {
+        if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::LinkDown) {
             out.push(Cause::new(
                 "log_link_down",
                 Confidence::Likely,
@@ -580,6 +603,58 @@ mod tests {
         assert_eq!(causes[0].code, "signal_fade");
         assert_eq!(causes[0].confidence, Confidence::Certain);
         assert!(!causes.iter().any(|c| c.code == "router_side"));
+    }
+
+    fn sysevent(kind: Kind, ts: f64) -> SysEvent {
+        SysEvent {
+            ts,
+            provider: "netwtw".into(),
+            id: 5002,
+            kind,
+            reason: None,
+            detail: String::new(),
+        }
+    }
+
+    #[test]
+    fn what_the_log_recorded_survives_an_unrelated_tweak() {
+        // Windows wrote down that the interface went down. A registry tweak
+        // applied five minutes earlier cannot unplug a cable, and must not
+        // take the place of that evidence — which it did, because the
+        // link-down rule skipped itself whenever *anything* was already in
+        // the list, and `after_tweak` is always added first.
+        let ctx = serde_json::json!({ "medium": "Ethernet", "up": false, "lead_up": [] });
+        let log = vec![sysevent(Kind::LinkDown, 990.0)];
+        let tweak = TweakLogRow {
+            ts: 1_000.0 - 300.0,
+            tweak_id: "nagle".into(),
+            action: "apply".into(),
+            result: "ok".into(),
+        };
+
+        let causes = analyse(&event("lan", ctx, 30.0), &[], &[tweak], &log);
+        assert!(
+            causes.iter().any(|c| c.code == "log_link_down"),
+            "got {:?}",
+            causes.iter().map(|c| c.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_fault_logged_hours_away_is_not_evidence_for_this_outage() {
+        // An outage the app never closed hands us an open-ended slice of the
+        // log. A driver fault from three hours later is not what broke it,
+        // and `Certain` is the worst possible label to put on that guess.
+        let ctx = serde_json::json!({ "medium": "Ethernet", "up": true, "lead_up": [] });
+        let far_away = vec![sysevent(Kind::DriverFault, 1_000.0 + 3.0 * 3600.0)];
+
+        let causes = analyse(&event("lan", ctx.clone(), 30.0), &[], &[], &far_away);
+        assert!(!causes.iter().any(|c| c.code == "log_driver_fault"));
+
+        // The same fault inside the outage still counts.
+        let nearby = vec![sysevent(Kind::DriverFault, 1_010.0)];
+        let causes = analyse(&event("lan", ctx, 30.0), &[], &[], &nearby);
+        assert!(causes.iter().any(|c| c.code == "log_driver_fault"));
     }
 
     #[test]
