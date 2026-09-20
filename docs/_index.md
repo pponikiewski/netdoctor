@@ -22,3 +22,5 @@ updated: 2026-09-20
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
 - 2026-09-20 — zakładka Na żywo tłumaczy każdą liczbę, którą pokazuje (legenda, kafelki, progi, ośie); repo ma przypiętą konfigurację rustfmt i przechodzi `cargo fmt --check`.
+- 2026-09-20 — aplikacja jest do pobrania z GitHuba (`pponikiewski/netdoctor`, wydanie v1.1.0) i potrafi się sama zaktualizować: workflow wydaniowy zielony na całej długości, `netdoctor.exe` i `SHA256SUMS` wiszą przy tagu, pobranie zweryfikowane bez uwierzytelniania.
+- 2026-09-20 — kafelek „Bez przerw" mówi prawdę na świeżej instalacji i po uśpieniu maszyny: liczy nieprzerwany czas obserwacji, a nie brak wpisów w dzienniku awarii.

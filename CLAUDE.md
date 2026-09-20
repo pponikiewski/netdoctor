@@ -10,7 +10,9 @@
 - **Format:** rustfmt, pinned by `rustfmt.toml` (`use_small_heuristics = "Max"`) — never run `cargo fmt` with a different config, it reformats the whole tree
 - **GUI:** eframe/egui 0.29 + egui_plot (glow backend, default fonts)
 - **Storage:** rusqlite 0.32 (bundled SQLite)
+- **HTTP:** ureq 2 (tls) — the load test and the self-updater; responses are parsed with serde_json, not `into_json`, which sits behind a default feature Cargo.toml does not name
 - **Platform:** windows 0.58 crate (IpHelper, WiFi, WinSock, Registry, Shell) — Windows only
+- **Release:** `.github/workflows/release.yml`, triggered by a `v*` tag; toolchain pinned, not `stable`. The tag must match `version` in Cargo.toml or the workflow refuses to publish
 
 ## Commands
 ```bash

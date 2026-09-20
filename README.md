@@ -186,7 +186,7 @@ one English label that would silently fail everywhere else.
   why: cause, evidence, what Windows logged around it, the lead-up plotted, and
   a route to the fix.
 - **Settings** — probe cadence, thresholds, extra ping targets (your game
-  server, for instance), autostart.
+  server, for instance), autostart, updates.
 
 ## Running in the background
 
