@@ -3195,6 +3195,27 @@ pub fn live_router_loss(pct: f64) -> String {
     }
 }
 
+/// Headline of the "uninterrupted" card while the history is still shorter
+/// than the 24 h window the card talks about.
+pub fn live_uninterrupted_for(secs: f64) -> String {
+    let mins = (secs / 60.0).floor().max(0.0);
+    if mins < 90.0 {
+        return format!("{mins:.0} min");
+    }
+    // "min" and "h" read the same in both languages, so there is nothing to
+    // switch on here.
+    format!("{:.0} h", secs / 3600.0)
+}
+
+/// Sub-line for that card: says the number is the length of the record, not a
+/// promise about the line before the app was installed.
+pub fn live_uninterrupted_short() -> &'static str {
+    match current() {
+        Lang::En => "watched since app start",
+        Lang::Pl => "tyle trwa obserwacja",
+    }
+}
+
 /// Sub-line under the "since last outage" card.
 pub fn live_outages_24h(count: usize) -> String {
     match current() {

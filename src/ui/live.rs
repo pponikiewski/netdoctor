@@ -1063,10 +1063,27 @@ fn collect_stats(app: &App) -> Vec<Stat> {
 
     let events = app.store.events_since(24.0 * 3600.0);
     out.push(if events.is_empty() {
+        // No outage logged is only "24 h+" if we were actually watching for
+        // 24 h without a break. On a fresh install the history is minutes
+        // old, and on a machine that slept for a week the week is not
+        // evidence of anything -- claiming either is a lie the user can catch
+        // immediately. The monitor keeps the start of the current unbroken
+        // stretch; see [`crate::store::observing_since`].
+        let observed =
+            app.last.observed_from.map_or(0.0, |from| (crate::store::now() - from).max(0.0));
+        let full_day = observed >= 24.0 * 3600.0;
         Stat {
             label: i18n::live_card_uninterrupted(),
-            value: i18n::live_card_uninterrupted_val().into(),
-            sub: i18n::live_card_uninterrupted_sub().into(),
+            value: if full_day {
+                i18n::live_card_uninterrupted_val().into()
+            } else {
+                i18n::live_uninterrupted_for(observed)
+            },
+            sub: if full_day {
+                i18n::live_card_uninterrupted_sub().into()
+            } else {
+                i18n::live_uninterrupted_short().into()
+            },
             colour: GREEN,
             tip: i18n::live_tip_uptime(),
         }

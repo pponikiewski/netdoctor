@@ -12,6 +12,12 @@ use rusqlite::{params, Connection};
 
 use crate::settings;
 
+/// A hole in the samples wider than this means nobody was watching: the app
+/// was closed or paused, or the machine was asleep. The sweep runs about once
+/// a second, so a minute is far past a slow sweep and far short of anything a
+/// user would call "still running".
+pub const OBSERVATION_GAP_S: f64 = 60.0;
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS samples (
     ts     REAL NOT NULL,
@@ -284,6 +290,40 @@ impl Store {
 
     pub fn events_since(&self, window_s: f64) -> Vec<Event> {
         self.query_events("WHERE ts_start >= ? ORDER BY ts_start DESC", Some(now() - window_s))
+    }
+
+    /// When the current unbroken stretch of watching began, or `None` on an
+    /// empty history.
+    ///
+    /// An empty history is not a clean history, and neither is a history with
+    /// holes in it: without this a fresh install claims "24 h+ uninterrupted"
+    /// a minute after it starts, and a machine that was asleep for a week
+    /// claims the week. A gap wider than `gap_s` means nobody was watching,
+    /// so the stretch starts again on the far side of it.
+    ///
+    /// ponytail: scans one day of distinct sweep timestamps (~86k rows), which
+    /// is why [`crate::monitor`] calls it once at startup and tracks the gaps
+    /// itself afterwards. Anything older than a day cannot change the answer,
+    /// because the card it feeds tops out at 24 h.
+    pub fn observing_since(&self, gap_s: f64) -> Option<f64> {
+        let conn = self.held();
+        conn.query_row(
+            "SELECT MAX(ts) FROM (
+                 SELECT ts, ts - LAG(ts) OVER (ORDER BY ts) AS gap
+                 FROM (SELECT DISTINCT ts FROM samples WHERE ts >= ?1)
+             ) WHERE gap IS NULL OR gap > ?2",
+            params![now() - 24.0 * 3600.0, gap_s],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten()
+    }
+
+    /// The newest sample on record. Tells a restart whether it is resuming a
+    /// stretch of observation or beginning one.
+    pub fn last_sample_ts(&self) -> Option<f64> {
+        let conn = self.held();
+        conn.query_row("SELECT MAX(ts) FROM samples", [], |r| r.get(0)).ok().flatten()
     }
 
     /// Every sample for every target inside a time span, oldest first. This is
@@ -584,6 +624,55 @@ mod tests {
     fn the_median_averages_the_middle_pair_on_an_even_count() {
         let s = summarise(4, &[4.0, 1.0, 3.0, 2.0]);
         assert_eq!(s.median, Some(2.5), "and the caller's order is not relied on");
+    }
+
+    #[test]
+    fn a_fresh_database_has_no_observation_to_report() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(
+            store.observing_since(OBSERVATION_GAP_S).is_none(),
+            "an empty history is not a clean history"
+        );
+        assert!(store.last_sample_ts().is_none());
+    }
+
+    #[test]
+    fn observation_restarts_on_the_far_side_of_a_gap() {
+        // Watched for an hour, closed for two, watched for five minutes. The
+        // card may only claim the five minutes: nothing was being measured in
+        // between, so the hour proves nothing about the line now.
+        let store = Store::open_in_memory().unwrap();
+        let t = now();
+        let mut rows = Vec::new();
+        for i in 0..60 {
+            rows.push((t - 10_800.0 + f64::from(i) * 60.0, "x".into(), Some(1.0), true));
+        }
+        let resumed = t - 300.0;
+        for i in 0..6 {
+            rows.push((resumed + f64::from(i) * 60.0, "x".into(), Some(1.0), true));
+        }
+        store.add_samples(&rows).unwrap();
+
+        let since = store.observing_since(OBSERVATION_GAP_S).expect("there is a stretch to report");
+        assert!(
+            (since - resumed).abs() < 1.0,
+            "observation starts at {since}, expected the far side of the gap at {resumed}"
+        );
+    }
+
+    #[test]
+    fn an_unbroken_history_counts_from_its_start() {
+        // Sweeps every 30 s, well inside the gap threshold: one stretch.
+        let store = Store::open_in_memory().unwrap();
+        let t = now();
+        let start = t - 3600.0;
+        let rows: Vec<_> = (0..120)
+            .map(|i| (start + f64::from(i) * 30.0, "x".to_string(), Some(1.0), true))
+            .collect();
+        store.add_samples(&rows).unwrap();
+
+        let since = store.observing_since(OBSERVATION_GAP_S).expect("there is a stretch to report");
+        assert!((since - start).abs() < 1.0, "observation starts at {since}, expected {start}");
     }
 
     #[test]

@@ -120,6 +120,10 @@ pub struct Snapshot {
     pub dns_ms: Option<f64>,
     pub dns_error: String,
     pub roamed: bool,
+    /// When the current unbroken stretch of watching began, or `None` before
+    /// the first sweep of this run has placed itself in the history. See
+    /// [`Store::observing_since`].
+    pub observed_from: Option<f64>,
 }
 
 impl Default for Snapshot {
@@ -133,6 +137,7 @@ impl Default for Snapshot {
             dns_ms: None,
             dns_error: String::new(),
             roamed: false,
+            observed_from: None,
         }
     }
 }
@@ -528,6 +533,13 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
     let mut dns_ms: Option<f64> = None;
     let mut dns_error = String::new();
 
+    // Continuity of observation. The first sweep asks the database whether it
+    // is resuming a stretch or starting one; after that the loop is the only
+    // writer of samples, so it can spot its own gaps -- a pause, a sleeping
+    // machine -- without going back to SQLite every second.
+    let mut observed_from = 0.0_f64;
+    let mut prev_sweep_ts: Option<f64> = None;
+
     while !stop.load(Ordering::Relaxed) {
         let started = Instant::now();
         let settings = held(&shared.settings).clone();
@@ -573,6 +585,22 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
             results.insert(t.key.clone(), sample);
         }
 
+        // Continuity, before this sweep's rows land: on the first sweep the
+        // question is whether the history runs right up to now, and after
+        // that the loop can see its own gaps.
+        match prev_sweep_ts {
+            Some(prev) if ts - prev <= store::OBSERVATION_GAP_S => {}
+            Some(_) => observed_from = ts,
+            None => {
+                let resumed = store
+                    .last_sample_ts()
+                    .filter(|last| ts - last <= store::OBSERVATION_GAP_S)
+                    .and_then(|_| store.observing_since(store::OBSERVATION_GAP_S));
+                observed_from = resumed.unwrap_or(ts);
+            }
+        }
+        prev_sweep_ts = Some(ts);
+
         // Straight to the database. The sweep used to also keep a ring of
         // recent points per target for the chart to read; the chart now asks
         // the database for whatever window it is showing, which is the only
@@ -600,6 +628,7 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
             dns_ms,
             dns_error: dns_error.clone(),
             roamed,
+            observed_from: Some(observed_from),
         };
 
         // The lead-up is recorded on every sweep, good ones included: by the
