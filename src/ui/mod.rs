@@ -437,24 +437,100 @@ impl App {
         // Announce a change of verdict — this is what the user needs to see
         // even if they were not looking at the window.
         if snap.status != self.last_status {
+            let announced = announcement(
+                self.last_status,
+                &snap,
+                self.outage_started,
+                self.settings.notify_on_outage,
+            );
+
+            // The bookkeeping runs whether or not anything is announced: the
+            // History tab and the "uninterrupted" card are built on it, and a
+            // user who turned off the pop-ups did not ask to stop recording.
             if snap.status != Status::Ok {
                 self.outage_started = Some(snap.ts);
-                let text = format!(
-                    "{}{}",
-                    snap.status.headline(),
-                    if snap.note.is_empty() { String::new() } else { format!(": {}", snap.note) }
-                );
-                self.toast(text, status_colour(snap.status), now);
             } else if self.last_status != Status::Ok {
-                let secs = self.outage_started.map(|s| snap.ts - s).unwrap_or(0.0);
-                self.toast(crate::i18n::toast_restored(secs), GREEN, now);
                 self.outage_started = None;
             }
             self.last_status = snap.status;
+
+            if let Some((text, colour)) = announced {
+                self.toast(text, colour, now);
+            }
         }
 
         self.net = snap.net.clone();
         self.last = snap;
+    }
+}
+
+/// What a change of verdict should say, or `None` for silence.
+///
+/// A free function rather than part of `drain_snapshots` so the rule can be
+/// tested without an egui context — `notify_on_outage` was written, saved and
+/// drawn as a checkbox, and read by nothing at all, which is exactly the kind
+/// of gap a unit test closes and a compiler does not.
+fn announcement(
+    previous: Status,
+    snap: &Snapshot,
+    outage_started: Option<f64>,
+    notify: bool,
+) -> Option<(String, egui::Color32)> {
+    if !notify || snap.status == previous {
+        return None;
+    }
+    if snap.status != Status::Ok {
+        let text = format!(
+            "{}{}",
+            snap.status.headline(),
+            if snap.note.is_empty() { String::new() } else { format!(": {}", snap.note) }
+        );
+        return Some((text, status_colour(snap.status)));
+    }
+    if previous != Status::Ok {
+        let secs = outage_started.map(|s| snap.ts - s).unwrap_or(0.0);
+        return Some((crate::i18n::toast_restored(secs), GREEN));
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot(status: Status, note: &str, ts: f64) -> Snapshot {
+        Snapshot { status, note: note.to_string(), ts, ..Default::default() }
+    }
+
+    #[test]
+    fn a_dropout_and_its_recovery_are_announced() {
+        let down = snapshot(Status::LanDown, "router stopped answering", 1_000.0);
+        let (text, colour) = announcement(Status::Ok, &down, None, true).expect("an outage speaks");
+        assert!(text.contains("router stopped answering"), "the note belongs in the toast: {text}");
+        assert_eq!(colour, status_colour(Status::LanDown));
+
+        let back = snapshot(Status::Ok, "", 1_030.0);
+        let (text, colour) =
+            announcement(Status::LanDown, &back, Some(1_000.0), true).expect("a recovery speaks");
+        assert_eq!(colour, GREEN);
+        assert_eq!(text, crate::i18n::toast_restored(30.0), "the outage lasted 30 s");
+    }
+
+    #[test]
+    fn the_setting_silences_both_ends_of_an_outage() {
+        // The bug this guards: the checkbox was saved to disk and drawn in
+        // Settings, and nothing ever read it.
+        let down = snapshot(Status::LanDown, "router stopped answering", 1_000.0);
+        assert!(announcement(Status::Ok, &down, None, false).is_none());
+
+        let back = snapshot(Status::Ok, "", 1_030.0);
+        assert!(announcement(Status::LanDown, &back, Some(1_000.0), false).is_none());
+    }
+
+    #[test]
+    fn an_unchanged_verdict_says_nothing() {
+        let same = snapshot(Status::Ok, "", 1_000.0);
+        assert!(announcement(Status::Ok, &same, None, true).is_none());
     }
 }
 

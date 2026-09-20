@@ -11,7 +11,7 @@
 - [x] **1. Literówka `wevtutil.exe` zabija całą integrację z dziennikiem Windows**
 - [x] **2. Kwerendy listy zdarzeń ciągną 33 KB kontekstu na wiersz**
 - [x] **3. `refresh_tweaks` blokuje wątek UI na 576 ms**
-- [ ] **4. `notify_on_outage` to martwy przełącznik**
+- [x] **4. `notify_on_outage` to martwy przełącznik**
 - [ ] **5. Znaczniki awarii znikają przy interwale sondowania ≥ 2 s**
 - [ ] **6. `DwordTweak::read` gubi rozróżnienie „brak wartości" od „brak dostępu"**
 - [ ] **7. Snapshoty tweaków nie rozróżniają kart sieciowych**
@@ -225,8 +225,22 @@ Decyzja należy do Ciebie; sugeruję podpięcie, bo README obiecuje baner przy
 zmianie werdyktu.
 
 **Kryterium akceptacji.**
-- [ ] Wyłączenie przełącznika faktycznie wycisza powiadomienie o awarii, albo
-      przełącznika nie ma.
+- [x] Wyłączenie przełącznika faktycznie wycisza powiadomienie o awarii.
+      Wybrałem podpięcie, nie usunięcie: README obiecuje baner przy zmianie
+      werdyktu, a stara wersja w `legacy-python/netdoc/gui.py:731` bramkowała
+      dokładnie te dwa toasty, więc to jest odtworzenie intencji, nie nowa
+      funkcja.
+
+**Jak.** Decyzja wyszła z `drain_snapshots` do wolnej funkcji
+`ui::announcement(previous, snap, outage_started, notify)`, żeby dała się
+przetestować bez kontekstu egui. Trzy testy: awaria i powrót mówią, wyłączony
+przełącznik wycisza oba końce, niezmieniony werdykt milczy. Mutacja kontrolna:
+po usunięciu bramki `!notify` test wyciszania jest czerwony.
+
+**Co przełącznik wycisza, a czego nie.** Wycisza toasty. Nie dotyka zapisu:
+`last_status` i `outage_started` są prowadzone tak samo, bo na nich stoi
+zakładka Historia i kafelek „Bez przerw". Kto wyłączył wyskakujące okienka, nie
+prosił o przestanie nagrywania.
 
 ---
 
