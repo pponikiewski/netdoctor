@@ -10,6 +10,7 @@ mod live;
 mod opt;
 mod report;
 mod settings_tab;
+mod update_ui;
 
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -144,6 +145,11 @@ pub enum Job {
     /// so a slow read landing after the user moved on is discarded, not shown
     /// under the wrong entry.
     SysLog(i64, Vec<crate::probe::eventlog::SysEvent>),
+    /// A step in the update flow, from the thread carrying it out.
+    UpdateState(Box<crate::update::State>),
+    /// Download progress, kept apart from `UpdateState` so the release does
+    /// not have to be cloned once per percent.
+    UpdateProgress(Option<f32>),
 }
 
 pub struct App {
@@ -218,6 +224,13 @@ pub struct App {
     pub elevated: bool,
     pub autostart_on: bool,
 
+    /// Where the update flow has got to. One value rather than a set of
+    /// booleans, so "downloading and also up to date" cannot be represented.
+    pub update: crate::update::State,
+    /// Whether the top banner is still showing. Dismissing it only hides the
+    /// banner; the settings tab keeps the same state on offer.
+    pub update_banner: bool,
+
     pub toast: Option<(String, egui::Color32, f64)>,
     pub last_status: Status,
     pub outage_started: Option<f64>,
@@ -270,6 +283,8 @@ impl App {
             syslog_pending: None,
             elevated: crate::optimize::is_elevated(),
             autostart_on: crate::autostart::is_enabled(),
+            update: Default::default(),
+            update_banner: false,
             toast: None,
             last_status: Status::Ok,
             outage_started: None,
@@ -277,6 +292,9 @@ impl App {
             rx,
         };
         app.refresh_tweaks();
+        if app.settings.check_updates {
+            update_ui::start_check(&mut app, false);
+        }
         app
     }
 
@@ -334,6 +352,23 @@ impl App {
                 Job::Traceroute(lines) => {
                     self.trace = lines;
                     self.tracing = false;
+                }
+                Job::UpdateState(state) => {
+                    // Reopen the banner on every transition worth announcing,
+                    // including one the user dismissed earlier: they dismissed
+                    // "an update is available", not "it is installed".
+                    self.update_banner = matches!(
+                        *state,
+                        crate::update::State::Available(_)
+                            | crate::update::State::Installed(_)
+                            | crate::update::State::Failed(_)
+                    );
+                    self.update = *state;
+                }
+                Job::UpdateProgress(frac) => {
+                    if let crate::update::State::Downloading(_, f) = &mut self.update {
+                        *f = frac;
+                    }
                 }
                 Job::SysLog(id, events) => {
                     if self.syslog_pending == Some(id) {
@@ -448,6 +483,16 @@ impl eframe::App for App {
                 let rect = ui.max_rect();
                 ui.painter().hline(rect.x_range(), ui.cursor().top(), egui::Stroke::new(1.0, LINE));
             });
+
+        if update_ui::banner_wanted(self) {
+            egui::TopBottomPanel::top("update_banner")
+                .frame(
+                    egui::Frame::none()
+                        .fill(BG2)
+                        .inner_margin(egui::Margin::symmetric(GUTTER, S_SM)),
+                )
+                .show(ctx, |ui| update_ui::banner(self, ui));
+        }
 
         if let Some((text, colour, until)) = self.toast.clone() {
             if now < until {

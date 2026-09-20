@@ -51,6 +51,11 @@ pub struct Settings {
     pub start_minimised: bool,
     pub keep_days: i64,
 
+    /// Ask GitHub once per launch whether there is a newer release. Off means
+    /// the app never reaches out on its own; the check is still available by
+    /// hand in the settings tab.
+    pub check_updates: bool,
+
     /// `None` until the user picks one, which lets the first run follow the
     /// Windows UI language without freezing that choice in the file.
     pub lang: Option<Lang>,
@@ -75,6 +80,8 @@ impl Default for Settings {
             notify_on_outage: true,
             start_minimised: false,
             keep_days: 14,
+
+            check_updates: true,
 
             lang: None,
         }

@@ -210,6 +210,30 @@ poprosisz.";
     set_btn_save => "Save settings", "Zapisz ustawienia";
     set_btn_defaults => "Restore defaults", "Przywróć domyślne";
 
+    // -----------------------------------------------------------------------
+    // updates
+    // -----------------------------------------------------------------------
+    upd_section => "Updates", "Aktualizacje";
+    upd_auto_check => "Check for updates on start", "Sprawdzaj aktualizacje przy starcie";
+    upd_auto_check_hint =>
+        "One request to GitHub when the app opens. Nothing is downloaded until you ask for it.",
+        "Jedno zapytanie do GitHuba przy starcie aplikacji. Nic nie jest pobierane, dopóki sam \
+         tego nie wybierzesz.";
+    upd_btn_check => "Check now", "Sprawdź teraz";
+    upd_btn_install => "Update and restart", "Zaktualizuj i uruchom ponownie";
+    upd_btn_restart => "Restart now", "Uruchom ponownie teraz";
+    upd_btn_later => "Later", "Później";
+    upd_btn_page => "Release notes on GitHub", "Opis wydania na GitHubie";
+    upd_checking => "Checking for updates…", "Sprawdzanie aktualizacji…";
+    upd_downloading => "Downloading…", "Pobieranie…";
+    upd_whats_new => "What's new", "Co nowego";
+    upd_restart_hint =>
+        "The new version is in place. It starts running when the app is restarted.",
+        "Nowa wersja jest na miejscu. Zacznie działać po ponownym uruchomieniu aplikacji.";
+    upd_err_not_exe =>
+        "What was downloaded is not a Windows program. The release may be damaged.",
+        "To, co zostało pobrane, nie jest programem Windows. Wydanie może być uszkodzone.";
+
     set_err_interval =>
         "An interval below 300 ms loads the network more than it measures.",
         "Odstęp poniżej 300 ms bardziej obciąża sieć, niż ją mierzy.";
@@ -3407,6 +3431,87 @@ pub fn opt_section_count(set: usize, total: usize) -> String {
     match current() {
         Lang::En => format!("{set} of {total} set"),
         Lang::Pl => format!("{set} z {total} ustawione"),
+    }
+}
+
+// --- updates ---------------------------------------------------------------
+
+pub fn upd_running(version: &str) -> String {
+    match current() {
+        Lang::En => format!("Running version {version}."),
+        Lang::Pl => format!("Zainstalowana wersja: {version}."),
+    }
+}
+
+pub fn upd_up_to_date(version: &str) -> String {
+    match current() {
+        Lang::En => format!("Version {version} is the latest one."),
+        Lang::Pl => format!("Wersja {version} jest najnowsza."),
+    }
+}
+
+pub fn upd_available(version: &str) -> String {
+    match current() {
+        Lang::En => format!("Version {version} is available."),
+        Lang::Pl => format!("Dostępna jest wersja {version}."),
+    }
+}
+
+pub fn upd_installed(version: &str) -> String {
+    match current() {
+        Lang::En => format!("Version {version} is installed."),
+        Lang::Pl => format!("Wersja {version} została zainstalowana."),
+    }
+}
+
+pub fn upd_failed(detail: &str) -> String {
+    match current() {
+        Lang::En => format!("The update failed: {detail}"),
+        Lang::Pl => format!("Aktualizacja się nie udała: {detail}"),
+    }
+}
+
+pub fn upd_err_no_asset(version: &str, asset: &str) -> String {
+    match current() {
+        Lang::En => format!("Release {version} has no {asset} attached to it."),
+        Lang::Pl => format!("Wydanie {version} nie ma dołączonego pliku {asset}."),
+    }
+}
+
+pub fn upd_err_no_dir() -> String {
+    match current() {
+        Lang::En => "The running program has no directory to install into.".into(),
+        Lang::Pl => "Nie udało się ustalić katalogu uruchomionego programu.".into(),
+    }
+}
+
+pub fn upd_err_read_only(dir: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "{dir} cannot be written to. Move the program somewhere you own, such as your user \
+             folder, or download the new version by hand."
+        ),
+        Lang::Pl => format!(
+            "Nie można zapisywać w katalogu {dir}. Przenieś program w miejsce, do którego masz \
+             prawa zapisu, na przykład do swojego folderu użytkownika, albo pobierz nową wersję \
+             ręcznie."
+        ),
+    }
+}
+
+pub fn upd_err_too_small(bytes: u64) -> String {
+    match current() {
+        Lang::En => format!("The download stopped after {bytes} bytes, which is not a full build."),
+        Lang::Pl => {
+            format!("Pobieranie zakończyło się po {bytes} bajtach, to nie jest cała aplikacja.")
+        }
+    }
+}
+
+pub fn upd_err_size_mismatch(got: u64, want: u64) -> String {
+    match current() {
+        Lang::En => format!("The download is {got} bytes; the release says {want}."),
+        Lang::Pl => format!("Pobrany plik ma {got} bajtów, a wydanie podaje {want}."),
     }
 }
 

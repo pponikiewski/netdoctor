@@ -115,6 +115,8 @@ fn language_thresholds_behaviour(app: &mut App, ui: &mut egui::Ui) {
             ui.label(egui::RichText::new(i18n::set_autostart_stale()).size(T_META).color(YELLOW));
         }
     });
+
+    section(ui, i18n::upd_section(), |ui| super::update_ui::section(app, ui));
 }
 
 fn save(app: &mut App, ui: &mut egui::Ui) {

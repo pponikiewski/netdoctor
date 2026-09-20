@@ -13,6 +13,7 @@ mod probe;
 mod settings;
 mod store;
 mod ui;
+mod update;
 mod winreg;
 
 use std::sync::Arc;
@@ -28,6 +29,10 @@ const FLAGS: [&str; 7] = ["--scan", "--quick", "--minimised", "--version", "-V",
 
 fn main() -> eframe::Result<()> {
     install_panic_hook();
+    // Clears what the previous update left behind. It can only happen here:
+    // the file stays locked for as long as the process that was replaced is
+    // running, so the process that replaced it does the sweeping.
+    update::clean_old();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 

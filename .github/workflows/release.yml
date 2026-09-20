@@ -1,0 +1,77 @@
+name: release
+
+# Tag-driven: `git tag v1.2.0 && git push origin v1.2.0` is the whole publish
+# step. The app's updater reads the newest non-draft release, so anything this
+# workflow attaches is what users are offered.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The updater compares the release tag against the version baked into the
+      # binary. A tag that disagrees with Cargo.toml ships a build that either
+      # keeps offering itself an update or never offers one at all, so it is a
+      # failed release rather than a published one.
+      - name: Tag matches the crate version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $crate = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($tag -ne $crate) {
+            Write-Error "tag $tag does not match Cargo.toml version $crate"
+            exit 1
+          }
+          Write-Host "version $crate"
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+      - name: Build
+        run: cargo build --release
+
+      # Published next to the binary so anyone installing by hand can check
+      # what they downloaded. The in-app updater does not read it.
+      - name: Checksum
+        shell: pwsh
+        run: |
+          Copy-Item target\release\netdoctor.exe .\netdoctor.exe
+          (Get-FileHash .\netdoctor.exe -Algorithm SHA256).Hash.ToLower() + "  netdoctor.exe" `
+            | Out-File -Encoding ascii SHA256SUMS
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            netdoctor.exe
+            SHA256SUMS
+          generate_release_notes: true
+
+      # A manual run builds and checks without publishing, so the release path
+      # can be exercised before a tag is cut.
+      - name: Artifact
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: netdoctor
+          path: |
+            netdoctor.exe
+            SHA256SUMS

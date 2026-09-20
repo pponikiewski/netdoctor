@@ -91,6 +91,31 @@ the red figures in the table, which is the point. It also lands in the exported
 report, where it is the paragraph a support line cannot answer with "restart
 the router". See [`src/probe/path.rs`](src/probe/path.rs).
 
+## Getting it
+
+Download `netdoctor.exe` from the
+[latest release](https://github.com/pponikiewski/netdoctor/releases/latest).
+It is a single file with nothing to install; `SHA256SUMS` next to it is there
+if you want to check what you downloaded.
+
+Put it somewhere you can write to — your user folder is fine, `Program Files`
+is not. That is what lets the app replace itself when it updates, without
+asking for administrator rights every time.
+
+## Updating
+
+On start the app asks GitHub once whether there is a newer release. If there
+is, a banner offers to fetch it; **Update and restart** downloads the new
+binary, swaps it in, and the app restarts into it. The copy it replaced is
+deleted on the next start, once Windows has released its lock on it.
+
+Settings → Updates has the same thing on a button, the release notes, and the
+switch that turns the automatic check off. With it off the app never contacts
+GitHub on its own.
+
+If the update fails because the folder is read-only, move the executable
+somewhere you own and try again, or download the new version by hand.
+
 ## Running it
 
 ```text
@@ -134,9 +159,15 @@ one English label that would silently fail everywhere else.
   second is the shape of an hour, and neither is readable as the other.
   A break in a line is a break in the measurement, and it is only marked in
   red when probes were sent and went unanswered — time the app spent closed
-  leaves a gap and no accusation. Below it: headline figures (latency,
-  jitter, loss, DNS, time since the last outage), the path hop by hop with a
-  verdict on which one the trouble starts at, traceroute, report export.
+  leaves a gap and no accusation. Nothing on this tab expects you to already
+  know what it means: each legend entry carries its target's current reading
+  and explains which stretch of the path it measures, the threshold lines are
+  labelled with their values, and the key under the plot keeps its prose
+  behind a single question mark instead of running along the row. Below it:
+  headline figures (latency, jitter, loss, DNS, time since the last outage),
+  each saying on hover what it is and what a bad value there points at, the
+  path hop by hop with a verdict on which one the trouble starts at,
+  traceroute, report export.
 - **Diagnose** — nine checks: adapter and medium, Wi-Fi quality and band,
   adapter power management, DNS, the link to the router, internet latency and
   loss, MTU, TCP settings, and the recorded outage history. Each finding
@@ -299,6 +330,24 @@ the UCRT, part of Windows itself since Windows 10.
 
 To hand the app to someone, ship that executable on its own. It needs no
 installer and writes nothing outside `%LOCALAPPDATA%\NetDoctor\`.
+
+### Cutting a release
+
+```text
+# bump `version` in Cargo.toml first
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+`.github/workflows/release.yml` builds on Windows, runs clippy and the tests,
+and attaches `netdoctor.exe` and `SHA256SUMS` to a GitHub release. It refuses
+to publish a tag that disagrees with the version in `Cargo.toml`: the updater
+compares the tag against the version baked into the running binary, so a
+mismatch ships a build that either re-offers itself forever or never updates.
+
+Running the workflow by hand from the Actions tab does everything except
+publish, and leaves the build as an artifact — useful for checking the release
+path before cutting a tag.
 
 ## Limitations
 
