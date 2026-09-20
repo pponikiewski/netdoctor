@@ -16,8 +16,8 @@ use std::ptr;
 use windows::core::GUID;
 use windows::Win32::Foundation::{ERROR_SUCCESS, HANDLE};
 use windows::Win32::NetworkManagement::WiFi::{
-    dot11_BSS_type_any, WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory,
-    WlanGetNetworkBssList, WlanOpenHandle, WlanScan, WLAN_BSS_LIST, WLAN_INTERFACE_INFO_LIST,
+    dot11_BSS_type_any, WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanGetNetworkBssList,
+    WlanOpenHandle, WlanScan, WLAN_BSS_LIST, WLAN_INTERFACE_INFO_LIST,
 };
 
 use crate::probe::netstate::NetState;

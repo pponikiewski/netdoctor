@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 
-use super::{S_LG, S_MD, S_SM, T_BODY, T_HEAD, T_TITLE, App, Job, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{App, Job, FG, FG_DIM, GREEN, RED, S_LG, S_MD, S_SM, T_BODY, T_HEAD, T_TITLE, YELLOW};
 use crate::diagnose::{self, Segment, Severity, Verdict};
 use crate::i18n;
 
@@ -36,16 +36,16 @@ fn segment_colour(seg: Segment) -> egui::Color32 {
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!app.scanning, egui::Button::new(i18n::diag_btn_scan()).fill(super::ACCENT))
+            .add_enabled(
+                !app.scanning,
+                egui::Button::new(i18n::diag_btn_scan()).fill(super::ACCENT),
+            )
             .clicked()
         {
             start_scan(app);
         }
-        ui.add_enabled(
-            !app.scanning,
-            egui::Checkbox::new(&mut app.deep_scan, i18n::diag_deep()),
-        )
-        .on_hover_text(i18n::diag_deep_hint());
+        ui.add_enabled(!app.scanning, egui::Checkbox::new(&mut app.deep_scan, i18n::diag_deep()))
+            .on_hover_text(i18n::diag_deep_hint());
         ui.label(egui::RichText::new(&app.scan_label).size(T_BODY).color(FG_DIM));
     });
 
@@ -55,11 +55,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(S_SM);
 
     if app.findings.is_empty() {
-        ui.label(
-            egui::RichText::new(i18n::diag_no_scan_yet())
-            .size(T_HEAD)
-            .color(FG_DIM),
-        );
+        ui.label(egui::RichText::new(i18n::diag_no_scan_yet()).size(T_HEAD).color(FG_DIM));
         return;
     }
 
@@ -139,9 +135,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.set_min_height(if narrow { 160.0 } else { 240.0 });
                 match selected_finding.and_then(|i| findings.get(i)) {
                     None => {
-                        ui.label(
-                            egui::RichText::new(i18n::diag_select_finding()).color(FG_DIM),
-                        );
+                        ui.label(egui::RichText::new(i18n::diag_select_finding()).color(FG_DIM));
                     }
                     Some(f) => {
                         ui.label(
@@ -194,14 +188,10 @@ fn verdict_card(app: &App, ui: &mut egui::Ui, jump_to: &mut Option<String>) {
     let v: &Verdict = &app.verdict;
     let colour = segment_colour(v.segment);
 
-    egui::Frame::none()
-        .fill(super::BG2)
-        .rounding(6.0)
-        .inner_margin(egui::Margin::same(S_MD))
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(i18n::verdict_heading()).size(T_BODY).color(FG_DIM),
-            );
+    egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_MD)).show(
+        ui,
+        |ui| {
+            ui.label(egui::RichText::new(i18n::verdict_heading()).size(T_BODY).color(FG_DIM));
             ui.label(
                 egui::RichText::new(i18n::verdict_confident(
                     v.segment.label(),
@@ -247,7 +237,8 @@ fn verdict_card(app: &App, ui: &mut egui::Ui, jump_to: &mut Option<String>) {
                     });
                 });
             }
-        });
+        },
+    );
 }
 
 fn open_tweak(app: &mut App, id: &str) {

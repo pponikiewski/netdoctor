@@ -124,12 +124,8 @@ impl Evidence {
 
     /// Did the access point change during the lead-up?
     fn bssid_change(&self) -> Option<(String, String)> {
-        let seen: Vec<&String> = self
-            .lead
-            .iter()
-            .map(|s| &s.bssid)
-            .filter(|b| !b.is_empty())
-            .collect();
+        let seen: Vec<&String> =
+            self.lead.iter().map(|s| &s.bssid).filter(|b| !b.is_empty()).collect();
         let first = seen.first()?;
         let last = seen.last()?;
         (first != last).then(|| ((*first).clone(), (*last).clone()))
@@ -290,9 +286,8 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
         .find(|e| e.kind == Kind::Sleep && (-SLEEP_WINDOW_S..=5.0).contains(&e.offset_from(t0)))
     {
         out.push(Cause::new("log_sleep", Confidence::Certain, i18n::ev_log_sleep(&at(e))));
-    } else if let Some(e) = log
-        .iter()
-        .find(|e| e.kind == Kind::Resume && (-30.0..=90.0).contains(&e.offset_from(t0)))
+    } else if let Some(e) =
+        log.iter().find(|e| e.kind == Kind::Resume && (-30.0..=90.0).contains(&e.offset_from(t0)))
     {
         // Waking is not sleeping: the radio has to re-associate and the DHCP
         // lease has to be confirmed, and an outage that fills exactly that gap
@@ -362,23 +357,19 @@ fn wlan_disconnect_cause(e: &SysEvent, at: &str) -> Cause {
         // Disassociated due to inactivity. The access point stopped hearing
         // from a card that Windows had quietly powered down, which is the
         // single most common cause of "it drops when I leave it alone".
-        Some(4) => Cause::new(
-            "log_wlan_inactivity",
-            Confidence::Certain,
-            i18n::ev_log_wlan_reason(4, at),
-        )
-        .with_fix("adapter_power"),
+        Some(4) => {
+            Cause::new("log_wlan_inactivity", Confidence::Certain, i18n::ev_log_wlan_reason(4, at))
+                .with_fix("adapter_power")
+        }
         // Handshake and key failures: the credentials or the key rotation,
         // not the radio.
         Some(r @ (2 | 15 | 23)) => {
             Cause::new("log_wlan_auth", Confidence::Certain, i18n::ev_log_wlan_reason(r, at))
         }
         // The access point turned us away rather than losing us.
-        Some(r @ 5..=7) => Cause::new(
-            "log_wlan_ap_rejected",
-            Confidence::Certain,
-            i18n::ev_log_wlan_reason(r, at),
-        ),
+        Some(r @ 5..=7) => {
+            Cause::new("log_wlan_ap_rejected", Confidence::Certain, i18n::ev_log_wlan_reason(r, at))
+        }
         Some(r) => {
             Cause::new("log_wlan_deauth", Confidence::Likely, i18n::ev_log_wlan_reason(r, at))
         }
@@ -411,8 +402,10 @@ fn adapter_rules(ev: &Evidence, out: &mut Vec<Cause>) {
     }
 
     if !ev.dropped_while_up() && ev.rssi_dbm.is_none() && !ev.up {
-        out.push(Cause::new("adapter_or_driver", Confidence::Possible, i18n::ev_adapter_absent())
-            .with_fix("stack_reset"));
+        out.push(
+            Cause::new("adapter_or_driver", Confidence::Possible, i18n::ev_adapter_absent())
+                .with_fix("stack_reset"),
+        );
     }
 }
 
@@ -527,10 +520,8 @@ fn recurrence(event: &Event, history: &[Event], out: &mut Vec<Cause>) {
         return;
     }
     let this_hour = crate::diagnose::local_hour(event.ts_start);
-    let matching = same
-        .iter()
-        .filter(|e| crate::diagnose::local_hour(e.ts_start) == this_hour)
-        .count();
+    let matching =
+        same.iter().filter(|e| crate::diagnose::local_hour(e.ts_start) == this_hour).count();
 
     if matching >= 3 && matching * 2 >= same.len() {
         out.push(Cause::new(

@@ -162,10 +162,7 @@ fn read_snapshots_at(path: &std::path::Path) -> Result<HashMap<String, Value>> {
         }
     };
     serde_json::from_str(&text).map_err(|e| {
-        anyhow!(crate::i18n::tw_snapshots_unreadable(
-            &path.display().to_string(),
-            &e.to_string()
-        ))
+        anyhow!(crate::i18n::tw_snapshots_unreadable(&path.display().to_string(), &e.to_string()))
     })
 }
 
@@ -197,11 +194,7 @@ fn save_snapshots_at(path: &std::path::Path, map: &HashMap<String, Value>) -> Re
 /// Returns true if this call is what stored it. A second Apply of the same
 /// tweak must not overwrite the entry, or the value it recorded would be the
 /// tweak's own, and Revert would restore the tweak instead of undoing it.
-fn record_first(
-    snaps: &mut HashMap<String, Value>,
-    id: &str,
-    snapshot: Value,
-) -> bool {
+fn record_first(snaps: &mut HashMap<String, Value>, id: &str, snapshot: Value) -> bool {
     if snaps.contains_key(id) {
         return false;
     }
@@ -236,8 +229,11 @@ pub fn apply(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
     match save_snapshots(&snaps) {
         Ok(()) => Ok(msg),
         // The change is already live, so this is a warning, not a failure.
-        Err(e) => Ok(format!("{msg}
-{}", crate::i18n::tw_snapshot_save_failed(&e.to_string()))),
+        Err(e) => Ok(format!(
+            "{msg}
+{}",
+            crate::i18n::tw_snapshot_save_failed(&e.to_string())
+        )),
     }
 }
 
@@ -257,7 +253,9 @@ pub fn revert(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
 
 pub fn is_elevated() -> bool {
     use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     unsafe {
@@ -319,11 +317,8 @@ pub(crate) fn run(program: &str, args: &[&str]) -> Result<String> {
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     let out = cmd.output()?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let text =
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     if out.status.success() {
         Ok(text)
     } else {
@@ -409,17 +404,17 @@ impl Tweak for AdapterPowerSaving {
     }
 
     fn apply(&self, net: &NetState) -> Result<String> {
-        let key = adapter_class_key(net).ok_or_else(|| anyhow!(crate::i18n::tw_no_adapter_key()))?;
+        let key =
+            adapter_class_key(net).ok_or_else(|| anyhow!(crate::i18n::tw_no_adapter_key()))?;
         winreg::write_dword(Root::LocalMachine, &key, "PnPCapabilities", PNP_DISABLE_POWER_DOWN)?;
         Ok(crate::i18n::tw_power_applied().into())
     }
 
     fn revert(&self, _net: &NetState, snapshot: &Value) -> Result<String> {
-        let key = snapshot["key"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
+        let key =
+            snapshot["key"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
         match snapshot["value"].as_u64() {
-            Some(v) => {
-                winreg::write_dword(Root::LocalMachine, key, "PnPCapabilities", v as u32)?
-            }
+            Some(v) => winreg::write_dword(Root::LocalMachine, key, "PnPCapabilities", v as u32)?,
             None => winreg::delete_value(Root::LocalMachine, key, "PnPCapabilities")?,
         }
         Ok(crate::i18n::tw_power_reverted().into())
@@ -456,8 +451,10 @@ impl Tweak for WlanPowerPlan {
     }
 
     fn read(&self, _net: &NetState) -> State {
-        let out = match run("powercfg", &["/query", "SCHEME_CURRENT", SUB_WIRELESS, SETTING_POWER_SAVING])
-        {
+        let out = match run(
+            "powercfg",
+            &["/query", "SCHEME_CURRENT", SUB_WIRELESS, SETTING_POWER_SAVING],
+        ) {
             Ok(t) => t,
             Err(e) => {
                 return State::new(crate::i18n::tw_cannot_read(&e.to_string()), None, Value::Null)
@@ -495,8 +492,26 @@ impl Tweak for WlanPowerPlan {
 }
 
 fn set_power_indices(ac: u32, dc: u32) -> Result<()> {
-    run("powercfg", &["/setacvalueindex", "SCHEME_CURRENT", SUB_WIRELESS, SETTING_POWER_SAVING, &ac.to_string()])?;
-    run("powercfg", &["/setdcvalueindex", "SCHEME_CURRENT", SUB_WIRELESS, SETTING_POWER_SAVING, &dc.to_string()])?;
+    run(
+        "powercfg",
+        &[
+            "/setacvalueindex",
+            "SCHEME_CURRENT",
+            SUB_WIRELESS,
+            SETTING_POWER_SAVING,
+            &ac.to_string(),
+        ],
+    )?;
+    run(
+        "powercfg",
+        &[
+            "/setdcvalueindex",
+            "SCHEME_CURRENT",
+            SUB_WIRELESS,
+            SETTING_POWER_SAVING,
+            &dc.to_string(),
+        ],
+    )?;
     run("powercfg", &["/setactive", "SCHEME_CURRENT"])?;
     Ok(())
 }
@@ -596,8 +611,33 @@ impl Tweak for FastDns {
 
     fn apply(&self, net: &NetState) -> Result<String> {
         let name = &net.adapter_name;
-        run("netsh", &["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "source=static", "address=1.1.1.1", "register=primary", "validate=no"])?;
-        run("netsh", &["interface", "ipv4", "add", "dnsservers", &format!("name={name}"), "address=8.8.8.8", "index=2", "validate=no"])?;
+        run(
+            "netsh",
+            &[
+                "interface",
+                "ipv4",
+                "set",
+                "dnsservers",
+                &format!("name={name}"),
+                "source=static",
+                "address=1.1.1.1",
+                "register=primary",
+                "validate=no",
+            ],
+        )?;
+        run(
+            "netsh",
+            &[
+                "interface",
+                "ipv4",
+                "add",
+                "dnsservers",
+                &format!("name={name}"),
+                "address=8.8.8.8",
+                "index=2",
+                "validate=no",
+            ],
+        )?;
         let _ = run("ipconfig", &["/flushdns"]);
         Ok(crate::i18n::tw_dns_applied().into())
     }
@@ -610,13 +650,41 @@ impl Tweak for FastDns {
             .unwrap_or_default();
 
         if servers.is_empty() {
-            run("netsh", &["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "source=dhcp"])?;
+            run(
+                "netsh",
+                &["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "source=dhcp"],
+            )?;
             let _ = run("ipconfig", &["/flushdns"]);
             return Ok(crate::i18n::tw_dns_reverted_dhcp().into());
         }
-        run("netsh", &["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "source=static", &format!("address={}", servers[0]), "register=primary", "validate=no"])?;
+        run(
+            "netsh",
+            &[
+                "interface",
+                "ipv4",
+                "set",
+                "dnsservers",
+                &format!("name={name}"),
+                "source=static",
+                &format!("address={}", servers[0]),
+                "register=primary",
+                "validate=no",
+            ],
+        )?;
         for (i, s) in servers.iter().skip(1).enumerate() {
-            let _ = run("netsh", &["interface", "ipv4", "add", "dnsservers", &format!("name={name}"), &format!("address={s}"), &format!("index={}", i + 2), "validate=no"]);
+            let _ = run(
+                "netsh",
+                &[
+                    "interface",
+                    "ipv4",
+                    "add",
+                    "dnsservers",
+                    &format!("name={name}"),
+                    &format!("address={s}"),
+                    &format!("index={}", i + 2),
+                    "validate=no",
+                ],
+            );
         }
         let _ = run("ipconfig", &["/flushdns"]);
         Ok(crate::i18n::tw_dns_reverted().into())
@@ -745,7 +813,8 @@ impl Tweak for NagleOff {
     }
 
     fn revert(&self, _net: &NetState, snapshot: &Value) -> Result<String> {
-        let key = snapshot["key"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
+        let key =
+            snapshot["key"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
         for (name, field) in [("TcpAckFrequency", "ack"), ("TCPNoDelay", "nodelay")] {
             match snapshot[field].as_u64() {
                 Some(v) => winreg::write_dword(Root::LocalMachine, key, name, v as u32)?,
@@ -762,8 +831,7 @@ impl Tweak for NagleOff {
 
 pub struct NetworkThrottling;
 
-const MM_PROFILE: &str =
-    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile";
+const MM_PROFILE: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile";
 
 impl Tweak for NetworkThrottling {
     fn id(&self) -> &'static str {
@@ -812,9 +880,7 @@ impl Tweak for NetworkThrottling {
     }
 
     fn revert(&self, _net: &NetState, snapshot: &Value) -> Result<String> {
-        for (name, field) in
-            [("NetworkThrottlingIndex", "nti"), ("SystemResponsiveness", "sr")]
-        {
+        for (name, field) in [("NetworkThrottlingIndex", "nti"), ("SystemResponsiveness", "sr")] {
             match snapshot[field].as_u64() {
                 Some(v) => winreg::write_dword(Root::LocalMachine, MM_PROFILE, name, v as u32)?,
                 None => winreg::delete_value(Root::LocalMachine, MM_PROFILE, name)?,
@@ -894,13 +960,35 @@ impl Tweak for MtuFix {
     fn apply(&self, net: &NetState) -> Result<String> {
         let best = Self::probe_best_mtu(std::net::Ipv4Addr::new(1, 1, 1, 1))
             .ok_or_else(|| anyhow!(crate::i18n::tw_mtu_probe_failed()))?;
-        run("netsh", &["interface", "ipv4", "set", "subinterface", &net.adapter_name, &format!("mtu={best}"), "store=persistent"])?;
+        run(
+            "netsh",
+            &[
+                "interface",
+                "ipv4",
+                "set",
+                "subinterface",
+                &net.adapter_name,
+                &format!("mtu={best}"),
+                "store=persistent",
+            ],
+        )?;
         Ok(crate::i18n::tw_mtu_applied(best))
     }
 
     fn revert(&self, net: &NetState, snapshot: &Value) -> Result<String> {
         let mtu = snapshot["mtu"].as_u64().unwrap_or(1500);
-        run("netsh", &["interface", "ipv4", "set", "subinterface", &net.adapter_name, &format!("mtu={mtu}"), "store=persistent"])?;
+        run(
+            "netsh",
+            &[
+                "interface",
+                "ipv4",
+                "set",
+                "subinterface",
+                &net.adapter_name,
+                &format!("mtu={mtu}"),
+                "store=persistent",
+            ],
+        )?;
         Ok(crate::i18n::tw_mtu_reverted(mtu))
     }
 }

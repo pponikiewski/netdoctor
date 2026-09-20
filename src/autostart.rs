@@ -80,9 +80,8 @@ pub fn relaunch_elevated() -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     let exe = std::env::current_exe()?;
-    let wide = |s: &str| -> Vec<u16> {
-        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
-    };
+    let wide =
+        |s: &str| -> Vec<u16> { OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect() };
     let verb = wide("runas");
     let file = wide(&exe.to_string_lossy());
 
@@ -121,10 +120,7 @@ mod tests {
             r"C:\Program Files\NetDoctor\netdoctor.exe"
         );
         // The shape an older build or a hand edit leaves behind.
-        assert_eq!(
-            executable_in(r"C:\Tools\netdoctor.exe --minimised"),
-            r"C:\Tools\netdoctor.exe"
-        );
+        assert_eq!(executable_in(r"C:\Tools\netdoctor.exe --minimised"), r"C:\Tools\netdoctor.exe");
         assert_eq!(executable_in(r"C:\Tools\netdoctor.exe"), r"C:\Tools\netdoctor.exe");
     }
 

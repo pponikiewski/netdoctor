@@ -66,7 +66,6 @@ impl Status {
             Status::AdapterDown => "adapter_down",
         }
     }
-
 }
 
 /// Severity order among scopes, used only to break ties. A dropped adapter is
@@ -406,7 +405,6 @@ impl Monitor {
     pub fn path(&self) -> PathReading {
         held(&self.shared.path).clone()
     }
-
 }
 
 impl Drop for Monitor {
@@ -433,10 +431,7 @@ fn resolve_targets(settings: &Settings, net: &NetState) -> Vec<Resolved> {
             "dns_isp" => {
                 // Probing the router twice tells us nothing new, so when the
                 // only resolver *is* the router we skip this target.
-                net.dns_servers
-                    .iter()
-                    .find(|d| Some(**d) != net.gateway)
-                    .copied()
+                net.dns_servers.iter().find(|d| Some(**d) != net.gateway).copied()
             }
             _ => t.host,
         };
@@ -514,12 +509,7 @@ fn run_path(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
     }
 }
 
-fn run_loop(
-    shared: Arc<Shared>,
-    store: Arc<Store>,
-    tx: Sender<Snapshot>,
-    stop: Arc<AtomicBool>,
-) {
+fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: Arc<AtomicBool>) {
     let pinger = match Pinger::new() {
         Ok(p) => p,
         Err(_) => return,
@@ -634,9 +624,7 @@ fn run_loop(
 
         if bad && fail_streak >= settings.outage_after_fails && open_event.is_none() {
             let context = context_json(&snap, &lead, roamed_recently);
-            open_event = store
-                .open_event(status.key(), status.scope(), &snap.note, &context)
-                .ok();
+            open_event = store.open_event(status.key(), status.scope(), &snap.note, &context).ok();
         } else if !bad {
             if let Some(id) = open_event.take() {
                 // An empty lead-up: what matters at recovery is the state the
@@ -693,10 +681,7 @@ fn classify(
 
     if internet_ok {
         if !dns_error.is_empty() {
-            return (
-                Status::DnsFail,
-                i18n::mon_dns_detail(dns_error),
-            );
+            return (Status::DnsFail, i18n::mon_dns_detail(dns_error));
         }
         return quality_verdict(results, settings, store);
     }
@@ -705,24 +690,16 @@ fn classify(
     match gw {
         Some(true) => (
             Status::IspDown,
-            i18n::mon_isp_detail(
-                &net.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into()),
-            ),
+            i18n::mon_isp_detail(&net.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into())),
         ),
         Some(false) => {
             if net.medium == Medium::Wifi && !netstate::wifi_associated() {
-                (
-                    Status::AdapterDown,
-                    i18n::mon_wifi_deassociated().into(),
-                )
+                (Status::AdapterDown, i18n::mon_wifi_deassociated().into())
             } else {
                 (Status::LanDown, i18n::mon_nothing_responded().into())
             }
         }
-        None => (
-            Status::AdapterDown,
-            i18n::mon_no_gateway().into(),
-        ),
+        None => (Status::AdapterDown, i18n::mon_no_gateway().into()),
     }
 }
 
@@ -740,17 +717,11 @@ fn quality_verdict(
 
     let stats = store.stats("cloudflare", 60.0);
     if stats.loss_pct > settings.loss_ok_pct {
-        return (
-            Status::Degraded,
-            i18n::mon_loss_detail(stats.loss_pct),
-        );
+        return (Status::Degraded, i18n::mon_loss_detail(stats.loss_pct));
     }
     if let Some(j) = stats.jitter {
         if j > settings.jitter_ok_ms * 2.0 {
-            return (
-                Status::Degraded,
-                i18n::mon_jitter_detail(j),
-            );
+            return (Status::Degraded, i18n::mon_jitter_detail(j));
         }
     }
     if worst.is_finite() && worst > settings.ping_bad_ms {
@@ -796,8 +767,7 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(true, Some(2.0)));
         r.insert("cloudflare".into(), sample(true, Some(12.0)));
-        let (status, _) =
-            classify(&r, &targets(), &wifi_state(), "", &Settings::default(), &store);
+        let (status, _) = classify(&r, &targets(), &wifi_state(), "", &Settings::default(), &store);
         assert_eq!(status, Status::Ok);
     }
 
@@ -819,8 +789,7 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(false, None));
         r.insert("cloudflare".into(), sample(false, None));
-        let (status, _) =
-            classify(&r, &targets(), &wifi_state(), "", &Settings::default(), &store);
+        let (status, _) = classify(&r, &targets(), &wifi_state(), "", &Settings::default(), &store);
         assert_eq!(status, Status::LanDown);
     }
 
@@ -953,11 +922,7 @@ mod tests {
         // Exactly the commonest shape in the recorded data: one responder
         // takes 90 ms to answer while the others are untouched in the same
         // sweep. It cannot have happened on the shared path.
-        let s = vec![
-            flat(12.0, 40, &[(10, 90.0)]),
-            flat(12.0, 40, &[]),
-            flat(16.0, 40, &[]),
-        ];
+        let s = vec![flat(12.0, 40, &[(10, 90.0)]), flat(12.0, 40, &[]), flat(16.0, 40, &[])];
         let out = find_spikes(&s);
         assert!(out.correlated.is_empty());
         assert_eq!(out.single, 1);
@@ -1005,7 +970,8 @@ mod tests {
 
     #[test]
     fn lost_packets_are_not_spikes() {
-        let s: Series = (0..20).map(|i| (i as f64, if i == 5 { None } else { Some(12.0) })).collect();
+        let s: Series =
+            (0..20).map(|i| (i as f64, if i == 5 { None } else { Some(12.0) })).collect();
         let out = find_spikes(&[s.clone(), s]);
         assert!(out.correlated.is_empty());
         assert_eq!(out.single, 0);

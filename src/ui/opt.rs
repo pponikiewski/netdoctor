@@ -2,7 +2,10 @@
 
 use eframe::egui;
 
-use super::{figure, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE, App, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{
+    figure, App, FG, FG_DIM, GREEN, RED, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE,
+    YELLOW,
+};
 use crate::i18n;
 use crate::optimize::{self, Risk};
 
@@ -68,7 +71,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             app.refresh_tweaks();
         }
         if ui
-            .add_enabled(app.elevated, egui::Button::new(i18n::opt_btn_apply_all()).fill(super::ACCENT))
+            .add_enabled(
+                app.elevated,
+                egui::Button::new(i18n::opt_btn_apply_all()).fill(super::ACCENT),
+            )
             .on_disabled_hover_text(i18n::opt_needs_admin())
             .clicked()
         {
@@ -82,7 +88,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         // there anything left to do here" without reading a single row.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (set, todo, na) = tally(app);
-            ui.label(egui::RichText::new(i18n::opt_summary(set, todo, na)).size(T_META).color(FG_DIM));
+            ui.label(
+                egui::RichText::new(i18n::opt_summary(set, todo, na)).size(T_META).color(FG_DIM),
+            );
             if na > 0 {
                 ui.checkbox(&mut app.show_unavailable, i18n::opt_show_unavailable())
                     .on_hover_text(i18n::opt_show_unavailable_hint());
@@ -146,9 +154,7 @@ fn section(
     }
 
     let states = app.tweak_states.clone();
-    let status_at = |i: usize| {
-        Status::of(states.get(i).and_then(|(_, _, optimal)| *optimal))
-    };
+    let status_at = |i: usize| Status::of(states.get(i).and_then(|(_, _, optimal)| *optimal));
     // The counts describe the whole section, whether or not every row of it
     // is on screen, so hiding rows never changes what the heading claims.
     let set = all_rows.iter().filter(|i| status_at(**i) == Status::Set).count();
@@ -219,9 +225,9 @@ fn section(
                         );
 
                         let selected = app.selected_tweak == Some(i);
-                        let title = egui::RichText::new(t.title()).size(T_BODY).color(
-                            if status == Status::Unavailable { FG_DIM } else { FG },
-                        );
+                        let title = egui::RichText::new(t.title())
+                            .size(T_BODY)
+                            .color(if status == Status::Unavailable { FG_DIM } else { FG });
                         if ui.selectable_label(selected, title).clicked() {
                             app.selected_tweak = Some(i);
                         }
@@ -232,15 +238,13 @@ fn section(
                         if status == Status::Unavailable {
                             ui.label(egui::RichText::new("\u{2014}").size(T_META).color(FG_DIM));
                         } else {
-                            ui.label(
-                                egui::RichText::new(t.risk().label()).size(T_META).color(
-                                    match t.risk() {
-                                        Risk::Low => GREEN,
-                                        Risk::Medium => YELLOW,
-                                        Risk::High => RED,
-                                    },
-                                ),
-                            );
+                            ui.label(egui::RichText::new(t.risk().label()).size(T_META).color(
+                                match t.risk() {
+                                    Risk::Low => GREEN,
+                                    Risk::Medium => YELLOW,
+                                    Risk::High => RED,
+                                },
+                            ));
                         }
                         ui.end_row();
                     }
@@ -290,9 +294,7 @@ fn air_panel(app: &mut App, ui: &mut egui::Ui) {
 fn air_advice(app: &App, ui: &mut egui::Ui) {
     let air = &app.air;
     ui.label(
-        egui::RichText::new(i18n::air_seen(air.aps.len(), air.co_channel()))
-            .size(T_BODY)
-            .color(FG),
+        egui::RichText::new(i18n::air_seen(air.aps.len(), air.co_channel())).size(T_BODY).color(FG),
     );
     if let Some(cur) = air.current {
         let noise = air.load_24.iter().chain(air.load_5.iter()).find(|l| l.channel == cur);
@@ -308,7 +310,9 @@ fn air_advice(app: &App, ui: &mut egui::Ui) {
         // `worth_moving_24` has already established both numbers exist.
         let best = air.best_24.unwrap_or(1);
         let gain = gain_24(app, best);
-        ui.label(egui::RichText::new(i18n::air_best_24(best, gain)).size(T_HEAD).strong().color(GREEN));
+        ui.label(
+            egui::RichText::new(i18n::air_best_24(best, gain)).size(T_HEAD).strong().color(GREEN),
+        );
         ui.label(egui::RichText::new(i18n::air_router_note()).size(T_META).color(FG_DIM));
     } else if air.current.map(|c| (1..=14).contains(&c)).unwrap_or(false) {
         ui.label(egui::RichText::new(i18n::air_quiet_here()).size(T_BODY).color(GREEN));
@@ -348,9 +352,8 @@ fn air_advice(app: &App, ui: &mut egui::Ui) {
 
 /// How much quieter the recommended channel is than the current one, in dB.
 fn gain_24(app: &App, best: u32) -> f64 {
-    let noise = |ch: u32| {
-        app.air.load_24.iter().find(|l| l.channel == ch).and_then(|l| l.noise_dbm)
-    };
+    let noise =
+        |ch: u32| app.air.load_24.iter().find(|l| l.channel == ch).and_then(|l| l.noise_dbm);
     match (app.air.current.and_then(noise), noise(best)) {
         (Some(cur), Some(b)) => cur - b,
         (Some(cur), None) => cur + 100.0,
@@ -377,11 +380,11 @@ fn air_table(app: &App, ui: &mut egui::Ui) {
             } else {
                 ap.ssid.clone()
             };
-            ui.label(
-                egui::RichText::new(name)
-                    .size(T_BODY)
-                    .color(if ap.ours { GREEN } else { FG }),
-            )
+            ui.label(egui::RichText::new(name).size(T_BODY).color(if ap.ours {
+                GREEN
+            } else {
+                FG
+            }))
             // Mesh nodes share an SSID, so the only thing telling two rows
             // apart is the radio's own address.
             .on_hover_text(&ap.bssid);
@@ -428,11 +431,9 @@ fn detail_panel(
     tweaks: &[Box<dyn optimize::Tweak>],
     height: f32,
 ) {
-    egui::Frame::none()
-        .fill(super::BG2)
-        .rounding(6.0)
-        .inner_margin(egui::Margin::same(S_LG))
-        .show(ui, |ui| {
+    egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_LG)).show(
+        ui,
+        |ui| {
             ui.set_min_height(height);
             // Without this the empty state shrinks to the width of its one
             // line of text and reads as a rendering fault rather than as a
@@ -462,14 +463,19 @@ fn detail_panel(
             });
             if optimize::has_snapshot(t.id()) {
                 ui.label(
-                    egui::RichText::new(i18n::opt_revert_available()).size(T_META).color(super::ACCENT),
+                    egui::RichText::new(i18n::opt_revert_available())
+                        .size(T_META)
+                        .color(super::ACCENT),
                 );
             }
             ui.add_space(S_MD);
             ui.horizontal(|ui| {
                 let can_apply = app.elevated || !t.needs_admin();
                 if ui
-                    .add_enabled(can_apply, egui::Button::new(i18n::btn_apply()).fill(super::ACCENT))
+                    .add_enabled(
+                        can_apply,
+                        egui::Button::new(i18n::btn_apply()).fill(super::ACCENT),
+                    )
                     .on_disabled_hover_text(i18n::opt_needs_admin())
                     .clicked()
                 {
@@ -488,8 +494,9 @@ fn detail_panel(
                     app.refresh_tweaks();
                 }
 
-                let can_revert =
-                    t.reversible() && optimize::has_snapshot(t.id()) && (app.elevated || !t.needs_admin());
+                let can_revert = t.reversible()
+                    && optimize::has_snapshot(t.id())
+                    && (app.elevated || !t.needs_admin());
                 if ui
                     .add_enabled(can_revert, egui::Button::new(i18n::btn_revert()))
                     .on_disabled_hover_text(i18n::opt_nothing_to_revert())
@@ -510,7 +517,9 @@ fn detail_panel(
             ui.add_space(S_SM);
             ui.label(egui::RichText::new(i18n::opt_what_it_does(t.what())).size(T_BODY).color(FG));
             ui.add_space(S_XS);
-            ui.label(egui::RichText::new(i18n::opt_why_it_helps(t.why())).size(T_BODY).color(FG_DIM));
+            ui.label(
+                egui::RichText::new(i18n::opt_why_it_helps(t.why())).size(T_BODY).color(FG_DIM),
+            );
             ui.add_space(S_SM);
 
             let mut notes = vec![i18n::opt_risk_note(t.risk().label())];
@@ -521,7 +530,8 @@ fn detail_panel(
                 notes.push(i18n::opt_irreversible().into());
             }
             ui.label(egui::RichText::new(notes.join(" · ")).size(T_META).color(YELLOW));
-        });
+        },
+    );
 }
 
 /// Applies every low-risk, reversible tweak that is not already in place.

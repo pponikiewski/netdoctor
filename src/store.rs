@@ -325,9 +325,8 @@ impl Store {
 
     pub fn recent_events(&self, limit: usize) -> Vec<Event> {
         let conn = self.held();
-        let sql = format!(
-            "SELECT {EVENT_COLUMNS} FROM events ORDER BY ts_start DESC LIMIT {limit}"
-        );
+        let sql =
+            format!("SELECT {EVENT_COLUMNS} FROM events ORDER BY ts_start DESC LIMIT {limit}");
         let Ok(mut stmt) = conn.prepare(&sql) else {
             return Vec::new();
         };
@@ -403,8 +402,7 @@ fn migrate(conn: &Connection) {
     let existing: Vec<String> = conn
         .prepare("PRAGMA table_info(events)")
         .and_then(|mut s| {
-            s.query_map([], |r| r.get::<_, String>(1))
-                .map(|rows| rows.flatten().collect())
+            s.query_map([], |r| r.get::<_, String>(1)).map(|rows| rows.flatten().collect())
         })
         .unwrap_or_default();
 

@@ -24,8 +24,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Everything the command line accepts. An argument outside this list is a
 /// typo, and a typo used to be ignored — `--qiuck` quietly ran the full scan,
 /// which saturates the line for a quarter of a minute.
-const FLAGS: [&str; 7] =
-    ["--scan", "--quick", "--minimised", "--version", "-V", "--help", "-h"];
+const FLAGS: [&str; 7] = ["--scan", "--quick", "--minimised", "--version", "-V", "--help", "-h"];
 
 fn main() -> eframe::Result<()> {
     install_panic_hook();

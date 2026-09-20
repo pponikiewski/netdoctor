@@ -209,8 +209,24 @@ fn classify(provider: &str, id: u32, level: u32) -> Option<Kind> {
 /// stack above it. Matching a name rather than a documented id is a guess, so
 /// it is only ever applied to events the provider already flagged as errors.
 const NETWORK_PROVIDERS: [&str; 18] = [
-    "netwtw", "netwlv", "netwns", "netwbw", "e1dexpress", "e1inexpress", "e1rexpress", "rtlwlan",
-    "rt640", "athr", "bcmpcie", "bcmwl", "qcamain", "mrvlpcie", "vwifi", "ndis", "netbt", "wlan",
+    "netwtw",
+    "netwlv",
+    "netwns",
+    "netwbw",
+    "e1dexpress",
+    "e1inexpress",
+    "e1rexpress",
+    "rtlwlan",
+    "rt640",
+    "athr",
+    "bcmpcie",
+    "bcmwl",
+    "qcamain",
+    "mrvlpcie",
+    "vwifi",
+    "ndis",
+    "netbt",
+    "wlan",
 ];
 
 fn looks_like_network(provider_lower: &str) -> bool {
@@ -261,10 +277,8 @@ fn event_data(chunk: &str) -> Vec<(String, String)> {
         rest = &rest[i..];
         let Some(open_end) = rest.find('>') else { break };
         let head = &rest[..open_end];
-        let name = head
-            .find("Name=")
-            .and_then(|_| attr(rest, "<Data", "Name"))
-            .unwrap_or_else(|| {
+        let name =
+            head.find("Name=").and_then(|_| attr(rest, "<Data", "Name")).unwrap_or_else(|| {
                 positional += 1;
                 positional.to_string()
             });
@@ -301,11 +315,7 @@ fn flatten(data: &[(String, String)]) -> String {
     let rank = |k: &str| PREFERRED.iter().position(|p| p.eq_ignore_ascii_case(k)).unwrap_or(9);
     let mut rows: Vec<(&str, &str)> = seen.into_iter().collect();
     rows.sort_by_key(|(k, _)| rank(k));
-    rows.iter()
-        .take(4)
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("  ")
+    rows.iter().take(4).map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("  ")
 }
 
 /// Reason codes are logged as decimal by some providers and as `0x…` by
@@ -476,7 +486,8 @@ mod tests {
 
     #[test]
     fn a_reason_code_of_zero_is_no_reason_at_all() {
-        let none = WLAN_8003.replace("<Data Name='ReasonCode'>4</Data>", "<Data Name='ReasonCode'>0</Data>");
+        let none = WLAN_8003
+            .replace("<Data Name='ReasonCode'>4</Data>", "<Data Name='ReasonCode'>0</Data>");
         assert_eq!(
             parse(&none).reason,
             None,
@@ -528,4 +539,3 @@ mod tests {
         );
     }
 }
-

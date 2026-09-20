@@ -1,0 +1,8 @@
+# Let a call, a chain or a struct use the whole line rather than 60% of it.
+#
+# The default heuristics break `RegOpenKeyExW(a, b, c, d, e)` across five lines
+# at column 63, which is how most of this codebase was already written by hand.
+# Pinning the setting is what makes "cargo fmt before every commit" safe to
+# follow: without this file the first person to run it reformats twenty modules
+# nobody touched, and the next diff is unreadable.
+use_small_heuristics = "Max"

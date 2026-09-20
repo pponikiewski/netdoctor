@@ -83,15 +83,14 @@ impl Param {
     }
 
     fn current(&self) -> Option<String> {
-        winreg::read_string(Root::LocalMachine, &self.class, &self.name)
-            .ok()
-            .flatten()
-            .or_else(|| {
+        winreg::read_string(Root::LocalMachine, &self.class, &self.name).ok().flatten().or_else(
+            || {
                 // Not overridden yet, so the driver is using its own default.
                 winreg::read_string(Root::LocalMachine, &self.params_key(), "default")
                     .ok()
                     .flatten()
-            })
+            },
+        )
     }
 
     /// The wording for a value, falling back to the raw value when the
@@ -186,19 +185,13 @@ impl Tweak for AdvTweak {
             "value": current,
         });
         match current {
-            Some(v) if v == wanted => {
-                State::new(param.label_of(&v), Some(true), snapshot)
-            }
+            Some(v) if v == wanted => State::new(param.label_of(&v), Some(true), snapshot),
             Some(v) => State::new(
                 crate::i18n::tw_adv_now_vs_wanted(&param.label_of(&v), &wanted_label),
                 Some(false),
                 snapshot,
             ),
-            None => State::new(
-                crate::i18n::tw_adv_unset(&wanted_label),
-                Some(false),
-                snapshot,
-            ),
+            None => State::new(crate::i18n::tw_adv_unset(&wanted_label), Some(false), snapshot),
         }
     }
 
@@ -206,7 +199,8 @@ impl Tweak for AdvTweak {
         if !self.applicable(net) {
             return Err(anyhow!(crate::i18n::tw_adv_wrong_medium(self.medium.label())));
         }
-        let param = find_param(net, self.params).ok_or_else(|| anyhow!(crate::i18n::tw_adv_unsupported()))?;
+        let param = find_param(net, self.params)
+            .ok_or_else(|| anyhow!(crate::i18n::tw_adv_unsupported()))?;
         let (value, label) =
             self.wanted(&param).ok_or_else(|| anyhow!(crate::i18n::tw_adv_no_option()))?;
         winreg::write_string(Root::LocalMachine, &param.class, &param.name, &value)?;
@@ -214,8 +208,10 @@ impl Tweak for AdvTweak {
     }
 
     fn revert(&self, _net: &NetState, snapshot: &Value) -> Result<String> {
-        let key = snapshot["key"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
-        let name = snapshot["name"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
+        let key =
+            snapshot["key"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
+        let name =
+            snapshot["name"].as_str().ok_or_else(|| anyhow!(crate::i18n::tw_snapshot_no_key()))?;
         match snapshot["value"].as_str() {
             Some(v) => winreg::write_string(Root::LocalMachine, key, name, v)?,
             // It was never overridden, so removing ours hands it back to the
@@ -384,8 +380,7 @@ mod tests {
         let pick = |keywords: &[&str]| -> Option<String> {
             for want in keywords {
                 let want = want.to_lowercase();
-                if let Some((v, _)) =
-                    options.iter().find(|(_, l)| l.to_lowercase().contains(&want))
+                if let Some((v, _)) = options.iter().find(|(_, l)| l.to_lowercase().contains(&want))
                 {
                     return Some(v.clone());
                 }

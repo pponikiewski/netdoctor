@@ -548,7 +548,10 @@ mod tests {
             ],
             discovered: 10.0,
         });
-        assert!(t.stats.iter().any(|(addr, _)| *addr == a), "the hop that stayed keeps its history");
+        assert!(
+            t.stats.iter().any(|(addr, _)| *addr == a),
+            "the hop that stayed keeps its history"
+        );
         assert!(
             !t.stats.iter().any(|(addr, _)| *addr == b),
             "the hop that went away must not go on being reported"
@@ -563,4 +566,3 @@ mod tests {
         assert!(!is_cgnat(Ipv4Addr::new(100, 200, 1, 1)), "100.200/8 is ordinary public space");
     }
 }
-

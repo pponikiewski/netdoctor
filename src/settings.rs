@@ -130,7 +130,9 @@ impl Settings {
     fn load_from(path: &std::path::Path) -> (Self, Option<String>) {
         let text = match std::fs::read_to_string(path) {
             Ok(t) => t,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Settings::default(), None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return (Settings::default(), None)
+            }
             Err(e) => return (Settings::default(), Some(format!("{}: {e}", path.display()))),
         };
         match serde_json::from_str(&text) {
@@ -220,13 +222,10 @@ pub fn resolve_target(text: &str) -> Option<Ipv4Addr> {
         return Some(addr);
     }
     use std::net::ToSocketAddrs;
-    (text, 80u16)
-        .to_socket_addrs()
-        .ok()?
-        .find_map(|sa| match sa.ip() {
-            std::net::IpAddr::V4(v4) => Some(v4),
-            _ => None,
-        })
+    (text, 80u16).to_socket_addrs().ok()?.find_map(|sa| match sa.ip() {
+        std::net::IpAddr::V4(v4) => Some(v4),
+        _ => None,
+    })
 }
 
 #[cfg(test)]

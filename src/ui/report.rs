@@ -15,23 +15,13 @@ pub fn build(app: &App) -> String {
     let mut out = String::new();
     let n = &app.net;
 
-    let _ = writeln!(
-        out,
-        "{}, {}",
-        i18n::rep_title(),
-        format_datetime(crate::store::now())
-    );
+    let _ = writeln!(out, "{}, {}", i18n::rep_title(), format_datetime(crate::store::now()));
     let _ = writeln!(out, "{}", "=".repeat(72));
     let _ = writeln!(out);
 
     let _ = writeln!(out, "{}", i18n::rep_sec_connection());
-    let _ = writeln!(
-        out,
-        "  {:<14}: {} ({})",
-        i18n::rep_adapter(),
-        n.adapter_name,
-        n.medium.label()
-    );
+    let _ =
+        writeln!(out, "  {:<14}: {} ({})", i18n::rep_adapter(), n.adapter_name, n.medium.label());
     let _ = writeln!(out, "  {:<14}: {}", i18n::rep_driver(), n.adapter_desc);
     let _ = writeln!(
         out,
@@ -66,12 +56,7 @@ pub fn build(app: &App) -> String {
             i18n::rep_rates_line(n.rx_mbps.unwrap_or(0), n.tx_mbps.unwrap_or(0))
         );
     } else {
-        let _ = writeln!(
-            out,
-            "  {:<14}: {} Mbps",
-            i18n::rep_link_speed(),
-            n.link_speed_mbps
-        );
+        let _ = writeln!(out, "  {:<14}: {} Mbps", i18n::rep_link_speed(), n.link_speed_mbps);
     }
 
     let _ = writeln!(out);
@@ -146,7 +131,9 @@ pub fn build(app: &App) -> String {
             out,
             "  {}  {:<9} {:<9} {}",
             format_datetime(e.ts_start),
-            e.duration_s().map(|d| format!("{d:.0}s")).unwrap_or_else(|| i18n::hist_ongoing().into()),
+            e.duration_s()
+                .map(|d| format!("{d:.0}s"))
+                .unwrap_or_else(|| i18n::hist_ongoing().into()),
             i18n::event_kind(&e.kind),
             e.detail
         );
@@ -171,7 +158,8 @@ pub fn build(app: &App) -> String {
             }
         }
         let _ = writeln!(out, "  {:<14}: {:.0} ms", i18n::rep_increase(), b.bump_ms.unwrap_or(0.0));
-        let _ = writeln!(out, "  {:<14}: {:.0} Mbps", i18n::rep_throughput(), b.mbps.unwrap_or(0.0));
+        let _ =
+            writeln!(out, "  {:<14}: {:.0} Mbps", i18n::rep_throughput(), b.mbps.unwrap_or(0.0));
         let _ = writeln!(
             out,
             "  {:<14}: {}, {}",
@@ -189,7 +177,13 @@ pub fn build(app: &App) -> String {
         // a ticket, and the segment split is the part that decides whether the
         // person reading it is the right person to be reading it at all.
         let v = &app.verdict;
-        let _ = writeln!(out, "  {}: {} — {}", i18n::verdict_heading(), v.segment.label(), v.confidence.label());
+        let _ = writeln!(
+            out,
+            "  {}: {} — {}",
+            i18n::verdict_heading(),
+            v.segment.label(),
+            v.confidence.label()
+        );
         if let Some(split) = &v.split {
             let _ = writeln!(out, "  {split}");
         }

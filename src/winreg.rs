@@ -48,15 +48,11 @@ impl Drop for Key {
 }
 
 fn open(root: Root, path: &str, write: bool) -> Result<Key> {
-    let access = if write {
-        KEY_READ | KEY_SET_VALUE | KEY_WOW64_64KEY
-    } else {
-        KEY_READ | KEY_WOW64_64KEY
-    };
+    let access =
+        if write { KEY_READ | KEY_SET_VALUE | KEY_WOW64_64KEY } else { KEY_READ | KEY_WOW64_64KEY };
     let mut hkey = HKEY::default();
-    let rc = unsafe {
-        RegOpenKeyExW(root.hkey(), PCWSTR(wide(path).as_ptr()), 0, access, &mut hkey)
-    };
+    let rc =
+        unsafe { RegOpenKeyExW(root.hkey(), PCWSTR(wide(path).as_ptr()), 0, access, &mut hkey) };
     if rc != ERROR_SUCCESS {
         return Err(anyhow!("cannot open {path}: {}", describe(rc)));
     }
@@ -126,9 +122,8 @@ pub fn read_dword(root: Root, path: &str, name: &str) -> Result<Option<u32>> {
 pub fn write_dword(root: Root, path: &str, name: &str, value: u32) -> Result<()> {
     let key = open(root, path, true)?;
     let bytes = value.to_le_bytes();
-    let rc = unsafe {
-        RegSetValueExW(key.0, PCWSTR(wide(name).as_ptr()), 0, REG_DWORD, Some(&bytes))
-    };
+    let rc =
+        unsafe { RegSetValueExW(key.0, PCWSTR(wide(name).as_ptr()), 0, REG_DWORD, Some(&bytes)) };
     if rc != ERROR_SUCCESS {
         return Err(anyhow!("cannot write {name}: {}", describe(rc)));
     }
@@ -190,11 +185,9 @@ pub fn read_string(root: Root, path: &str, name: &str) -> Result<Option<String>>
 pub fn write_string(root: Root, path: &str, name: &str, value: &str) -> Result<()> {
     let key = open(root, path, true)?;
     let data = wide(value);
-    let bytes: &[u8] = unsafe {
-        std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 2)
-    };
-    let rc =
-        unsafe { RegSetValueExW(key.0, PCWSTR(wide(name).as_ptr()), 0, REG_SZ, Some(bytes)) };
+    let bytes: &[u8] =
+        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 2) };
+    let rc = unsafe { RegSetValueExW(key.0, PCWSTR(wide(name).as_ptr()), 0, REG_SZ, Some(bytes)) };
     if rc != ERROR_SUCCESS {
         return Err(anyhow!("cannot write {name}: {}", describe(rc)));
     }
@@ -331,8 +324,10 @@ mod tests {
             Root::LocalMachine,
             r"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}",
         );
-        assert!(keys.iter().any(|k| k.chars().all(|c| c.is_ascii_digit())),
-                "expected numbered adapter subkeys, got {keys:?}");
+        assert!(
+            keys.iter().any(|k| k.chars().all(|c| c.is_ascii_digit())),
+            "expected numbered adapter subkeys, got {keys:?}"
+        );
     }
 
     #[test]

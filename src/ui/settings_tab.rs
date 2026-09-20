@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use super::{S_LG, S_MD, S_SM, T_BODY, T_HEAD, T_META, App, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{App, FG, FG_DIM, GREEN, RED, S_LG, S_MD, S_SM, T_BODY, T_HEAD, T_META, YELLOW};
 use crate::i18n;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -129,12 +129,8 @@ fn save(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
 
-    app.draft.extra_targets = app
-        .draft_targets
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect();
+    app.draft.extra_targets =
+        app.draft_targets.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
 
     // Name anything that will silently never be probed, rather than letting
     // the user believe a typo is being monitored.
@@ -161,15 +157,14 @@ fn save(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::none()
-        .fill(super::BG2)
-        .rounding(6.0)
-        .inner_margin(egui::Margin::same(S_LG))
-        .show(ui, |ui| {
+    egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_LG)).show(
+        ui,
+        |ui| {
             ui.label(egui::RichText::new(title).size(T_HEAD).strong().color(FG));
             ui.add_space(S_MD);
             body(ui);
-        });
+        },
+    );
     ui.add_space(S_MD);
 }
 

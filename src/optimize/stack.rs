@@ -179,11 +179,7 @@ impl Tweak for CongestionControl {
             return State::new(crate::i18n::tw_cong_unreadable(), None, Value::Null);
         };
         match Self::parse(&out) {
-            Some(p) => State::new(
-                p.to_uppercase(),
-                Some(p == "bbr2"),
-                json!({ "provider": p }),
-            ),
+            Some(p) => State::new(p.to_uppercase(), Some(p == "bbr2"), json!({ "provider": p })),
             None => State::new(crate::i18n::tw_cong_unreadable(), None, Value::Null),
         }
     }

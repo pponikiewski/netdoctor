@@ -9,7 +9,10 @@
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints};
 
-use super::{figure, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE, App, Tab, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{
+    figure, App, Tab, FG, FG_DIM, GREEN, RED, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE,
+    YELLOW,
+};
 use crate::cause::{self, Cause, Confidence};
 use crate::diagnose::format_datetime;
 use crate::i18n;
@@ -21,17 +24,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let day = app.store.events_since(24.0 * 3600.0);
 
     if day.is_empty() {
-        ui.label(
-            egui::RichText::new(i18n::hist_none_24h())
-                .size(T_TITLE)
-                .strong()
-                .color(GREEN),
-        );
+        ui.label(egui::RichText::new(i18n::hist_none_24h()).size(T_TITLE).strong().color(GREEN));
     } else {
         // This headline is rebuilt on every frame, so the choice has to be a
         // function of the data alone — see `dominant_scope`.
-        let worst = crate::monitor::dominant_scope(day.iter().map(|e| e.scope.as_str()))
-            .unwrap_or("");
+        let worst =
+            crate::monitor::dominant_scope(day.iter().map(|e| e.scope.as_str())).unwrap_or("");
         let where_text = match worst {
             "lan" => i18n::hist_where_lan(),
             "adapter" => i18n::hist_where_adapter(),
@@ -41,18 +39,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         };
         ui.label(
             egui::RichText::new(i18n::hist_summary(day.len(), where_text))
-            .size(T_TITLE)
-            .strong()
-            .color(RED),
+                .size(T_TITLE)
+                .strong()
+                .color(RED),
         );
     }
 
     ui.add_space(S_XS);
-    ui.label(
-        egui::RichText::new(i18n::hist_blurb())
-        .size(T_BODY)
-        .color(FG_DIM),
-    );
+    ui.label(egui::RichText::new(i18n::hist_blurb()).size(T_BODY).color(FG_DIM));
     ui.add_space(S_MD);
 
     let events = app.store.recent_events(300);
@@ -95,52 +89,45 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn table(app: &mut App, ui: &mut egui::Ui, events: &[Event]) {
-    egui::Grid::new("history")
-        .num_columns(4)
-        .striped(true)
-        .spacing([16.0, 5.0])
-        .show(ui, |ui| {
-            for h in [
-                i18n::hist_col_started(),
-                i18n::hist_col_duration(),
-                i18n::hist_col_kind(),
-                i18n::hist_col_detail(),
-            ] {
-                ui.label(egui::RichText::new(h).size(T_META).color(FG_DIM));
-            }
-            ui.end_row();
+    egui::Grid::new("history").num_columns(4).striped(true).spacing([16.0, 5.0]).show(ui, |ui| {
+        for h in [
+            i18n::hist_col_started(),
+            i18n::hist_col_duration(),
+            i18n::hist_col_kind(),
+            i18n::hist_col_detail(),
+        ] {
+            ui.label(egui::RichText::new(h).size(T_META).color(FG_DIM));
+        }
+        ui.end_row();
 
-            for e in events {
-                let colour = match e.scope.as_str() {
-                    "lan" | "adapter" | "isp" => RED,
-                    _ => YELLOW,
-                };
-                let selected = app.selected_outage == Some(e.id);
-                let started = ui.selectable_label(
-                    selected,
-                    egui::RichText::new(format_datetime(e.ts_start))
-                        .size(T_META)
-                        .monospace()
-                        .color(FG),
-                );
-                if started.clicked() {
-                    app.selected_outage = if selected { None } else { Some(e.id) };
-                }
-                // A duration column is read by comparing rows, which only
-                // works if the digits sit in the same place on each one.
-                ui.label(figure(
-                    match e.duration_s() {
-                        Some(d) => format!("{d:.0} s"),
-                        None => i18n::hist_ongoing().into(),
-                    },
-                    T_META,
-                    colour,
-                ));
-                ui.label(egui::RichText::new(i18n::event_kind(&e.kind)).size(T_META).color(colour));
-                ui.label(egui::RichText::new(&e.detail).size(T_META).color(FG_DIM));
-                ui.end_row();
+        for e in events {
+            let colour = match e.scope.as_str() {
+                "lan" | "adapter" | "isp" => RED,
+                _ => YELLOW,
+            };
+            let selected = app.selected_outage == Some(e.id);
+            let started = ui.selectable_label(
+                selected,
+                egui::RichText::new(format_datetime(e.ts_start)).size(T_META).monospace().color(FG),
+            );
+            if started.clicked() {
+                app.selected_outage = if selected { None } else { Some(e.id) };
             }
-        });
+            // A duration column is read by comparing rows, which only
+            // works if the digits sit in the same place on each one.
+            ui.label(figure(
+                match e.duration_s() {
+                    Some(d) => format!("{d:.0} s"),
+                    None => i18n::hist_ongoing().into(),
+                },
+                T_META,
+                colour,
+            ));
+            ui.label(egui::RichText::new(i18n::event_kind(&e.kind)).size(T_META).color(colour));
+            ui.label(egui::RichText::new(&e.detail).size(T_META).color(FG_DIM));
+            ui.end_row();
+        }
+    });
 }
 
 fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
@@ -391,10 +378,8 @@ fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event) {
         })
         .collect();
 
-    let rssi: PlotPoints = lead
-        .iter()
-        .filter_map(|s| s.rssi_dbm.map(|r| [s.ts - t0, r as f64]))
-        .collect();
+    let rssi: PlotPoints =
+        lead.iter().filter_map(|s| s.rssi_dbm.map(|r| [s.ts - t0, r as f64])).collect();
 
     if lead.is_empty() && rtt.points().is_empty() {
         ui.label(egui::RichText::new(i18n::hist_no_leadup()).size(T_META).color(FG_DIM));
@@ -465,11 +450,6 @@ fn fmt_num(v: &serde_json::Value, unit: &str) -> String {
 
 fn join_strs(v: &serde_json::Value) -> String {
     v.as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
+        .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
         .unwrap_or_default()
 }

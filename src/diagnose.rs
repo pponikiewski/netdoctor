@@ -338,9 +338,8 @@ pub fn judge(findings: &[Finding], m: &Measurements, cfg: &Settings) -> Verdict 
     // Several keys are emitted whatever the outcome — `medium` describes a
     // healthy Wi-Fi link as readily as a missing one — so a rule that keys off
     // a failure has to ask for the severity as well, not just the subject.
-    let failed = |key: &str| {
-        findings.iter().any(|f| f.key == key && f.severity == Severity::Critical)
-    };
+    let failed =
+        |key: &str| findings.iter().any(|f| f.key == key && f.severity == Severity::Critical);
     let worst_of = |seg: Segment| actions_for(findings, seg);
 
     let mut v = Verdict { split: split.clone(), ..Default::default() };
@@ -563,9 +562,7 @@ fn segment_of(key: &str) -> Option<Segment> {
 fn cost_for(seg: Segment, m: &Measurements) -> String {
     match seg {
         Segment::Dns => i18n::cost_dns(m.dns_ms.unwrap_or(0.0)),
-        Segment::Uplink => i18n::cost_load(
-            m.load.as_ref().and_then(|l| l.bump_ms).unwrap_or(0.0),
-        ),
+        Segment::Uplink => i18n::cost_load(m.load.as_ref().and_then(|l| l.bump_ms).unwrap_or(0.0)),
         Segment::Healthy => i18n::cost_none().into(),
         _ => i18n::cost_down().into(),
     }
@@ -621,10 +618,7 @@ fn check_wifi(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
         return Vec::new();
     };
     let band = net.band().unwrap_or("?");
-    let rssi = net
-        .rssi_dbm
-        .map(|r| format!(", {r} dBm"))
-        .unwrap_or_default();
+    let rssi = net.rssi_dbm.map(|r| format!(", {r} dBm")).unwrap_or_default();
     let detail = i18n::f_wifi_quality_detail(
         band,
         &net.channel.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
@@ -645,12 +639,7 @@ fn check_wifi(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
                 .advise(i18n::f_signal_mid_advice()),
         );
     } else {
-        out.push(Finding::new(
-            "signal",
-            i18n::f_signal_good(sig),
-            Severity::Good,
-            detail.clone(),
-        ));
+        out.push(Finding::new("signal", i18n::f_signal_good(sig), Severity::Good, detail.clone()));
     }
 
     if band == "2.4 GHz" {
@@ -666,26 +655,13 @@ fn check_power(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     use crate::optimize::{AdapterPowerSaving, Tweak};
     let state = AdapterPowerSaving.read(net);
     match state.optimal {
-        Some(false) => vec![Finding::new(
-            "power",
-            i18n::f_power_bad(),
-            Severity::Critical,
-            state.text,
-        )
-        .advise(i18n::f_power_bad_advice())
-        .fixed_by("adapter_power")],
-        Some(true) => vec![Finding::new(
-            "power",
-            i18n::f_power_good(),
-            Severity::Good,
-            state.text,
-        )],
-        None => vec![Finding::new(
-            "power",
-            i18n::f_power_unknown(),
-            Severity::Info,
-            state.text,
-        )],
+        Some(false) => {
+            vec![Finding::new("power", i18n::f_power_bad(), Severity::Critical, state.text)
+                .advise(i18n::f_power_bad_advice())
+                .fixed_by("adapter_power")]
+        }
+        Some(true) => vec![Finding::new("power", i18n::f_power_good(), Severity::Good, state.text)],
+        None => vec![Finding::new("power", i18n::f_power_unknown(), Severity::Info, state.text)],
     }
 }
 
@@ -889,8 +865,9 @@ fn report_link(net: &NetState, wire: &Wire, m: &mut Measurements) -> Vec<Finding
     };
 
     let detail = stats_line(&stats);
-    let unstable =
-        stats.loss_pct > 0.0 || stats.avg.unwrap_or(0.0) > 15.0 || stats.jitter.unwrap_or(0.0) > 10.0;
+    let unstable = stats.loss_pct > 0.0
+        || stats.avg.unwrap_or(0.0) > 15.0
+        || stats.jitter.unwrap_or(0.0) > 10.0;
     m.gateway = Some(stats);
 
     if unstable {
@@ -938,8 +915,13 @@ fn report_edge(wire: &Wire, m: &mut Measurements) -> Vec<Finding> {
     // owner, even when the numbers coming off it are identical.
     if edge.local {
         return if added > 20.0 {
-            vec![Finding::new("gateway", i18n::f_local_hop_slow(&addr, added), Severity::Warn, detail)
-                .advise(i18n::f_local_hop_slow_advice())]
+            vec![Finding::new(
+                "gateway",
+                i18n::f_local_hop_slow(&addr, added),
+                Severity::Warn,
+                detail,
+            )
+            .advise(i18n::f_local_hop_slow_advice())]
         } else {
             vec![Finding::new("edge", i18n::f_local_hop(&addr, avg), Severity::Info, detail)
                 .advise(i18n::f_local_hop_advice())]
@@ -1219,9 +1201,7 @@ fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding
 
     let mut out = Vec::new();
     let mut scopes: Vec<_> = by_scope.into_iter().collect();
-    scopes.sort_by_key(|(scope, v)| {
-        std::cmp::Reverse((v.len(), monitor::scope_rank(scope)))
-    });
+    scopes.sort_by_key(|(scope, v)| std::cmp::Reverse((v.len(), monitor::scope_rank(scope))));
 
     for (scope, items) in scopes {
         let (title, advice) = match scope.as_str() {
@@ -1234,16 +1214,8 @@ fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding
 
         let durations: Vec<f64> = items.iter().filter_map(|e| e.duration_s()).collect();
         let total_down: f64 = durations.iter().sum();
-        let avg = if durations.is_empty() {
-            0.0
-        } else {
-            total_down / durations.len() as f64
-        };
-        let times: Vec<String> = items
-            .iter()
-            .take(6)
-            .map(|e| format_clock(e.ts_start))
-            .collect();
+        let avg = if durations.is_empty() { 0.0 } else { total_down / durations.len() as f64 };
+        let times: Vec<String> = items.iter().take(6).map(|e| format_clock(e.ts_start)).collect();
 
         out.push(
             Finding::new(
@@ -1583,8 +1555,9 @@ mod tests {
             internet: Some(stats(20.0, 9.0)),
             ..Default::default()
         };
-        let findings =
-            vec![Finding::new("loss", "packets lost", Severity::Critical, "").advise("check cable")];
+        let findings = vec![
+            Finding::new("loss", "packets lost", Severity::Critical, "").advise("check cable")
+        ];
         let v = judge(&findings, &m, &Settings::default());
         assert_eq!(v.segment, Segment::Lan);
         assert!(!v.actions.is_empty(), "a verdict with no action is not a diagnosis");
@@ -1650,10 +1623,8 @@ mod tests {
         // `check_medium` reports the medium whichever way it comes out, so a
         // rule keyed on the subject alone announced "connected over Wi-Fi" as
         // a dead segment. Severity is what separates the two.
-        let findings = vec![
-            Finding::new("medium", "Connected over Wi-Fi", Severity::Info, "")
-                .advise("a cable is steadier"),
-        ];
+        let findings = vec![Finding::new("medium", "Connected over Wi-Fi", Severity::Info, "")
+            .advise("a cable is steadier")];
         assert_eq!(judge(&findings, &clean(), &Settings::default()).segment, Segment::Healthy);
     }
 

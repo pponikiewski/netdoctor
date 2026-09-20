@@ -117,8 +117,7 @@ unsafe impl Send for Pinger {}
 
 impl Pinger {
     pub fn new() -> Result<Self, PingError> {
-        let handle = unsafe { IcmpCreateFile() }
-            .map_err(|e| PingError::Api(e.message()))?;
+        let handle = unsafe { IcmpCreateFile() }.map_err(|e| PingError::Api(e.message()))?;
         if handle.is_invalid() {
             return Err(PingError::Api("IcmpCreateFile returned an invalid handle".into()));
         }
@@ -212,7 +211,13 @@ pub fn probe_df(addr: Ipv4Addr, payload_len: u16, timeout_ms: u32) -> bool {
     let dest = u32::from_le_bytes(addr.octets());
 
     // IP_FLAG_DF = 0x02 in ipexport.h.
-    let opts = IP_OPTION_INFORMATION { Ttl: 128, Tos: 0, Flags: 0x02, OptionsSize: 0, OptionsData: std::ptr::null_mut() };
+    let opts = IP_OPTION_INFORMATION {
+        Ttl: 128,
+        Tos: 0,
+        Flags: 0x02,
+        OptionsSize: 0,
+        OptionsData: std::ptr::null_mut(),
+    };
 
     let replies = unsafe {
         IcmpSendEcho(
@@ -310,12 +315,7 @@ pub fn ping_once(addr: Ipv4Addr, timeout_ms: u32) -> PingResult {
 /// looks faster on paper and is worse, because several series running at once
 /// then arrive as a burst and the measurement starts reporting its own
 /// contention — a Wi-Fi link measured that way shows jitter it does not have.
-pub fn ping_series(
-    addr: Ipv4Addr,
-    count: usize,
-    timeout_ms: u32,
-    gap_ms: u64,
-) -> Vec<Option<f64>> {
+pub fn ping_series(addr: Ipv4Addr, count: usize, timeout_ms: u32, gap_ms: u64) -> Vec<Option<f64>> {
     let pinger = match Pinger::new() {
         Ok(p) => p,
         Err(_) => return vec![None; count],

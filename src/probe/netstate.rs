@@ -18,8 +18,8 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::NetworkManagement::Ndis::IF_OPER_STATUS;
 use windows::Win32::NetworkManagement::WiFi::{
     WlanCloseHandle, WlanEnumInterfaces, WlanFreeMemory, WlanOpenHandle, WlanQueryInterface,
-    DOT11_PHY_TYPE, WLAN_CONNECTION_ATTRIBUTES, WLAN_INTERFACE_INFO_LIST,
-    WLAN_INTERFACE_STATE, WLAN_OPCODE_VALUE_TYPE,
+    DOT11_PHY_TYPE, WLAN_CONNECTION_ATTRIBUTES, WLAN_INTERFACE_INFO_LIST, WLAN_INTERFACE_STATE,
+    WLAN_OPCODE_VALUE_TYPE,
 };
 use windows::Win32::Networking::WinSock::{AF_INET, AF_UNSPEC, SOCKADDR_IN};
 
@@ -195,7 +195,8 @@ fn read_adapters() -> NetState {
 
             let mut dns = a.FirstDnsServerAddress;
             while !dns.is_null() {
-                if let Some(ip) = sockaddr_to_ipv4((*dns).Address.lpSockaddr as *const SOCKADDR_IN) {
+                if let Some(ip) = sockaddr_to_ipv4((*dns).Address.lpSockaddr as *const SOCKADDR_IN)
+                {
                     st.dns_servers.push(ip);
                 }
                 dns = (*dns).Next;
@@ -297,10 +298,8 @@ unsafe fn read_connection(handle: HANDLE, guid: &GUID, st: &mut NetState) {
     st.ssid = String::from_utf8_lossy(&assoc.dot11Ssid.ucSSID[..ssid_len.min(32)]).to_string();
 
     let m = assoc.dot11Bssid;
-    st.bssid = format!(
-        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        m[0], m[1], m[2], m[3], m[4], m[5]
-    );
+    st.bssid =
+        format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m[0], m[1], m[2], m[3], m[4], m[5]);
     st.signal_pct = Some(assoc.wlanSignalQuality);
     st.rx_mbps = Some(assoc.ulRxRate / 1000);
     st.tx_mbps = Some(assoc.ulTxRate / 1000);
