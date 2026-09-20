@@ -18,7 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned rather than `stable`, so a release fails for something in this
+      # repo and not because rustc moved under it. `stable` had clippy reject
+      # code that the development machine accepted, which is a broken release
+      # on a day nobody touched the project. Bump this on purpose.
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
 

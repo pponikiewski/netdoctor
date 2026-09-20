@@ -464,7 +464,7 @@ impl eframe::App for App {
                             ui.painter().hline(
                                 r.x_range(),
                                 r.bottom() + 3.0,
-                                egui::Stroke::new(2.0, ACCENT),
+                                egui::Stroke::new(2.0_f32, ACCENT),
                             );
                         }
                         if response.clicked() {
@@ -481,7 +481,11 @@ impl eframe::App for App {
                 // it the tab strip and the content below are one undivided
                 // field of the same colour.
                 let rect = ui.max_rect();
-                ui.painter().hline(rect.x_range(), ui.cursor().top(), egui::Stroke::new(1.0, LINE));
+                ui.painter().hline(
+                    rect.x_range(),
+                    ui.cursor().top(),
+                    egui::Stroke::new(1.0_f32, LINE),
+                );
             });
 
         if update_ui::banner_wanted(self) {
@@ -770,7 +774,7 @@ fn connection_row(ui: &mut egui::Ui, facts: &[Fact]) {
                 ui.painter().vline(
                     rect.center().x,
                     egui::Rangef::new(rect.top() + 1.0, rect.bottom() - 1.0),
-                    egui::Stroke::new(1.0, LINE),
+                    egui::Stroke::new(1.0_f32, LINE),
                 );
             }
 
@@ -1085,12 +1089,16 @@ pub fn button_ex(
             response.is_pointer_button_down_on(),
         );
 
-        ui.painter().rect(rect, BTN_R, fill, egui::Stroke::new(1.0, stroke));
+        ui.painter().rect(rect, BTN_R, fill, egui::Stroke::new(1.0_f32, stroke));
 
         // Keyboard focus, drawn outside the button so it never eats into the
         // label or the fill.
         if response.has_focus() {
-            ui.painter().rect_stroke(rect.expand(2.0), BTN_R + 2.0, egui::Stroke::new(1.0, ACCENT));
+            ui.painter().rect_stroke(
+                rect.expand(2.0),
+                BTN_R + 2.0,
+                egui::Stroke::new(1.0_f32, ACCENT),
+            );
         }
 
         let pos = rect.center() - galley.size() * 0.5;
@@ -1125,9 +1133,9 @@ fn apply_theme(ctx: &egui::Context) {
     // palette is nearly invisible against BG3. The accent is the colour
     // selection already uses, so focus and selection read as one idea.
     visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(0x32, 0x38, 0x46);
-    visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
-    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT);
-    visuals.window_stroke = egui::Stroke::new(1.0, LINE);
+    visuals.selection.stroke = egui::Stroke::new(1.0_f32, ACCENT);
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0_f32, ACCENT);
+    visuals.window_stroke = egui::Stroke::new(1.0_f32, LINE);
 
     ctx.set_visuals(visuals);
 

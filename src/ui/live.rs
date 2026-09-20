@@ -123,11 +123,11 @@ fn legend_chip(
 
     let resp = inner.response.interact(egui::Sense::click());
     let (fill, stroke) = if resp.hovered() {
-        (BG3, egui::Stroke::new(1.0, colour.linear_multiply(0.75)))
+        (BG3, egui::Stroke::new(1.0_f32, colour.linear_multiply(0.75)))
     } else if on {
-        (BG2, egui::Stroke::new(1.0, LINE))
+        (BG2, egui::Stroke::new(1.0_f32, LINE))
     } else {
-        (egui::Color32::TRANSPARENT, egui::Stroke::new(1.0, LINE))
+        (egui::Color32::TRANSPARENT, egui::Stroke::new(1.0_f32, LINE))
     };
     ui.painter().set(bg, egui::epaint::RectShape::new(resp.rect, 7.0, fill, stroke));
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -569,7 +569,7 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
                                         plot_ui.line(
                                             Line::new(PlotPoints::from(std::mem::take(&mut run)))
                                                 .color(*colour)
-                                                .width(1.6)
+                                                .width(1.6_f32)
                                                 .name(&s.label),
                                         );
                                     } else {
@@ -582,7 +582,7 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
                             plot_ui.line(
                                 Line::new(PlotPoints::from(run))
                                     .color(*colour)
-                                    .width(1.6)
+                                    .width(1.6_f32)
                                     .name(&s.label),
                             );
                         }
