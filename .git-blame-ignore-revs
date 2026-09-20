@@ -1,0 +1,9 @@
+# Commits that only moved code around. Blame skips them, so each line still
+# points at whoever last changed what it says rather than at a formatting run.
+#
+# Locally this needs telling git once:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub reads the file on its own.
+
+# style: format the codebase with rustfmt, pinned by rustfmt.toml
+c5780a65ef5170b0d80999580836da08822dec76
