@@ -298,7 +298,14 @@ fn system_tool(program: &str) -> std::path::PathBuf {
     } else {
         std::path::PathBuf::from(String::from_utf16_lossy(&buf[..len]))
     };
-    dir.join(format!("{program}.exe"))
+    // A caller that already spelled the extension gets the same path as one
+    // that did not: appending blindly produced `wevtutil.exe.exe`, which does
+    // not exist, and the failure was silent at every call site.
+    let stem = match program.len().checked_sub(4) {
+        Some(cut) if program[cut..].eq_ignore_ascii_case(".exe") => &program[..cut],
+        _ => program,
+    };
+    dir.join(format!("{stem}.exe"))
 }
 
 #[cfg(not(windows))]
@@ -1229,5 +1236,78 @@ mod tests {
         assert_eq!(read_snapshots_at(&path).unwrap()["power"], json!({ "value": 24 }));
         assert!(!path.with_extension("json.tmp").exists(), "the temp file is renamed, not left");
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Tool names reached through a variable rather than a literal, so the
+    /// scanner below cannot see them.
+    ///
+    /// ponytail: a hand-kept list. `StackReset::apply` iterates a `[(&str,
+    /// &[&str]); 5]` table; if a third such table shows up, register the
+    /// tools through a macro instead of adding a line here.
+    const DYNAMIC_TOOLS: [&str; 2] = ["ipconfig", "netsh"];
+
+    /// Every literal handed to `run`, gathered by scanning the tree.
+    fn tools_named_in_source() -> std::collections::BTreeSet<String> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        walk(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+
+        let mut found: std::collections::BTreeSet<String> =
+            DYNAMIC_TOOLS.iter().map(|s| (*s).to_string()).collect();
+        for file in files {
+            let Ok(text) = std::fs::read_to_string(&file) else { continue };
+            for (at, _) in text.match_indices("run(") {
+                // Two things this must not read as a call site: a longer
+                // identifier ending in `run`, and the `"run("` literal this
+                // very scanner is written with. Neither can be preceded by a
+                // word character or a quote; a real call site is preceded by
+                // `:`, `.`, whitespace or the start of a line.
+                let before = text[..at].chars().next_back();
+                if before.is_some_and(|c| c == '"' || c.is_alphanumeric() || c == '_') {
+                    continue;
+                }
+                // `fn run(`, `bandwidth::run(` and friends name no console
+                // tool; they are skipped because what follows is not a quote.
+                let rest = text[at + 4..].trim_start();
+                let Some(body) = rest.strip_prefix('"') else { continue };
+                let Some(end) = body.find('"') else { continue };
+                found.insert(body[..end].to_string());
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn every_console_tool_we_name_resolves_to_a_real_file() {
+        let found = tools_named_in_source();
+
+        // A scanner that quietly matches nothing would pass every assertion
+        // below, so it has to prove it read the tree first.
+        for expected in ["wevtutil", "netsh", "ipconfig", "powercfg"] {
+            assert!(found.contains(expected), "the scanner missed {expected}: {found:?}");
+        }
+
+        for name in &found {
+            let path = system_tool(name);
+            #[cfg(windows)]
+            assert!(
+                path.exists(),
+                "run({name:?}) resolves to {}, which does not exist",
+                path.display()
+            );
+            #[cfg(not(windows))]
+            assert_eq!(path, std::path::PathBuf::from(name));
+        }
     }
 }

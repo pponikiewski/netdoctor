@@ -112,15 +112,26 @@ pub fn window(from: f64, to: f64) -> Vec<SysEvent> {
 /// second cannot turn a click into a stall.
 const MAX_PER_CHANNEL: usize = 200;
 
+/// The command line, built apart from the call so a test can run the real one
+/// rather than a copy of it that could drift.
+fn channel_args(channel: &str, query: &str) -> [String; 5] {
+    [
+        "qe".to_string(),
+        channel.to_string(),
+        format!("/q:{query}"),
+        "/f:xml".to_string(),
+        format!("/c:{MAX_PER_CHANNEL}"),
+    ]
+}
+
 fn read_channel(channel: &str, query: &str) -> Vec<SysEvent> {
-    let q = format!("/q:{query}");
-    let count = format!("/c:{MAX_PER_CHANNEL}");
-    let args = ["qe", channel, &q, "/f:xml", &count];
+    let owned = channel_args(channel, query);
+    let args: Vec<&str> = owned.iter().map(String::as_str).collect();
 
     // A channel that does not exist, or that this user may not read, exits
     // non-zero. That is a fact about the machine, not a failure worth
     // reporting: the caller gets fewer lines of evidence and says so.
-    let Ok(xml) = crate::optimize::run("wevtutil.exe", &args) else {
+    let Ok(xml) = crate::optimize::run("wevtutil", &args) else {
         return Vec::new();
     };
 
@@ -407,6 +418,40 @@ mod tests {
 
     fn parse(xml: &str) -> SysEvent {
         parse_event(xml.split("<Event ").nth(1).unwrap()).expect("a well-formed record parses")
+    }
+
+    /// The one test that actually talks to `wevtutil`.
+    ///
+    /// Everything else here feeds fixtures to the parser, which is why a
+    /// misspelled tool name went unnoticed for so long: the name is a string
+    /// nothing verified.
+    ///
+    /// It asserts on the raw XML rather than on `read_channel`'s output,
+    /// because `parse_event` keeps only the faults `classify` knows. A healthy
+    /// machine yields zero of those, so a count of parsed events would measure
+    /// the week's luck instead of the plumbing. The window is a week for the
+    /// same reason: the System channel of an idle machine can be silent for an
+    /// hour, and was on the machine this was written on.
+    #[cfg(windows)]
+    #[test]
+    fn wevtutil_answers_the_query_read_channel_sends() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the clock is past 1970")
+            .as_secs_f64();
+        let query = format!(
+            "*[System[TimeCreated[@SystemTime>='{}' and @SystemTime<='{}']]]",
+            iso_utc(now - 7.0 * 86400.0),
+            iso_utc(now)
+        );
+
+        let owned = channel_args("System", &query);
+        let args: Vec<&str> = owned.iter().map(String::as_str).collect();
+        let xml = crate::optimize::run("wevtutil", &args).expect("wevtutil runs and exits zero");
+        assert!(xml.contains("<Event "), "the System channel returned no records for a week");
+
+        // The full path has to survive the same call without panicking.
+        let _ = read_channel("System", &query);
     }
 
     #[test]
