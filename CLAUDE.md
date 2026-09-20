@@ -4,9 +4,13 @@
 >      np. "Aplikacja webowa do skracania przepisów kulinarnych dla osób gotujących w domu." -->
 
 ## Stack
-- **Language:** Rust (edition 2024)
+- **Language:** Rust (edition 2021, rust-version 1.82) — Cargo.toml is the source of truth
 - **Build:** Cargo
 - **Lint:** clippy (warnings = errors)
+- **Format:** rustfmt, pinned by `rustfmt.toml` (`use_small_heuristics = "Max"`) — never run `cargo fmt` with a different config, it reformats the whole tree
+- **GUI:** eframe/egui 0.29 + egui_plot (glow backend, default fonts)
+- **Storage:** rusqlite 0.32 (bundled SQLite)
+- **Platform:** windows 0.58 crate (IpHelper, WiFi, WinSock, Registry, Shell) — Windows only
 
 ## Commands
 ```bash

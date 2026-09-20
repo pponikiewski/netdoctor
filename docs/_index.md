@@ -2,7 +2,7 @@
 type: project
 project: netdoc
 status: active
-updated: 2026-09-19
+updated: 2026-09-20
 ---
 
 # 🧠 netdoc
@@ -21,3 +21,4 @@ updated: 2026-09-19
 
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
+- 2026-09-20 — zakładka Na żywo tłumaczy każdą liczbę, którą pokazuje (legenda, kafelki, progi, ośie); repo ma przypiętą konfigurację rustfmt i przechodzi `cargo fmt --check`.
