@@ -66,6 +66,12 @@ pub struct Stats {
     pub jitter: Option<f64>,
 }
 
+/// One outage, as the lists and tables read it.
+///
+/// Deliberately without the stored context: see [`EventContext`], which is
+/// fetched a row at a time. A struct that carried both made "list the day's
+/// outages" and "read this one's evidence" the same query, and the cheap one
+/// paid for the expensive one on every frame.
 #[derive(Debug, Clone)]
 pub struct Event {
     pub id: i64,
@@ -74,6 +80,23 @@ pub struct Event {
     pub kind: String,
     pub scope: String,
     pub detail: String,
+}
+
+impl Event {
+    pub fn duration_s(&self) -> Option<f64> {
+        self.ts_end.map(|e| e - self.ts_start)
+    }
+}
+
+/// The heavy half of an outage row, fetched only for the one row a person is
+/// looking at.
+///
+/// It lives apart from [`Event`] because the two are read at completely
+/// different rates: the list queries run every frame over hundreds of rows,
+/// and this is 33 KB each. Keeping them in one struct meant every list query
+/// paid for evidence nothing on screen was reading.
+#[derive(Debug, Clone)]
+pub struct EventContext {
     /// Connection state as JSON at the moment the outage opened, including the
     /// `lead_up` series of sweeps that preceded it. This is the evidence the
     /// cause analysis reads; an empty string means the row predates it.
@@ -82,11 +105,7 @@ pub struct Event {
     pub context_end: Option<String>,
 }
 
-impl Event {
-    pub fn duration_s(&self) -> Option<f64> {
-        self.ts_end.map(|e| e - self.ts_start)
-    }
-
+impl EventContext {
     /// The stored context, parsed. Rows written by older builds — or by a
     /// build that failed to serialise — simply have nothing to say.
     pub fn context_json(&self) -> Option<serde_json::Value> {
@@ -363,6 +382,17 @@ impl Store {
         rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
+    /// The stored evidence for one outage. `None` when the row is gone.
+    pub fn event_context(&self, id: i64) -> Option<EventContext> {
+        let conn = self.held();
+        conn.query_row(
+            "SELECT COALESCE(context,''), context_end FROM events WHERE id=?",
+            params![id],
+            |r| Ok(EventContext { context: r.get(0)?, context_end: r.get(1)? }),
+        )
+        .ok()
+    }
+
     pub fn recent_events(&self, limit: usize) -> Vec<Event> {
         let conn = self.held();
         let sql =
@@ -416,9 +446,13 @@ impl Store {
     }
 }
 
-/// The column order every event query uses.
-const EVENT_COLUMNS: &str =
-    "id, ts_start, ts_end, kind, scope, COALESCE(detail,''), COALESCE(context,''), context_end";
+/// The column order every event *list* query uses.
+///
+/// `context` and `context_end` are not here on purpose. They are the two
+/// heavy columns — 33 KB per outage — and the queries that name this run over
+/// hundreds of rows every frame. [`Store::event_context`] fetches them for the
+/// single row that is actually on screen.
+const EVENT_COLUMNS: &str = "id, ts_start, ts_end, kind, scope, COALESCE(detail,'')";
 
 fn map_event(r: &rusqlite::Row) -> rusqlite::Result<Event> {
     Ok(Event {
@@ -428,8 +462,6 @@ fn map_event(r: &rusqlite::Row) -> rusqlite::Result<Event> {
         kind: r.get(3)?,
         scope: r.get(4)?,
         detail: r.get(5)?,
-        context: r.get(6)?,
-        context_end: r.get(7)?,
     })
 }
 
@@ -564,11 +596,12 @@ mod tests {
         store.close_event(id, r#"{"rssi_dbm":-55}"#).unwrap();
 
         let e = &store.recent_events(1)[0];
-        let start = e.context_json().expect("opening context parses");
+        assert!(e.id > 0, "the row id is needed to select an outage in the UI");
+        let ctx = store.event_context(e.id).expect("the row is there");
+        let start = ctx.context_json().expect("opening context parses");
         assert_eq!(start["rssi_dbm"], -81);
         assert_eq!(start["ssid"], "home");
-        assert_eq!(e.context_end_json().unwrap()["rssi_dbm"], -55);
-        assert!(e.id > 0, "the row id is needed to select an outage in the UI");
+        assert_eq!(ctx.context_end_json().unwrap()["rssi_dbm"], -55);
     }
 
     #[test]
@@ -585,7 +618,8 @@ mod tests {
         let store = Store { conn: Mutex::new(conn) };
         let events = store.recent_events(10);
         assert_eq!(events.len(), 1, "the old row must still be readable");
-        assert_eq!(events[0].context, "", "an old row simply has no context");
+        let ctx = store.event_context(events[0].id).expect("the old row is still there");
+        assert_eq!(ctx.context, "", "an old row simply has no context");
     }
 
     #[test]
@@ -691,8 +725,9 @@ mod tests {
         let row = store.recent_events(10).into_iter().find(|e| e.id == orphan).unwrap();
         let end = row.ts_end.expect("the orphan must have been given an end");
         assert!(end >= row.ts_start, "an outage cannot end before it started");
+        let ctx = store.event_context(row.id).expect("the orphan row is still there");
         assert!(
-            row.context_end.unwrap().contains("restart"),
+            ctx.context_end.unwrap().contains("restart"),
             "the end was inferred, and the row has to say so"
         );
     }
@@ -743,5 +778,72 @@ mod tests {
         let left = store.recent_events(10);
         assert_eq!(left.len(), 1, "the closed one goes, the open one stays");
         assert_eq!(left[0].id, still_open);
+    }
+
+    /// A context the size the monitor really writes: 180 lead-up sweeps plus
+    /// the recovery state, measured at 33 398 bytes on a live database.
+    fn fat_context() -> String {
+        // Built from the real struct rather than hand-written JSON, so the
+        // fixture keeps its size if a field is ever added to a sweep.
+        let lead: Vec<crate::monitor::LeadSample> = (0..180)
+            .map(|i| crate::monitor::LeadSample {
+                ts: 1_800_000_000.0 + i as f64,
+                status: "degraded".into(),
+                up: true,
+                bssid: format!("aa:bb:cc:dd:ee:{:02x}", i % 256),
+                signal_pct: Some(62),
+                rssi_dbm: Some(-(50 + (i % 30))),
+                channel: Some(36),
+                rx_mbps: Some(390),
+                gateway_ms: Some(12.5),
+                internet_ms: Some(24.75),
+                internet_ok: true,
+            })
+            .collect();
+        serde_json::json!({
+            "medium": "wifi",
+            "ssid": "home",
+            "rssi_dbm": -72,
+            "channel": 36,
+            "up": true,
+            "lead_up": lead,
+        })
+        .to_string()
+    }
+
+    /// The list queries must not drag the context along.
+    ///
+    /// Measured before the split: `events_since(24h)` over 200 outages took
+    /// 21.56 ms and moved 13.4 MB, because `EVENT_COLUMNS` named `context` and
+    /// `context_end` and the History tab runs the query every frame. Without
+    /// those two columns the same query took 199 µs.
+    ///
+    /// The threshold is 5 ms rather than 1 ms so a loaded CI box cannot fail
+    /// it by being slow; the regression it guards is 20x over budget, so the
+    /// margin costs nothing.
+    #[test]
+    fn listing_events_does_not_carry_their_context() {
+        let store = Store::open_in_memory().unwrap();
+        let ctx = fat_context();
+        assert!(ctx.len() > 30_000, "the fixture has to be the size of a real context");
+        for _ in 0..200 {
+            let id = store.open_event("lan_down", "lan", "router stopped answering", &ctx).unwrap();
+            store.close_event(id, r#"{"rssi_dbm":-52}"#).unwrap();
+        }
+
+        let started = std::time::Instant::now();
+        let events = store.events_since(24.0 * 3600.0);
+        let elapsed = started.elapsed();
+        assert_eq!(events.len(), 200);
+        assert!(
+            elapsed < std::time::Duration::from_millis(5),
+            "listing 200 events took {elapsed:?}; the context columns are back in the list query"
+        );
+
+        // The context is still reachable, one row at a time.
+        let ctx =
+            store.event_context(events[0].id).expect("the selected row still has its context");
+        assert!(ctx.context_json().is_some());
+        assert!(ctx.context_end_json().is_some());
     }
 }

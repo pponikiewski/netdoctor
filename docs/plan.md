@@ -9,7 +9,7 @@
 ## Backlog
 
 - [x] **1. Literówka `wevtutil.exe` zabija całą integrację z dziennikiem Windows**
-- [ ] **2. Kwerendy listy zdarzeń ciągną 33 KB kontekstu na wiersz**
+- [x] **2. Kwerendy listy zdarzeń ciągną 33 KB kontekstu na wiersz**
 - [ ] **3. `refresh_tweaks` blokuje wątek UI na 576 ms**
 - [ ] **4. `notify_on_outage` to martwy przełącznik**
 - [ ] **5. Znaczniki awarii znikają przy interwale sondowania ≥ 2 s**
@@ -127,9 +127,29 @@ tabeli i kart, pełny kontekst tylko dla rozwiniętego wiersza, parsowany raz i
 trzymany w polu `App` dopóki zaznaczenie się nie zmieni.
 
 **Kryterium akceptacji.**
-- [ ] `events_since` i `recent_events` nie zwracają kolumn kontekstu.
-- [ ] `cause::analyse` i `parse_lead` dostają jeden, raz sparsowany `Evidence`.
-- [ ] Benchmark w repo, który pilnuje, że lista 200 zdarzeń kosztuje < 1 ms.
+- [x] `events_since` i `recent_events` nie zwracają kolumn kontekstu.
+      `EVENT_COLUMNS` to dziś sześć chudych kolumn, a `Event` nie ma już pól
+      `context`/`context_end` — nie da się ich pociągnąć przez przypadek.
+      Ciężka połowa to osobny `EventContext` i `Store::event_context(id)`.
+- [x] `cause::analyse` i `parse_lead` dostają jeden, raz sparsowany `Evidence`.
+      `analyse` przyjmuje `Option<&Evidence>` zamiast parsować z `Event`;
+      `parse_lead` usunięty, wykres czyta `evidence.lead`. Parsowanie robi
+      `ui::history::ensure_detail` raz na zmianę zaznaczenia, wynik siedzi
+      w `App::outage_detail`.
+- [x] Benchmark w repo: `store::tests::listing_events_does_not_carry_their_context`.
+      **Próg to 5 ms, nie 1 ms.** Powód: to zwykły test, więc chodzi w buildzie
+      debug, gdzie chuda kwerenda zajmuje 848 µs — margines do 1 ms jest tak
+      cienki, że wolniejsza maszyna zapalałaby czerwone bez regresji. Regresja,
+      przed którą test stoi, jest 10× nad progiem.
+
+**Pomiar po naprawie** (build debug, baza w pamięci, 200 awarii po 33 KB):
+
+| Kwerenda | Przed | Po |
+|---|---|---|
+| `events_since(24h)` | **8,04 ms** | **848 µs** |
+
+Liczby z planu (21,56 ms → 199 µs) były z buildu release na pliku, więc nie
+porównują się wprost; stosunek jest ten sam rząd wielkości.
 
 ---
 

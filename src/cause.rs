@@ -19,7 +19,7 @@
 use crate::i18n;
 use crate::monitor::LeadSample;
 use crate::probe::eventlog::{Kind, SysEvent};
-use crate::store::{Event, TweakLogRow};
+use crate::store::{Event, EventContext, TweakLogRow};
 
 /// How much the evidence supports the cause. This is about the strength of the
 /// reading, not the severity of the outage.
@@ -84,8 +84,11 @@ pub struct Evidence {
 }
 
 impl Evidence {
-    pub fn from_event(event: &Event) -> Option<Evidence> {
-        let v = event.context_json()?;
+    /// Parses one outage's stored context. The caller does this once and keeps
+    /// the result: it is 33 KB of JSON, and the History tab used to parse it
+    /// twice per frame.
+    pub fn from_context(ctx: &EventContext) -> Option<Evidence> {
+        let v = ctx.context_json()?;
         let lead: Vec<LeadSample> = v
             .get("lead_up")
             .and_then(|l| serde_json::from_value(l.clone()).ok())
@@ -99,7 +102,7 @@ impl Evidence {
             dns_is_router_only: v["dns_is_router_only"].as_bool().unwrap_or(false),
             dns_error: v["dns_error"].as_str().unwrap_or_default().to_string(),
             up: v["up"].as_bool().unwrap_or(true),
-            rssi_at_recovery: event
+            rssi_at_recovery: ctx
                 .context_end_json()
                 .and_then(|e| e["rssi_dbm"].as_i64())
                 .map(|n| n as i32),
@@ -172,11 +175,20 @@ impl Evidence {
 /// How long before an outage a configuration change is still a suspect.
 const TWEAK_SUSPECT_WINDOW_S: f64 = 20.0 * 60.0;
 
-/// Reads an outage. `history` is other outages for recurrence, `tweaks` are
-/// changes applied shortly before this one, and `log` is what Windows itself
-/// wrote down around it — see [`crate::probe::eventlog`].
+/// Reads an outage. `evidence` is the row's parsed context, `None` when the
+/// row has none or it did not parse; `history` is other outages for
+/// recurrence, `tweaks` are changes applied shortly before this one, and `log`
+/// is what Windows itself wrote down around it — see
+/// [`crate::probe::eventlog`].
+///
+/// The evidence is a parameter rather than something read from `event`
+/// because [`Event`] no longer carries the context: the caller fetches it for
+/// the one row on screen and parses it once. That also makes it impossible to
+/// analyse a row whose context was never loaded and get a confident "no
+/// evidence" back.
 pub fn analyse(
     event: &Event,
+    evidence: Option<&Evidence>,
     history: &[Event],
     tweaks: &[TweakLogRow],
     log: &[SysEvent],
@@ -206,7 +218,7 @@ pub fn analyse(
     // log, which was written by someone else and is still there.
     log_rules(event, log, &mut out);
 
-    let Some(ev) = Evidence::from_event(event) else {
+    let Some(ev) = evidence else {
         if out.is_empty() {
             // Rows written before the app read its own context back, or a
             // failed serialisation. Saying so is more useful than guessing.
@@ -216,11 +228,11 @@ pub fn analyse(
     };
 
     match event.scope.as_str() {
-        "adapter" => adapter_rules(&ev, &mut out),
-        "lan" => lan_rules(&ev, &mut out),
+        "adapter" => adapter_rules(ev, &mut out),
+        "lan" => lan_rules(ev, &mut out),
         "isp" => isp_rules(event, history, &mut out),
-        "dns" => dns_rules(&ev, &mut out),
-        _ => degraded_rules(&ev, &mut out),
+        "dns" => dns_rules(ev, &mut out),
+        _ => degraded_rules(ev, &mut out),
     }
 
     recurrence(event, history, &mut out);
@@ -568,17 +580,41 @@ mod tests {
         )
     }
 
-    fn event(scope: &str, context: serde_json::Value, dur: f64) -> Event {
-        Event {
-            id: 1,
-            ts_start: 1_000.0,
-            ts_end: Some(1_000.0 + dur),
-            kind: format!("{scope}_down"),
-            scope: scope.into(),
-            detail: String::new(),
-            context: context.to_string(),
-            context_end: None,
+    /// A logged outage together with its stored context.
+    ///
+    /// Production keeps the two apart — the list query is hot, the context is
+    /// 33 KB — but a rule test is exactly the pairing of "this happened" with
+    /// "this is what we recorded", so the tests below hold them together and
+    /// [`verdicts`] takes them apart again the way the UI does.
+    struct Outage {
+        row: Event,
+        ctx: EventContext,
+    }
+
+    fn event(scope: &str, context: serde_json::Value, dur: f64) -> Outage {
+        Outage {
+            row: Event {
+                id: 1,
+                ts_start: 1_000.0,
+                ts_end: Some(1_000.0 + dur),
+                kind: format!("{scope}_down"),
+                scope: scope.into(),
+                detail: String::new(),
+            },
+            ctx: EventContext { context: context.to_string(), context_end: None },
         }
+    }
+
+    /// Parses the context and runs the rules, which is what the History tab
+    /// does with the row it has selected.
+    fn verdicts(
+        o: &Outage,
+        history: &[Event],
+        tweaks: &[TweakLogRow],
+        log: &[SysEvent],
+    ) -> Vec<Cause> {
+        let evidence = Evidence::from_context(&o.ctx);
+        analyse(&o.row, evidence.as_ref(), history, tweaks, log)
     }
 
     #[test]
@@ -590,7 +626,7 @@ mod tests {
                 (4.0, -71, true), (5.0, -78, true), (6.0, -83, true),
             ]),
         });
-        let causes = analyse(&event("lan", ctx, 40.0), &[], &[], &[]);
+        let causes = verdicts(&event("lan", ctx, 40.0), &[], &[], &[]);
         assert_eq!(causes[0].code, "signal_fade");
         assert_eq!(causes[0].confidence, Confidence::Certain);
         assert!(!causes.iter().any(|c| c.code == "router_side"));
@@ -623,7 +659,7 @@ mod tests {
             result: "ok".into(),
         };
 
-        let causes = analyse(&event("lan", ctx, 30.0), &[], &[tweak], &log);
+        let causes = verdicts(&event("lan", ctx, 30.0), &[], &[tweak], &log);
         assert!(
             causes.iter().any(|c| c.code == "log_link_down"),
             "got {:?}",
@@ -639,12 +675,12 @@ mod tests {
         let ctx = serde_json::json!({ "medium": "Ethernet", "up": true, "lead_up": [] });
         let far_away = vec![sysevent(Kind::DriverFault, 1_000.0 + 3.0 * 3600.0)];
 
-        let causes = analyse(&event("lan", ctx.clone(), 30.0), &[], &[], &far_away);
+        let causes = verdicts(&event("lan", ctx.clone(), 30.0), &[], &[], &far_away);
         assert!(!causes.iter().any(|c| c.code == "log_driver_fault"));
 
         // The same fault inside the outage still counts.
         let nearby = vec![sysevent(Kind::DriverFault, 1_010.0)];
-        let causes = analyse(&event("lan", ctx, 30.0), &[], &[], &nearby);
+        let causes = verdicts(&event("lan", ctx, 30.0), &[], &[], &nearby);
         assert!(causes.iter().any(|c| c.code == "log_driver_fault"));
     }
 
@@ -657,7 +693,7 @@ mod tests {
                 (4.0, -49, true), (5.0, -48, true), (6.0, -48, true),
             ]),
         });
-        let causes = analyse(&event("lan", ctx, 30.0), &[], &[], &[]);
+        let causes = verdicts(&event("lan", ctx, 30.0), &[], &[], &[]);
         assert!(causes.iter().any(|c| c.code == "router_side"));
         assert!(!causes.iter().any(|c| c.code == "signal_fade"));
     }
@@ -671,7 +707,7 @@ mod tests {
                 (4.0, -50, true), (5.0, -52, true), (6.0, -50, true),
             ]),
         });
-        let causes = analyse(&event("lan", ctx, 30.0), &[], &[], &[]);
+        let causes = verdicts(&event("lan", ctx, 30.0), &[], &[], &[]);
         assert!(causes.iter().any(|c| c.code == "airtime_24ghz"));
     }
 
@@ -684,7 +720,7 @@ mod tests {
                 (4.0, -53, true), (5.0, -52, false), (6.0, -52, false),
             ]),
         });
-        let causes = analyse(&event("adapter", ctx, 90.0), &[], &[], &[]);
+        let causes = verdicts(&event("adapter", ctx, 90.0), &[], &[], &[]);
         let power = causes.iter().find(|c| c.code == "adapter_powered_down").unwrap();
         assert_eq!(power.fix_tweak, Some("adapter_power"));
     }
@@ -704,12 +740,12 @@ mod tests {
             action: "apply".into(),
             result: "ok".into(),
         }];
-        let causes = analyse(&event("lan", ctx.clone(), 40.0), &[], &tweaks, &[]);
+        let causes = verdicts(&event("lan", ctx.clone(), 40.0), &[], &tweaks, &[]);
         let tweak = causes.iter().find(|c| c.code == "after_tweak").unwrap();
         assert_eq!(tweak.fix_tweak, Some("mtu"));
         // A change from an hour earlier is no longer a suspect.
         let stale = vec![TweakLogRow { ts: 1_000.0 - 3_600.0, ..tweaks[0].clone() }];
-        assert!(!analyse(&event("lan", ctx.clone(), 40.0), &[], &stale, &[])
+        assert!(!verdicts(&event("lan", ctx.clone(), 40.0), &[], &stale, &[])
             .iter()
             .any(|c| c.code == "after_tweak"));
     }
@@ -717,7 +753,7 @@ mod tests {
     #[test]
     fn dns_served_only_by_the_router_gets_the_resolver_fix() {
         let ctx = serde_json::json!({ "dns_is_router_only": true, "dns_error": "timeout" });
-        let causes = analyse(&event("dns", ctx, 15.0), &[], &[], &[]);
+        let causes = verdicts(&event("dns", ctx, 15.0), &[], &[], &[]);
         assert_eq!(causes[0].code, "dns_router_only");
         assert_eq!(causes[0].fix_tweak, Some("fast_dns"));
     }
@@ -725,8 +761,8 @@ mod tests {
     #[test]
     fn an_old_row_without_context_says_so_instead_of_guessing() {
         let mut e = event("lan", serde_json::json!({}), 20.0);
-        e.context = String::new();
-        let causes = analyse(&e, &[], &[], &[]);
+        e.ctx.context = String::new();
+        let causes = verdicts(&e, &[], &[], &[]);
         assert_eq!(causes.len(), 1);
         assert_eq!(causes[0].code, "no_evidence");
     }
@@ -740,21 +776,22 @@ mod tests {
             "adapter": "WiFi", "ssid": "home", "bssid": "c8:7f:54:b0:15:44",
             "channel": 108, "rssi_dbm": -61, "signal_pct": 78,
         });
-        let causes = analyse(&event("internet", ctx, 94.0), &[], &[], &[]);
+        let causes = verdicts(&event("internet", ctx, 94.0), &[], &[], &[]);
         assert_eq!(causes.len(), 1);
         assert_eq!(causes[0].code, "no_evidence");
     }
 
     #[test]
     fn repeated_wan_drops_become_a_pattern() {
-        let hist: Vec<Event> = (0..4)
+        let outages: Vec<Outage> = (0..4)
             .map(|i| {
                 let mut e = event("isp", serde_json::json!({}), 200.0);
-                e.ts_start = 1_000.0 + (i as f64) * 86_400.0;
+                e.row.ts_start = 1_000.0 + (i as f64) * 86_400.0;
                 e
             })
             .collect();
-        let causes = analyse(&hist[0], &hist, &[], &[]);
+        let hist: Vec<Event> = outages.iter().map(|o| o.row.clone()).collect();
+        let causes = verdicts(&outages[0], &hist, &[], &[]);
         assert!(causes.iter().any(|c| c.code == "isp_pattern"));
         assert!(causes.iter().any(|c| c.code == "time_pattern"));
     }
@@ -769,7 +806,7 @@ mod tests {
                 (4.0, -50, true), (5.0, -51, true), (6.0, -50, true),
             ]),
         });
-        let causes = analyse(&event("lan", ctx, 30.0), &[], &[], &[]);
+        let causes = verdicts(&event("lan", ctx, 30.0), &[], &[], &[]);
         assert!(!causes.iter().any(|c| c.code == "signal_fade"));
     }
 
@@ -805,7 +842,7 @@ mod tests {
         // case. The log says the access point dropped an idle card, which is a
         // different fault with a different fix.
         let entries = [log(Kind::WlanDisconnect, -2.0, Some(4))];
-        let causes = analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &entries);
+        let causes = verdicts(&event("lan", wifi_ctx(), 30.0), &[], &[], &entries);
 
         assert_eq!(causes[0].code, "log_wlan_inactivity");
         assert_eq!(causes[0].confidence, Confidence::Certain);
@@ -820,7 +857,7 @@ mod tests {
     #[test]
     fn an_unnamed_reason_code_is_reported_rather_than_invented() {
         let entries = [log(Kind::WlanDisconnect, -1.0, Some(71))];
-        let causes = analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &entries);
+        let causes = verdicts(&event("lan", wifi_ctx(), 30.0), &[], &[], &entries);
         let c = causes.iter().find(|c| c.code == "log_wlan_deauth").expect("still a verdict");
         assert_eq!(c.confidence, Confidence::Likely, "an unmapped code is weaker evidence");
         assert!(c.evidence.contains("71"));
@@ -829,12 +866,12 @@ mod tests {
     #[test]
     fn a_suspend_explains_the_outage_and_a_wake_does_not_pretend_to() {
         let slept = [log(Kind::Sleep, -12.0, None)];
-        let causes = analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &slept);
+        let causes = verdicts(&event("lan", wifi_ctx(), 30.0), &[], &[], &slept);
         assert_eq!(causes[0].code, "log_sleep");
 
         // A sleep from an hour earlier is not this outage's explanation.
         let stale = [log(Kind::Sleep, -3_600.0, None)];
-        assert!(!analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &stale)
+        assert!(!verdicts(&event("lan", wifi_ctx(), 30.0), &[], &[], &stale)
             .iter()
             .any(|c| c.code == "log_sleep"));
     }
@@ -844,7 +881,7 @@ mod tests {
         let mut e = log(Kind::DriverFault, -3.0, None);
         e.provider = "Netwtw10".into();
         e.id = 5002;
-        let causes = analyse(&event("adapter", wifi_ctx(), 30.0), &[], &[], &[e]);
+        let causes = verdicts(&event("adapter", wifi_ctx(), 30.0), &[], &[], &[e]);
 
         let c = causes.iter().find(|c| c.code == "log_driver_fault").unwrap();
         assert_eq!(c.fix_tweak, Some("stack_reset"));
@@ -854,14 +891,14 @@ mod tests {
     #[test]
     fn an_interface_drop_only_speaks_when_nothing_more_specific_did() {
         let bare = [log(Kind::LinkDown, 0.0, None)];
-        assert!(analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &bare)
+        assert!(verdicts(&event("lan", wifi_ctx(), 30.0), &[], &[], &bare)
             .iter()
             .any(|c| c.code == "log_link_down"));
 
         // Next to a disconnect that names its reason, "the interface went
         // down" is a restatement, not a second finding.
         let both = [log(Kind::WlanDisconnect, -1.0, Some(4)), log(Kind::LinkDown, 0.0, None)];
-        assert!(!analyse(&event("lan", wifi_ctx(), 30.0), &[], &[], &both)
+        assert!(!verdicts(&event("lan", wifi_ctx(), 30.0), &[], &[], &both)
             .iter()
             .any(|c| c.code == "log_link_down"));
     }
@@ -869,18 +906,18 @@ mod tests {
     #[test]
     fn a_quiet_log_during_a_wan_outage_is_itself_the_finding() {
         let quiet = [log(Kind::Resume, -900.0, None), log(Kind::WlanConnect, -890.0, None)];
-        let causes = analyse(&event("isp", wifi_ctx(), 300.0), &[], &[], &quiet);
+        let causes = verdicts(&event("isp", wifi_ctx(), 300.0), &[], &[], &quiet);
         assert!(causes.iter().any(|c| c.code == "log_clean_isp"));
 
         // The same silence during a local outage proves nothing, and claiming
         // it would hand the user an argument they cannot win.
-        assert!(!analyse(&event("lan", wifi_ctx(), 300.0), &[], &[], &quiet)
+        assert!(!verdicts(&event("lan", wifi_ctx(), 300.0), &[], &[], &quiet)
             .iter()
             .any(|c| c.code == "log_clean_isp"));
 
         // Nor does it hold once the log names a fault here.
         let faulty = [log(Kind::DhcpFail, -5.0, None)];
-        assert!(!analyse(&event("isp", wifi_ctx(), 300.0), &[], &[], &faulty)
+        assert!(!verdicts(&event("isp", wifi_ctx(), 300.0), &[], &[], &faulty)
             .iter()
             .any(|c| c.code == "log_clean_isp"));
     }
@@ -890,8 +927,8 @@ mod tests {
         // The row predates the app storing a context, so every inference rule
         // is blind. The log was written by someone else and is still there.
         let mut e = event("lan", serde_json::json!(null), 30.0);
-        e.context = String::new();
-        let causes = analyse(&e, &[], &[], &[log(Kind::DhcpFail, -4.0, None)]);
+        e.ctx.context = String::new();
+        let causes = verdicts(&e, &[], &[], &[log(Kind::DhcpFail, -4.0, None)]);
 
         assert_eq!(causes[0].code, "log_dhcp");
         assert!(

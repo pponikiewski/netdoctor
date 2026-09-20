@@ -216,6 +216,10 @@ pub struct App {
     pub show_unavailable: bool,
     /// Row id of the outage whose cause panel is open, if any.
     pub selected_outage: Option<i64>,
+    /// The open outage's context: fetched and parsed once when the selection
+    /// changes, not on every frame. 33 KB of JSON per outage, and the panel
+    /// used to parse it twice a frame at 60 Hz.
+    pub outage_detail: Option<history::OutageDetail>,
     /// The event log read for one outage, kept so opening an entry launches
     /// `wevtutil` once rather than on every frame it stays open.
     pub syslog: Option<(i64, Vec<crate::probe::eventlog::SysEvent>)>,
@@ -279,6 +283,7 @@ impl App {
             air_scanning: false,
             show_unavailable: true,
             selected_outage: None,
+            outage_detail: None,
             syslog: None,
             syslog_pending: None,
             elevated: crate::optimize::is_elevated(),

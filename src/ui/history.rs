@@ -13,12 +13,44 @@ use super::{
     figure, App, Tab, FG, FG_DIM, GREEN, RED, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE,
     YELLOW,
 };
-use crate::cause::{self, Cause, Confidence};
+use crate::cause::{self, Cause, Confidence, Evidence};
 use crate::diagnose::format_datetime;
 use crate::i18n;
-use crate::monitor::LeadSample;
 use crate::probe::eventlog::SysEvent;
 use crate::store::Event;
+
+/// Everything the detail panel needs from one outage's stored context, read
+/// from the database once and parsed once.
+///
+/// Before this, the panel ran `events_since(24h)` and `recent_events(300)`
+/// with the context columns attached, then parsed the selected row's 33 KB of
+/// JSON twice per frame — once for the cause rules and once for the lead-up
+/// plot — cloning the sweep series each time.
+pub struct OutageDetail {
+    /// The row this was read for. A different selection throws it away.
+    pub id: i64,
+    /// `None` when the row carries no context, or it did not parse.
+    pub evidence: Option<Evidence>,
+    /// State when the outage opened, for the "failed on" block.
+    pub state: Option<serde_json::Value>,
+    /// State it recovered into, for the "came back into" block.
+    pub recovery: Option<serde_json::Value>,
+}
+
+/// Reads and parses the selected outage's context, unless it is already in
+/// hand. This is the only place the heavy columns are ever fetched.
+fn ensure_detail(app: &mut App, id: i64) {
+    if matches!(&app.outage_detail, Some(d) if d.id == id) {
+        return;
+    }
+    let ctx = app.store.event_context(id);
+    app.outage_detail = Some(OutageDetail {
+        id,
+        evidence: ctx.as_ref().and_then(Evidence::from_context),
+        state: ctx.as_ref().and_then(|c| c.context_json()),
+        recovery: ctx.as_ref().and_then(|c| c.context_end_json()),
+    });
+}
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let day = app.store.events_since(24.0 * 3600.0);
@@ -131,6 +163,14 @@ fn table(app: &mut App, ui: &mut egui::Ui, events: &[Event]) {
 }
 
 fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
+    // The widgets below need `&mut App`, so the cached context is lifted out
+    // for the duration of the panel and put back at the end. Taking it is not
+    // a reload: `ensure_detail` only reads the database when the selection
+    // changed.
+    ensure_detail(app, event.id);
+    let cached = app.outage_detail.take();
+    let detail = cached.as_ref().expect("ensure_detail just stored one");
+
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(i18n::hist_cause_for(&format_datetime(event.ts_start)))
@@ -154,7 +194,7 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
         Some((id, events)) if *id == event.id => events.clone(),
         _ => Vec::new(),
     };
-    let causes = cause::analyse(event, events, &tweaks, &log);
+    let causes = cause::analyse(event, detail.evidence.as_ref(), events, &tweaks, &log);
 
     ui.label(egui::RichText::new(i18n::hist_cause_heading()).size(T_BODY).strong().color(FG_DIM));
     ui.add_space(S_XS);
@@ -186,18 +226,17 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
     system_log(app, ui, event, &log);
 
     ui.add_space(S_MD);
-    lead_up(app, ui, event);
+    lead_up(app, ui, event, detail.evidence.as_ref());
 
     ui.add_space(S_MD);
     // Failure state and recovery state are meant to be compared, so they sit
     // side by side wherever the window allows it. Where it does not, one
     // above the other still compares; two columns of truncated values does
     // not.
-    let recovery = event.context_end_json();
     let failed_on = |ui: &mut egui::Ui| {
-        state_block(ui, i18n::hist_state_heading(), event.context_json());
+        state_block(ui, i18n::hist_state_heading(), detail.state.as_ref());
     };
-    let came_back_into = |ui: &mut egui::Ui| match recovery.clone() {
+    let came_back_into = |ui: &mut egui::Ui| match detail.recovery.as_ref() {
         Some(state) => state_block(ui, i18n::hist_recovery_heading(), Some(state)),
         None => {
             ui.label(
@@ -220,6 +259,8 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
             came_back_into(&mut cols[1]);
         });
     }
+
+    app.outage_detail = cached;
 }
 
 /// How much of the log around an outage is worth reading. Two minutes before
@@ -339,14 +380,6 @@ fn open_tweak(app: &mut App, tweak_id: &str) {
     }
 }
 
-fn parse_lead(event: &Event) -> Vec<LeadSample> {
-    event
-        .context_json()
-        .and_then(|v| v.get("lead_up").cloned())
-        .and_then(|v| serde_json::from_value::<Vec<LeadSample>>(v).ok())
-        .unwrap_or_default()
-}
-
 /// Signal and router latency across the whole episode: the lead-up from the
 /// event's own context, the outage and the recovery from the sample table.
 /// Time is drawn relative to the start of the outage, so zero is the moment it
@@ -355,8 +388,10 @@ fn parse_lead(event: &Event) -> Vec<LeadSample> {
 /// Two lines are enough to separate the two stories that look identical in the
 /// table: a signal sliding away before the router stops answering, and a
 /// router that stops answering while the signal never moves.
-fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event) {
-    let lead = parse_lead(event);
+fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event, evidence: Option<&Evidence>) {
+    // The same parse the cause rules read, rather than a second one of the
+    // same 33 KB.
+    let lead: &[crate::monitor::LeadSample] = evidence.map(|e| e.lead.as_slice()).unwrap_or(&[]);
     ui.label(egui::RichText::new(i18n::hist_leadup_heading()).size(T_BODY).strong().color(FG_DIM));
 
     let t0 = event.ts_start;
@@ -409,7 +444,7 @@ const LOST_PING_MS: f64 = 250.0;
 
 /// The stored state, rendered as the fields that mean something to a person.
 /// The raw JSON is never shown: it is a storage format, not a report.
-fn state_block(ui: &mut egui::Ui, heading: &str, state: Option<serde_json::Value>) {
+fn state_block(ui: &mut egui::Ui, heading: &str, state: Option<&serde_json::Value>) {
     ui.label(egui::RichText::new(heading).size(T_BODY).strong().color(FG_DIM));
     let Some(v) = state else {
         ui.label(egui::RichText::new(i18n::hist_no_state()).size(T_META).color(FG_DIM));
