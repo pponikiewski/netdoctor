@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use eframe::egui;
 
-use super::{S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_LEAD, stat_card, App, Job, FG, FG_DIM, GREEN, RED, YELLOW};
+use super::{
+    stat_card, App, Job, FG, FG_DIM, GREEN, RED, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_LEAD,
+    YELLOW,
+};
 use crate::bandwidth::{self, Grade};
 use crate::i18n;
 
@@ -20,11 +23,7 @@ fn grade_colour(g: Grade) -> egui::Color32 {
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.label(egui::RichText::new(i18n::bloat_title()).size(T_LEAD).strong().color(FG));
     ui.add_space(S_XS);
-    ui.label(
-        egui::RichText::new(i18n::bloat_blurb())
-        .size(T_BODY)
-        .color(FG_DIM),
-    );
+    ui.label(egui::RichText::new(i18n::bloat_blurb()).size(T_BODY).color(FG_DIM));
     ui.add_space(S_MD);
 
     // The test is the one thing in this app that spends the user's data
@@ -35,7 +34,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!app.bloat_running, egui::Button::new(i18n::bloat_btn_run()).fill(super::ACCENT))
+            .add_enabled(
+                !app.bloat_running,
+                egui::Button::new(i18n::bloat_btn_run()).fill(super::ACCENT),
+            )
             .clicked()
         {
             start(app);
@@ -54,17 +56,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         match r.idle_avg {
             Some(v) => stat_card(ui, i18n::bloat_card_idle(), &format!("{v:.0} ms"), "", FG),
             None => stat_card(ui, i18n::bloat_card_idle(), "—", "", FG_DIM),
-        }
+        };
         let bump = r.bump_ms.unwrap_or(0.0);
-        let colour = if bump < 60.0 { GREEN } else if bump < 150.0 { YELLOW } else { RED };
+        let colour = if bump < 60.0 {
+            GREEN
+        } else if bump < 150.0 {
+            YELLOW
+        } else {
+            RED
+        };
         match r.loaded_avg {
             Some(v) => stat_card(ui, i18n::bloat_card_loaded(), &format!("{v:.0} ms"), "", colour),
             None => stat_card(ui, i18n::bloat_card_loaded(), "—", "", FG_DIM),
-        }
+        };
         match r.bump_ms {
-            Some(v) => stat_card(ui, i18n::bloat_card_increase(), &format!("+{v:.0} ms"), "", colour),
+            Some(v) => {
+                stat_card(ui, i18n::bloat_card_increase(), &format!("+{v:.0} ms"), "", colour)
+            }
             None => stat_card(ui, i18n::bloat_card_increase(), "—", "", FG_DIM),
-        }
+        };
         match r.mbps {
             Some(v) => stat_card(
                 ui,
@@ -74,28 +84,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 FG,
             ),
             None => stat_card(ui, i18n::bloat_card_throughput(), "—", "", FG_DIM),
-        }
+        };
         let g = r.grade_or_unknown();
         stat_card(ui, i18n::bloat_card_grade(), g.letter(), "", grade_colour(g));
     });
 
     ui.add_space(S_LG);
-    egui::Frame::none()
-        .fill(super::BG2)
-        .rounding(6.0)
-        .inner_margin(egui::Margin::same(S_LG))
-        .show(ui, |ui| {
+    egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_LG)).show(
+        ui,
+        |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let g = r.grade_or_unknown();
                 if g != Grade::Unknown {
-                    ui.label(egui::RichText::new(g.verdict()).size(T_HEAD).strong().color(grade_colour(g)));
+                    ui.label(
+                        egui::RichText::new(g.verdict())
+                            .size(T_HEAD)
+                            .strong()
+                            .color(grade_colour(g)),
+                    );
                     ui.add_space(S_SM);
                 }
                 if let (Some(max), true) = (r.loaded_max, r.loaded_avg.is_some()) {
                     ui.label(
                         egui::RichText::new(i18n::bloat_worst(max, r.loaded_loss_pct))
-                        .size(T_BODY)
-                        .color(FG),
+                            .size(T_BODY)
+                            .color(FG),
                     );
                     ui.add_space(S_SM);
                 }
@@ -103,10 +116,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 if r.bytes > 0 {
                     ui.add_space(S_SM);
                     let mb = r.bytes as f64 / 1_000_000.0;
-                    ui.label(egui::RichText::new(i18n::bloat_data_used(mb)).size(T_BODY).color(FG_DIM));
+                    ui.label(
+                        egui::RichText::new(i18n::bloat_data_used(mb)).size(T_BODY).color(FG_DIM),
+                    );
                 }
             });
-        });
+        },
+    );
 }
 
 fn start(app: &mut App) {

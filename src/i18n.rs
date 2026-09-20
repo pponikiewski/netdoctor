@@ -59,6 +59,12 @@ macro_rules! strings {
                 }
             }
         )*
+
+        /// Every string in the table, for tests that have to check all of them.
+        #[cfg(test)]
+        const ALL_STRINGS: &[(&str, &str, &str)] = &[
+            $((stringify!($key), $en, $pl),)*
+        ];
     };
 }
 
@@ -219,8 +225,6 @@ poprosisz.";
         "The card just roamed to a different access point.",
         "Karta właśnie przełączyła się na inny access point.";
     live_x_now => "now", "teraz";
-    live_red_line => "red line = lost packet", "czerwona linia = zgubiony pakiet";
-    live_amber_line => "amber band = every target at once", "bursztynowe pasmo = wszystkie cele naraz";
     live_spike_explainer =>
         "All the targets are reached over the same Wi-Fi link, the same router and the same \
          uplink. A delay introduced anywhere on that shared stretch has to appear on all of them \
@@ -234,21 +238,98 @@ poprosisz.";
          oznaczone zamiatania mówią cokolwiek o Twoim łączu.";
     live_no_data => "no data", "brak danych";
 
-    live_card_latency => "Latency (1.1.1.1)", "Opóźnienie (1.1.1.1)";
+    live_card_latency => "Latency", "Opóźnienie";
     live_card_latency_sub_none => "no data yet", "jeszcze brak danych";
     live_card_jitter => "Jitter", "Jitter";
-    live_card_jitter_sub => "swing between packets", "wahania między pakietami";
+    live_card_jitter_sub => "swing, last 5 min", "wahania, ostatnie 5 min";
     live_card_loss => "Packet loss", "Utrata pakietów";
     live_card_loss_sub => "last 5 minutes", "ostatnie 5 minut";
-    live_card_router => "Router latency", "Opóźnienie do routera";
+    live_card_router => "Router", "Router";
     live_card_router_none => "not answering", "nie odpowiada";
     live_card_dns => "DNS", "DNS";
     live_card_dns_err => "error", "błąd";
-    live_card_dns_sub => "name resolution", "rozwiązywanie nazw";
+    live_card_dns_sub => "name lookup", "wyszukanie nazwy";
     live_card_uninterrupted => "Uninterrupted", "Bez przerw";
     live_card_uninterrupted_val => "24 h+", "24 h+";
     live_card_uninterrupted_sub => "no outages logged", "brak zapisanych awarii";
     live_card_since_outage => "Since last outage", "Od ostatniej awarii";
+
+    // What each headline number actually is. The cards were six figures with
+    // six technical names over them, which is a readout for someone who
+    // already knows what they are looking at and a wall for everyone else.
+    live_tip_latency =>
+        "How long a packet takes to reach 1.1.1.1 and come back, averaged over the last five \
+         minutes.
+
+This is the one number that decides whether a call stutters or a game feels \
+         late, and it has nothing to do with how fast things download.",
+        "Ile czasu zajmuje pakietowi dotarcie do 1.1.1.1 i powrót, uśrednione z ostatnich pięciu \
+         minut.
+
+To ta jedna liczba decyduje o tym, czy rozmowa się tnie, a gra reaguje z \
+         opóźnieniem, i nie ma związku z tym, jak szybko się pobiera.";
+    live_tip_jitter =>
+        "How much the latency jumps about from packet to packet.
+
+A steady 80 ms is easier on a \
+         call than an average of 40 ms that swings between 10 and 90, because the far end waits \
+         for the slowest packet either way. This is the number that explains a call breaking up \
+         while the latency looks fine.",
+        "O ile opóźnienie skacze z pakietu na pakiet.
+
+Równe 80 ms jest dla rozmowy łatwiejsze niż \
+         średnia 40 ms skacząca między 10 a 90, bo druga strona i tak czeka na najwolniejszy \
+         pakiet. To ta liczba tłumaczy rwaną rozmowę przy ładnie wyglądającym opóźnieniu.";
+    live_tip_loss =>
+        "The share of packets that never came back, over the last five minutes.
+
+Whatever goes \
+         missing has to be sent again, which is why a percent or two can hurt more than a high \
+         latency. Steady loss points at the link; loss in short bursts usually means something \
+         on the way was briefly overloaded.",
+        "Udział pakietów, które nigdy nie wróciły, z ostatnich pięciu minut.
+
+Co zginie, trzeba wysłać \
+         ponownie — dlatego procent czy dwa potrafią zaszkodzić bardziej niż wysokie opóźnienie. \
+         Stała strata wskazuje na łącze; strata w krótkich seriach zwykle oznacza chwilowe \
+         przeciążenie czegoś po drodze.";
+    live_tip_router =>
+        "The trip to your own router and back — the first hop, and the only stretch of the path \
+         that is entirely yours.
+
+Over cable this sits well under a millisecond; over Wi-Fi a few \
+         milliseconds is normal and tens of them mean interference or distance. If this number \
+         is bad, every other number on this page is bad for the same reason.",
+        "Droga do własnego routera i z powrotem — pierwszy skok i jedyny odcinek trasy w całości \
+         Twój.
+
+Po kablu jest to grubo poniżej milisekundy; po Wi-Fi kilka milisekund jest \
+         normalne, a kilkadziesiąt oznacza zakłócenia albo odległość. Jeśli ta liczba jest zła, \
+         wszystkie pozostałe na tej stronie są złe z tego samego powodu.";
+    live_tip_dns =>
+        "How long it took to turn a name like example.com into an address.
+
+It is paid once when \
+         you open a site you have not visited in a while, not on every packet, so it shows up as \
+         a page hanging before it starts loading rather than as a slow connection. A slow \
+         resolver is worth replacing, and the Optimise tab does it.",
+        "Ile trwała zamiana nazwy w rodzaju example.com na adres.
+
+Płaci się to raz, przy otwieraniu \
+         strony, na której dawno nie byłeś, a nie przy każdym pakiecie — więc objawia się jako \
+         strona, która chwilę wisi, zanim zacznie się ładować, a nie jako wolne łącze. Wolny \
+         resolver warto wymienić, robi to zakładka Optymalizacja.";
+    live_tip_uptime =>
+        "An outage here means every target stopped answering at once, for long enough to count — \
+         not one lost packet.
+
+This is the figure to quote when reporting a fault, because it is \
+         the one a provider cannot argue with.",
+        "Awaria oznacza tutaj, że wszystkie cele przestały odpowiadać naraz, na tyle długo, by to \
+         liczyć — a nie pojedynczy zgubiony pakiet.
+
+Tę liczbę warto podać przy zgłaszaniu awarii, \
+         bo z nią dostawca nie będzie dyskutował.";
 
     live_btn_pause => "Pause monitor", "Wstrzymaj monitor";
     live_btn_resume => "Resume monitor", "Wznów monitor";
@@ -359,7 +440,6 @@ poprosisz.";
         "Jeszcze nieuruchomiony. Przechodzi całą trasę raz, także te skoki, \
          które pomija ciągły pomiar po lewej.";
     live_scale_ok => "good", "dobre";
-    live_axis_unit => "milliseconds", "milisekundy";
     live_range_label => "window", "okno";
     live_smooth => "trend", "trend";
     live_smooth_hint =>
@@ -368,10 +448,88 @@ poprosisz.";
         "Rysuj średnią każdego wycinka zamiast jego rozpiętości. Pokazuje kształt godziny; ukrywa \
          pojedyncze skoki, o których i tak mówi licznik poniżej.";
     live_series_toggle => "click to hide this line", "kliknij, żeby ukryć tę linię";
+    live_series_show => "click to show this line again", "kliknij, żeby pokazać tę linię z powrotem";
+
+    // What a figure on a given line actually means. Four lines of numbers say
+    // nothing until you know which stretch of the path each one covers: the
+    // chart's whole point is that the segment where the number goes bad is
+    // the segment the fault is in.
+    live_meaning_lan =>
+        "Your own router, one hop away over Wi-Fi or cable.\n\nA high figure here is inside your \
+        home — Wi-Fi interference, distance from the router, or the router itself under load. \
+        Nothing further out on the internet can cause it. Note that when this one climbs, every \
+        other line climbs with it, because every packet passes through here first.",
+        "Twój własny router, jeden skok przez Wi-Fi albo kabel.\n\nWysoka wartość tutaj oznacza \
+        problem u Ciebie w domu — zakłócenia Wi-Fi, odległość od routera albo obciążony router. \
+        Nic dalej w internecie nie może tego powodować. Gdy ta linia rośnie, rosną też wszystkie \
+        pozostałe, bo każdy pakiet przechodzi najpierw tędy.";
+    live_meaning_isp =>
+        "The DNS server your provider handed you — the first machine outside your home.\n\nHigh \
+        here while the router is low means the delay starts on the provider's link. High here \
+        while 1.1.1.1 and 8.8.8.8 stay low means only that one resolver is slow: it delays every \
+        new site you open, and switching DNS on the Optimise tab takes it out of the path.",
+        "Serwer DNS podany przez Twojego dostawcę — pierwsza maszyna poza Twoim domem.\n\nWysoko \
+        tutaj przy niskim routerze oznacza, że opóźnienie zaczyna się na łączu dostawcy. Wysoko \
+        tutaj, gdy 1.1.1.1 i 8.8.8.8 są niskie, oznacza, że wolny jest sam ten resolver: opóźnia \
+        każdą nowo otwieraną stronę, a zmiana DNS w zakładce Optymalizacja wyjmuje go ze \
+        ścieżki.";
+    live_meaning_internet =>
+        "A public server far out on the internet (1.1.1.1 is Cloudflare, 8.8.8.8 is \
+        Google).\n\nBoth are built to answer instantly, so whatever you see here is the path, \
+        not the server. This is the full route: your Wi-Fi, your router, your provider, and the \
+        backbone beyond them. High on these while the router stays low puts the fault outside \
+        your home.\n\nHigh on one of them alone, with the other fine, is that single route \
+        having a bad moment and is not something you can fix.",
+        "Publiczny serwer daleko w internecie (1.1.1.1 to Cloudflare, 8.8.8.8 to Google).\n\nOba \
+        są zbudowane tak, by odpowiadać natychmiast, więc to, co tu widzisz, to stan trasy, a \
+        nie serwera. To cała droga: Twoje Wi-Fi, Twój router, Twój dostawca i sieć szkieletowa \
+        za nimi. Wysoko tutaj przy niskim routerze oznacza, że wina leży poza Twoim \
+        domem.\n\nWysoko na jednym z nich, gdy drugi jest w porządku, to gorszy moment tej \
+        jednej trasy — tego nie naprawisz.";
+    live_meaning_custom =>
+        "A target you added yourself. It is measured the same way as the rest: the figure covers \
+        the whole path to it, so compare it against 1.1.1.1 to tell the route apart from the \
+        host at the end of it.",
+        "Cel dodany przez Ciebie. Mierzony tak samo jak reszta: wartość obejmuje całą drogę do \
+        niego, więc porównaj ją z 1.1.1.1, żeby odróżnić stan trasy od stanu samego hosta na jej \
+        końcu.";
+
+    // Said once, on the axis caption. The unit is the thing the whole tab is
+    // made of and it was never defined anywhere.
+    live_ms_explainer =>
+        "A millisecond is a thousandth of a second. The figure is how long one small packet took \
+        to travel there and back, so it is a round trip, not a one-way distance, and it is not \
+        about download speed at all — a fast connection can have poor latency and the other way \
+        round. Under 30 ms is quick, video calls and games start to suffer past roughly 100 ms.",
+        "Milisekunda to tysięczna część sekundy. Wartość mówi, ile mały pakiet leciał tam i z \
+        powrotem — to podróż w obie strony, nie odległość w jedną. Nie ma to nic wspólnego z \
+        prędkością pobierania: szybkie łącze może mieć kiepskie opóźnienie i odwrotnie. Poniżej \
+        30 ms jest szybko, rozmowy wideo i gry zaczynają cierpieć powyżej mniej więcej 100 ms.";
+
+    live_scale_mid => "elevated", "podwyższone";
+
+    // The key under the plot. Each entry sits next to a swatch in the colour
+    // it describes, so it no longer has to name the colour in words: "red
+    // line = lost packet" was saying in text what the swatch says by being
+    // red, and the row was long enough already.
+    // The row had no name, so it read as loose text that happened to sit
+    // under a chart rather than as the chart's key.
+    live_key_heading => "Chart key", "Legenda wykresu";
+    live_key_lost => "lost packet", "zgubiony pakiet";
+    live_key_spike => "spike on every target", "skok na wszystkich celach";
+    live_key_bands => "thresholds", "progi";
+    live_key_help => "what am I looking at?", "co tu widzę?";
+
     live_hover_lost => "no reply", "brak odpowiedzi";
-    live_hover_hint =>
-        "point at it to read every probe at that moment",
-        "najedź, żeby odczytać każdą sondę z tej chwili";
+    // The same instruction, in the form it takes inside the help rather than
+    // squeezed onto the key row.
+    live_hover_hint_long =>
+        "Point anywhere on the chart to read every target's value at that exact moment, and the \
+         three bands the colours stand for: good, elevated and poor, at the thresholds set on \
+         the Settings tab.",
+        "Najedź w dowolne miejsce wykresu, żeby odczytać wartość każdego celu dokładnie z tej \
+         chwili. Kolory oznaczają trzy pasma: dobre, podwyższone i słabe, według progów \
+         ustawionych w zakładce Ustawienia.";
     live_hover_spike =>
         "a spike hit several targets at once here",
         "w tym miejscu skok dotknął kilku celów naraz";
@@ -1456,7 +1614,9 @@ pub fn bloat_data_used(mib: f64) -> String {
 pub fn bloat_no_load_str() -> &'static str {
     match current() {
         Lang::En => "No load reached the line: every download stream failed. Nothing to grade.",
-        Lang::Pl => "Nie udało się obciążyć łącza: wszystkie strumienie padły. Nie ma czego oceniać.",
+        Lang::Pl => {
+            "Nie udało się obciążyć łącza: wszystkie strumienie padły. Nie ma czego oceniać."
+        }
     }
 }
 
@@ -1484,7 +1644,9 @@ pub fn cli_unknown_flag(flag: &str) -> String {
 pub fn crash_notice(path: &str) -> String {
     match current() {
         Lang::En => format!("NetDoctor stopped unexpectedly. Details were written to:\n{path}"),
-        Lang::Pl => format!("NetDoctor zatrzymał się nieoczekiwanie. Szczegóły zapisano w:\n{path}"),
+        Lang::Pl => {
+            format!("NetDoctor zatrzymał się nieoczekiwanie. Szczegóły zapisano w:\n{path}")
+        }
     }
 }
 
@@ -1749,8 +1911,12 @@ pub fn f_tcp_slow(ms: f64) -> String {
 
 pub fn f_tcp_detail(host: &str, ms: f64, ping: f64) -> String {
     match current() {
-        Lang::En => format!("{host}:443 answered in {ms:.0} ms; ping to the same network is {ping:.0} ms."),
-        Lang::Pl => format!("{host}:443 odpowiedział w {ms:.0} ms; ping do tej samej sieci to {ping:.0} ms."),
+        Lang::En => {
+            format!("{host}:443 answered in {ms:.0} ms; ping to the same network is {ping:.0} ms.")
+        }
+        Lang::Pl => format!(
+            "{host}:443 odpowiedział w {ms:.0} ms; ping do tej samej sieci to {ping:.0} ms."
+        ),
     }
 }
 
@@ -1809,6 +1975,23 @@ pub fn diag_checked_ok(count: usize) -> String {
     match current() {
         Lang::En => format!("Checked and fine ({count})"),
         Lang::Pl => format!("Sprawdzone i w porządku ({count})"),
+    }
+}
+
+/// The same tally as a count, for the row under the plot.
+///
+/// The sentence version is the explanation and belongs on hover; what stays
+/// on screen is how many there were and how they split, which is the part
+/// that changes as the window moves.
+pub fn live_spike_counts(correlated: usize, single: usize) -> String {
+    let total = correlated + single;
+    match current() {
+        Lang::En => {
+            format!("{total} spikes: {correlated} shared, {single} single")
+        }
+        Lang::Pl => {
+            format!("skoki: {total} \u{2014} {correlated} wspólne, {single} pojedyncze")
+        }
     }
 }
 
@@ -2078,51 +2261,39 @@ fn pick(en: &str, pl: &str) -> String {
 /// Headline for a cause code produced by `crate::cause`.
 pub fn cause_title(code: &str) -> String {
     let (en, pl) = match code {
-        "after_tweak" => (
-            "A change applied just before this",
-            "Zmiana zastosowana tuż przed awarią",
-        ),
-        "adapter_powered_down" => (
-            "Windows put the Wi-Fi card to sleep",
-            "Windows uśpił kartę Wi-Fi",
-        ),
-        "adapter_power_plan" => (
-            "The power plan may be parking the radio",
-            "Plan zasilania może wyłączać radio",
-        ),
+        "after_tweak" => {
+            ("A change applied just before this", "Zmiana zastosowana tuż przed awarią")
+        }
+        "adapter_powered_down" => {
+            ("Windows put the Wi-Fi card to sleep", "Windows uśpił kartę Wi-Fi")
+        }
+        "adapter_power_plan" => {
+            ("The power plan may be parking the radio", "Plan zasilania może wyłączać radio")
+        }
         "out_of_range" => ("Out of range of the access point", "Poza zasięgiem access pointa"),
-        "adapter_or_driver" => (
-            "The adapter disappeared: driver or hardware",
-            "Karta zniknęła: sterownik albo sprzęt",
-        ),
-        "roaming" => (
-            "Handover to another access point",
-            "Przełączenie na inny access point",
-        ),
+        "adapter_or_driver" => {
+            ("The adapter disappeared: driver or hardware", "Karta zniknęła: sterownik albo sprzęt")
+        }
+        "roaming" => ("Handover to another access point", "Przełączenie na inny access point"),
         "signal_fade" => ("The signal faded away", "Sygnał stopniowo zanikał"),
-        "airtime_24ghz" => (
-            "The 2.4 GHz channel is crowded",
-            "Kanał 2.4 GHz jest zatłoczony",
-        ),
+        "airtime_24ghz" => ("The 2.4 GHz channel is crowded", "Kanał 2.4 GHz jest zatłoczony"),
         "router_side" => (
             "The radio was fine, the router side was not",
             "Radio było w porządku, problem po stronie routera",
         ),
-        "weak_signal" => ("Weak signal at the moment of the drop", "Słaby sygnał w chwili zerwania"),
+        "weak_signal" => {
+            ("Weak signal at the moment of the drop", "Słaby sygnał w chwili zerwania")
+        }
         "marginal_link" => ("The link was marginal", "Łącze było na granicy"),
         "cable_or_router" => ("Cable or router, not Wi-Fi", "Kabel albo router, nie Wi-Fi"),
         "isp_sustained" => ("A sustained outage at the provider", "Dłuższa awaria u dostawcy"),
         "isp_brief" => ("A brief drop on the WAN side", "Krótki zryw po stronie WAN"),
         "isp_pattern" => ("The provider drops repeatedly", "Dostawca zrywa regularnie"),
-        "dns_router_only" => (
-            "The router is the only resolver",
-            "Router jest jedynym resolverem",
-        ),
+        "dns_router_only" => ("The router is the only resolver", "Router jest jedynym resolverem"),
         "dns_resolver" => ("The resolver did not answer", "Resolver nie odpowiedział"),
-        "local_saturation" => (
-            "The link to the router was saturated",
-            "Łącze do routera było wysycone",
-        ),
+        "local_saturation" => {
+            ("The link to the router was saturated", "Łącze do routera było wysycone")
+        }
         "rate_collapse" => ("The Wi-Fi rate collapsed", "Prędkość Wi-Fi załamała się"),
         "time_pattern" => ("It happens at the same hour", "Zdarza się o tej samej godzinie"),
         "no_evidence" => ("No evidence was recorded", "Nie zapisano dowodów"),
@@ -2134,39 +2305,32 @@ pub fn cause_title(code: &str) -> String {
             "The connection was still coming back from sleep",
             "Połączenie wracało jeszcze po uśpieniu",
         ),
-        "log_driver_fault" => (
-            "The adapter driver logged an error",
-            "Sterownik karty zapisał błąd",
-        ),
-        "log_wlan_inactivity" => (
-            "The access point dropped an idle card",
-            "Access point odrzucił bezczynną kartę",
-        ),
+        "log_driver_fault" => {
+            ("The adapter driver logged an error", "Sterownik karty zapisał błąd")
+        }
+        "log_wlan_inactivity" => {
+            ("The access point dropped an idle card", "Access point odrzucił bezczynną kartę")
+        }
         "log_wlan_auth" => (
             "Authentication with the access point failed",
             "Uwierzytelnianie z access pointem nie powiodło się",
         ),
-        "log_wlan_ap_rejected" => (
-            "The access point turned the card away",
-            "Access point odmówił karcie",
-        ),
-        "log_wlan_deauth" => (
-            "Windows recorded the wireless disconnect",
-            "Windows zapisał rozłączenie Wi-Fi",
-        ),
+        "log_wlan_ap_rejected" => {
+            ("The access point turned the card away", "Access point odmówił karcie")
+        }
+        "log_wlan_deauth" => {
+            ("Windows recorded the wireless disconnect", "Windows zapisał rozłączenie Wi-Fi")
+        }
         "log_dhcp" => ("The DHCP lease failed", "Dzierżawa DHCP nie powiodła się"),
-        "log_duplicate_ip" => (
-            "Another device has the same address",
-            "Inne urządzenie ma ten sam adres",
-        ),
-        "log_link_down" => (
-            "Windows saw the interface go down",
-            "Windows zobaczył wyłączenie interfejsu",
-        ),
-        "log_clean_isp" => (
-            "Nothing went wrong on this machine",
-            "Po stronie tego komputera nic się nie zepsuło",
-        ),
+        "log_duplicate_ip" => {
+            ("Another device has the same address", "Inne urządzenie ma ten sam adres")
+        }
+        "log_link_down" => {
+            ("Windows saw the interface go down", "Windows zobaczył wyłączenie interfejsu")
+        }
+        "log_clean_isp" => {
+            ("Nothing went wrong on this machine", "Po stronie tego komputera nic się nie zepsuło")
+        }
         other => return other.to_string(),
     };
     pick(en, pl)
@@ -2515,7 +2679,12 @@ pub fn ev_isp(duration: Option<f64>) -> String {
     let d = match duration {
         Some(d) if d >= 60.0 => format!("{:.0} min", d / 60.0),
         Some(d) => format!("{d:.0} s"),
-        None => return pick("the router kept answering; it is still down", "router odpowiadał; awaria trwa"),
+        None => {
+            return pick(
+                "the router kept answering; it is still down",
+                "router odpowiadał; awaria trwa",
+            )
+        }
     };
     match current() {
         Lang::En => format!("the router kept answering for the whole {d}; only the WAN was gone"),
@@ -2564,7 +2733,9 @@ pub fn ev_rate_drop(from: u32, to: u32) -> String {
 
 pub fn ev_time_pattern(count: usize, hour: i64) -> String {
     match current() {
-        Lang::En => format!("{count} of these outages started between {hour:02}:00 and {:02}:00", hour + 1),
+        Lang::En => {
+            format!("{count} of these outages started between {hour:02}:00 and {:02}:00", hour + 1)
+        }
         Lang::Pl => {
             format!("{count} z tych awarii zaczęło się między {hour:02}:00 a {:02}:00", hour + 1)
         }
@@ -2618,6 +2789,50 @@ pub fn live_above_scale(n: usize, top: f64) -> String {
     match current() {
         Lang::En => format!("{n} above {top:.0} ms, off the top"),
         Lang::Pl => format!("{n} powyżej {top:.0} ms, poza skalą"),
+    }
+}
+
+/// The number written on a threshold line, in the plot.
+///
+/// Short on purpose: it sits on the chart, over the data, and it only has to
+/// say which height this line is at. The unit is there because the y axis
+/// carries bare numbers and the caption names the unit once, a long way from
+/// this line.
+pub fn live_threshold_mark(ms: f64) -> String {
+    // The line is drawn at the exact value, so a whole-number label on a
+    // threshold of 62.5 would name a height the line is not at.
+    if (ms - ms.round()).abs() < 0.05 {
+        format!("{ms:.0} ms")
+    } else {
+        format!("{ms:.1} ms")
+    }
+}
+
+/// Everything the chart's markings mean, in one place.
+///
+/// This was a row of seven items under the plot: the unit, two markings, three
+/// threshold words, an instruction, and a live count — unrelated things joined
+/// by dots, wrapping wherever the window happened to end. Most of it never
+/// changed and only had to be read once, so it lives here, behind one badge,
+/// and the row keeps the parts that are actually about the data on screen.
+pub fn live_chart_help() -> String {
+    let parts = [live_ms_explainer(), live_spike_explainer(), live_hover_hint_long()];
+    parts.join("\n\n")
+}
+
+/// What a given probe target is, and what a high reading on it means.
+///
+/// Keyed on the scope rather than on the address, so a target the user adds
+/// gets an honest answer instead of the wrong canned one.
+pub fn live_target_meaning(key: &str, scope: crate::settings::Scope) -> &'static str {
+    use crate::settings::Scope;
+    if key.starts_with("custom") {
+        return live_meaning_custom();
+    }
+    match scope {
+        Scope::Lan => live_meaning_lan(),
+        Scope::Isp => live_meaning_isp(),
+        Scope::Internet => live_meaning_internet(),
     }
 }
 
@@ -2709,11 +2924,17 @@ pub fn clock_offset(secs: f64) -> String {
 pub fn wlan_reason(code: u32) -> String {
     let (en, pl) = match code {
         1 => ("unspecified", "nieokreślony"),
-        2 => ("the previous authentication was no longer valid", "poprzednie uwierzytelnienie przestało być ważne"),
+        2 => (
+            "the previous authentication was no longer valid",
+            "poprzednie uwierzytelnienie przestało być ważne",
+        ),
         3 => ("the station is leaving the network", "stacja opuszcza sieć"),
         4 => ("disassociated for inactivity", "rozłączenie z powodu bezczynności"),
         5 => ("the access point had no capacity left", "access point nie miał już wolnych miejsc"),
-        6 | 7 => ("a frame arrived from an unassociated station", "nadeszła ramka od niepowiązanej stacji"),
+        6 | 7 => (
+            "a frame arrived from an unassociated station",
+            "nadeszła ramka od niepowiązanej stacji",
+        ),
         8 => ("the station is leaving the BSS", "stacja opuszcza BSS"),
         15 => ("the four-way handshake timed out", "four-way handshake przekroczył czas"),
         23 => ("802.1X authentication failed", "uwierzytelnianie 802.1X nie powiodło się"),
@@ -2860,9 +3081,9 @@ pub fn mon_jitter_detail(jitter: f64) -> String {
         Lang::En => {
             format!("Jitter {jitter:.0} ms. Latency is swinging, which shows up as lag in games.")
         }
-        Lang::Pl => format!(
-            "Jitter {jitter:.0} ms. Opóźnienie skacze, co w grach objawia się jako lagi."
-        ),
+        Lang::Pl => {
+            format!("Jitter {jitter:.0} ms. Opóźnienie skacze, co w grach objawia się jako lagi.")
+        }
     }
 }
 
@@ -2937,16 +3158,16 @@ pub fn hist_summary(count: usize, where_text: &str) -> String {
 /// Sub-line under the latency card: the 5-minute range.
 pub fn live_minmax(min: f64, max: f64) -> String {
     match current() {
-        Lang::En => format!("min {min:.0} / max {max:.0} (5 min)"),
-        Lang::Pl => format!("min {min:.0} / maks {max:.0} (5 min)"),
+        Lang::En => format!("1.1.1.1 \u{b7} min {min:.0} / max {max:.0}"),
+        Lang::Pl => format!("1.1.1.1 \u{b7} min {min:.0} / maks {max:.0}"),
     }
 }
 
 /// Sub-line under the router card.
 pub fn live_router_loss(pct: f64) -> String {
     match current() {
-        Lang::En => format!("loss {pct:.1}%"),
-        Lang::Pl => format!("strata {pct:.1}%"),
+        Lang::En => format!("first hop \u{b7} loss {pct:.1}%"),
+        Lang::Pl => format!("pierwszy skok \u{b7} strata {pct:.1}%"),
     }
 }
 
@@ -3257,13 +3478,40 @@ mod tests {
     }
 
     #[test]
+    fn no_string_carries_the_indent_of_its_own_source() {
+        // A wrapped literal keeps its lines joined with a trailing backslash,
+        // which eats the newline and the indent after it. Lose the backslash
+        // and the indent becomes part of the string: the UI showed "Oba są
+        // <ten spaces> zbudowane", in every text long enough to wrap. It is
+        // invisible in the source and obvious on screen, which is the wrong
+        // way round, so the test looks for it instead of a reader.
+        //
+        // Three spaces rather than two: a couple of strings line up columns or
+        // indent a note on purpose, and none of them does it with three.
+        for (name, en, pl) in ALL_STRINGS {
+            for text in [en, pl] {
+                // Block text — the CLI help — is laid out on purpose and is
+                // the one place runs of spaces mean something. It gives itself
+                // away by indenting a line; prose never starts a line with a
+                // space, it only ever separates paragraphs with a blank one.
+                if text.contains("\n ") || text.contains("\n\t") {
+                    continue;
+                }
+                assert!(!text.contains("   "), "{name}: a run of spaces from the source indent");
+            }
+        }
+    }
+
+    #[test]
     fn polish_text_is_actually_polish() {
-        with_language_lock(|| in_polish(|| {
-            // Guards against a key added with the English string pasted into
-            // both slots, which compiles and silently ships untranslated.
-            assert_ne!(mon_ok(), "Connection healthy");
-            assert_ne!(f_wired(), "Wired connection");
-            assert_ne!(tw_power_title(), "Stop Windows powering down the network adapter");
-        }));
+        with_language_lock(|| {
+            in_polish(|| {
+                // Guards against a key added with the English string pasted into
+                // both slots, which compiles and silently ships untranslated.
+                assert_ne!(mon_ok(), "Connection healthy");
+                assert_ne!(f_wired(), "Wired connection");
+                assert_ne!(tw_power_title(), "Stop Windows powering down the network adapter");
+            })
+        });
     }
 }

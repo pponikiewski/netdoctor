@@ -109,10 +109,8 @@ pub fn figure(text: impl Into<String>, size: f32, colour: egui::Color32) -> egui
 /// supply the character. A circle is two numbers; it should not depend on a
 /// font's idea of a bullet.
 pub fn status_dot(ui: &mut egui::Ui, colour: egui::Color32, radius: f32) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(radius * 2.0, radius * 2.0),
-        egui::Sense::hover(),
-    );
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(radius * 2.0, radius * 2.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), radius, colour);
 }
 
@@ -189,6 +187,14 @@ pub struct App {
     pub hidden_series: std::collections::HashSet<String>,
     /// The chart's samples, reduced and kept between frames.
     pub chart_cache: Option<live::ChartCache>,
+    /// The headline cards, kept between frames for the same reason.
+    ///
+    /// Building them costs three queries against the store, one of them a
+    /// scan of a day of outages, and every one takes the lock the monitor
+    /// thread writes through. They used to be built on every frame, which is
+    /// twice a second at rest and as fast as the display refreshes while the
+    /// pointer is over the chart.
+    pub card_cache: Option<live::CardCache>,
 
     pub tweak_states: Vec<(String, String, Option<bool>)>,
     pub selected_tweak: Option<usize>,
@@ -253,6 +259,7 @@ impl App {
             chart_smooth: false,
             hidden_series: std::collections::HashSet::new(),
             chart_cache: None,
+            card_cache: None,
             tweak_states: Vec::new(),
             selected_tweak: None,
             air: Default::default(),
@@ -358,11 +365,7 @@ impl App {
                 self.toast(text, status_colour(snap.status), now);
             } else if self.last_status != Status::Ok {
                 let secs = self.outage_started.map(|s| snap.ts - s).unwrap_or(0.0);
-                self.toast(
-                    crate::i18n::toast_restored(secs),
-                    GREEN,
-                    now,
-                );
+                self.toast(crate::i18n::toast_restored(secs), GREEN, now);
                 self.outage_started = None;
             }
             self.last_status = snap.status;
@@ -413,9 +416,11 @@ impl eframe::App for App {
                         // pill egui gives a selected `selectable_label` reads
                         // as a pressed button, which is the wrong promise for
                         // something that is already the current view.
-                        let text = egui::RichText::new(label)
-                            .size(T_HEAD)
-                            .color(if selected { FG } else { FG_DIM });
+                        let text = egui::RichText::new(label).size(T_HEAD).color(if selected {
+                            FG
+                        } else {
+                            FG_DIM
+                        });
                         let text = if selected { text.strong() } else { text };
 
                         let response = ui.selectable_label(selected, text);
@@ -441,17 +446,17 @@ impl eframe::App for App {
                 // it the tab strip and the content below are one undivided
                 // field of the same colour.
                 let rect = ui.max_rect();
-                ui.painter().hline(
-                    rect.x_range(),
-                    ui.cursor().top(),
-                    egui::Stroke::new(1.0, LINE),
-                );
+                ui.painter().hline(rect.x_range(), ui.cursor().top(), egui::Stroke::new(1.0, LINE));
             });
 
         if let Some((text, colour, until)) = self.toast.clone() {
             if now < until {
                 egui::TopBottomPanel::bottom("toast")
-                    .frame(egui::Frame::none().fill(BG2).inner_margin(egui::Margin::symmetric(GUTTER, S_SM)))
+                    .frame(
+                        egui::Frame::none()
+                            .fill(BG2)
+                            .inner_margin(egui::Margin::symmetric(GUTTER, S_SM)),
+                    )
                     .show(ctx, |ui| {
                         ui.horizontal(|ui| {
                             status_dot(ui, colour, 5.0);
@@ -518,10 +523,7 @@ impl App {
                 |ui| {
                     ui.set_max_width(left_w);
                     ui.label(
-                        egui::RichText::new(status.headline())
-                            .size(T_LEAD)
-                            .strong()
-                            .color(FG),
+                        egui::RichText::new(status.headline()).size(T_LEAD).strong().color(FG),
                     );
                     ui.add_space(S_XS * 0.5);
                     let facts = self.connection_facts();
@@ -539,7 +541,11 @@ impl App {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                 if self.elevated {
-                    ui.label(egui::RichText::new(crate::i18n::hdr_administrator()).size(T_META).color(GREEN));
+                    ui.label(
+                        egui::RichText::new(crate::i18n::hdr_administrator())
+                            .size(T_META)
+                            .color(GREEN),
+                    );
                 } else {
                     // The caveat used to sit to the *left* of the button, on
                     // the same line, where it ate a third of the header's
@@ -661,7 +667,9 @@ impl App {
                 facts.push(Fact::new(crate::i18n::word_gateway(), gateway, FG));
                 facts.push(Fact::new(
                     "DNS",
-                    dash(n.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")),
+                    dash(
+                        n.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", "),
+                    ),
                     FG,
                 ));
             }
@@ -670,11 +678,7 @@ impl App {
         // The adapter's name is the longest string on the line and the one
         // least often needed, so it goes last and stays dim instead of pushing
         // the network name and the signal off to the right.
-        facts.push(Fact::new(
-            crate::i18n::word_adapter(),
-            n.adapter_name.clone(),
-            FG_DIM,
-        ));
+        facts.push(Fact::new(crate::i18n::word_adapter(), n.adapter_name.clone(), FG_DIM));
         facts
     }
 }
@@ -762,11 +766,8 @@ fn append(
     colour: egui::Color32,
     monospace: bool,
 ) {
-    let family = if monospace {
-        egui::FontFamily::Monospace
-    } else {
-        egui::FontFamily::Proportional
-    };
+    let family =
+        if monospace { egui::FontFamily::Monospace } else { egui::FontFamily::Proportional };
     job.append(
         text,
         leading_space,
@@ -792,19 +793,82 @@ pub fn is_narrow(ui: &egui::Ui) -> bool {
 }
 
 /// Small stat card used on the live and load-test tabs.
+/// How wide a tooltip carrying prose is allowed to get.
+///
+/// egui lays a tooltip out on one line unless it is told not to, and these
+/// are paragraphs. Around this width a line holds some sixty characters,
+/// which is the span the eye can return from without losing its place.
+pub const TIP_WIDTH: f32 = 380.0;
+
+/// Prose in a tooltip, laid out to be read rather than scanned.
+///
+/// The text arrives as paragraphs separated by a blank line and is drawn as
+/// paragraphs: a four-sentence explanation set as one block at the caption
+/// size was technically present and practically unread. The opening paragraph
+/// answers "what is this" and is set in the primary colour; what follows is
+/// the detail, and is dimmer so the eye can stop after the first if that was
+/// all it needed.
+pub fn tip_prose(ui: &mut egui::Ui, text: &str) {
+    ui.set_max_width(TIP_WIDTH);
+    for (i, para) in text.split("\n\n").enumerate() {
+        if i > 0 {
+            ui.add_space(S_SM);
+        }
+        ui.label(egui::RichText::new(para).size(T_BODY).color(if i == 0 { FG } else { FG_DIM }));
+    }
+}
+
+/// A tooltip's title: what the thing is called, over the prose about it.
+pub fn tip_heading(ui: &mut egui::Ui, text: &str) {
+    ui.set_max_width(TIP_WIDTH);
+    ui.label(egui::RichText::new(text).size(T_HEAD).color(FG).strong());
+    ui.add_space(S_XS);
+    ui.separator();
+    ui.add_space(S_SM);
+}
+
+/// The common case: a card sized to its own content, with no explanation.
 pub fn stat_card(
     ui: &mut egui::Ui,
     label: &str,
     value: &str,
     sub: &str,
     colour: egui::Color32,
-) {
-    egui::Frame::none()
+) -> egui::Response {
+    stat_card_ex(ui, label, value, sub, colour, None, "")
+}
+
+/// One headline number, its name, and a line of context under it.
+///
+/// `width` pins the card's inner width, which is what a row of cards laid out
+/// in columns needs: left to size themselves, cards came out different widths
+/// depending on how many digits their value happened to have that second, and
+/// the row stopped being a row.
+///
+/// `tip` is what the number means — not a repeat of the label. A card says
+/// "Jitter, 2.3 ms" to someone who already knows what jitter is and nothing
+/// at all to anyone else, and the second group is who this app is for.
+pub fn stat_card_ex(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &str,
+    sub: &str,
+    colour: egui::Color32,
+    width: Option<f32>,
+    tip: &str,
+) -> egui::Response {
+    let response = egui::Frame::none()
         .fill(BG2)
         .rounding(6.0)
         .inner_margin(egui::Margin::same(S_MD))
         .show(ui, |ui| {
-            ui.set_min_width(140.0);
+            match width {
+                Some(w) => {
+                    ui.set_min_width(w);
+                    ui.set_max_width(w);
+                }
+                None => ui.set_min_width(140.0),
+            }
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(label).size(T_META).color(FG_DIM));
                 // The value is the reason the card exists and it changes every
@@ -812,9 +876,24 @@ pub fn stat_card(
                 // in place between frames.
                 ui.label(figure(value, T_METRIC, colour).strong());
                 ui.add_space(S_XS * 0.5);
+                // A card with nothing to say on the third line still keeps the
+                // line. Without it that card is shorter than the ones beside
+                // it, and a row of cards at different heights reads as a
+                // layout fault rather than as a card with less to say.
+                let sub = if sub.is_empty() { "\u{a0}" } else { sub };
                 ui.label(egui::RichText::new(sub).size(T_MICRO).color(FG_DIM));
             });
-        });
+        })
+        .response;
+
+    if tip.is_empty() {
+        response
+    } else {
+        response.on_hover_ui(|ui| {
+            tip_heading(ui, label);
+            tip_prose(ui, tip);
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -930,9 +1009,8 @@ fn btn_colours(
 /// `min_w`, and the row holds still.
 pub fn btn_width(ui: &egui::Ui, label: &str) -> f32 {
     let font = egui::FontId::new(T_BODY, egui::FontFamily::Proportional);
-    let galley = ui.fonts(|f| {
-        f.layout_no_wrap(label.to_string(), font, egui::Color32::PLACEHOLDER)
-    });
+    let galley =
+        ui.fonts(|f| f.layout_no_wrap(label.to_string(), font, egui::Color32::PLACEHOLDER));
     galley.size().x + BTN_PAD_X * 2.0
 }
 
@@ -947,28 +1025,27 @@ pub fn button_ex(
     let font = egui::FontId::new(T_BODY, egui::FontFamily::Proportional);
     // Laid out in PLACEHOLDER so the paint call can supply the colour once the
     // response says which state we are in.
-    let galley = ui.fonts(|f| {
-        f.layout_no_wrap(label.to_string(), font, egui::Color32::PLACEHOLDER)
-    });
+    let galley =
+        ui.fonts(|f| f.layout_no_wrap(label.to_string(), font, egui::Color32::PLACEHOLDER));
 
     let w = (galley.size().x + BTN_PAD_X * 2.0).max(min_w);
     let sense = if enabled { egui::Sense::click() } else { egui::Sense::hover() };
     let (rect, response) = ui.allocate_exact_size(egui::vec2(w, BTN_H), sense);
 
     if ui.is_rect_visible(rect) {
-        let (fill, stroke, text) =
-            btn_colours(emphasis, enabled, response.hovered(), response.is_pointer_button_down_on());
+        let (fill, stroke, text) = btn_colours(
+            emphasis,
+            enabled,
+            response.hovered(),
+            response.is_pointer_button_down_on(),
+        );
 
         ui.painter().rect(rect, BTN_R, fill, egui::Stroke::new(1.0, stroke));
 
         // Keyboard focus, drawn outside the button so it never eats into the
         // label or the fill.
         if response.has_focus() {
-            ui.painter().rect_stroke(
-                rect.expand(2.0),
-                BTN_R + 2.0,
-                egui::Stroke::new(1.0, ACCENT),
-            );
+            ui.painter().rect_stroke(rect.expand(2.0), BTN_R + 2.0, egui::Stroke::new(1.0, ACCENT));
         }
 
         let pos = rect.center() - galley.size() * 0.5;
@@ -1028,7 +1105,55 @@ fn apply_theme(ctx: &egui::Context) {
     ]
     .into();
 
+    // Give the scroll bar a strip of its own down the right-hand side.
+    //
+    // egui's floating scroll bars allocate nothing and are painted over the
+    // content, so the moment one appeared it sat on the right edge of
+    // whatever was underneath — on the live tab, the newest end of the chart,
+    // which is the part being watched. This is the width it gets instead.
+    //
+    // `ScrollArea` multiplies this by how far the bar is shown, so the strip
+    // costs nothing on a view that fits and is only taken while a bar is
+    // actually there. The content therefore does narrow by this much as the
+    // bar fades in, which is a reflow — but it is the same reflow a solid
+    // scroll bar would cause, it is animated rather than instant, and the
+    // alternative is the bar covering live data.
+    style.spacing.scroll.floating_allocated_width = style.spacing.scroll.bar_width + 2.0;
+
+    // Tooltips appear the instant the pointer is over the thing, everywhere.
+    //
+    // egui's defaults are built for a tooltip that repeats a button's label:
+    // it waits for the pointer to come to rest, then waits another third of a
+    // second, and skips both if another tooltip was shown in the last few
+    // hundred milliseconds. That last rule is why the delay felt random
+    // rather than slow — the same chip opened instantly or late depending on
+    // where the pointer had been beforehand. Here a tooltip is not a repeat
+    // of the label; it is where the explanation of a reading lives, and the
+    // readout on the plot is a value that has to track the pointer, which
+    // cannot be done at all by a tooltip that waits for the pointer to stop.
+    //
+    // This has to be set on the context: `Response` reads the tooltip timing
+    // from `ctx.style()`, so the same fields set on a `Ui` are ignored.
+    style.interaction.show_tooltips_only_when_still = false;
+    style.interaction.tooltip_delay = 0.0;
+    style.interaction.tooltip_grace_time = 0.0;
+
     ctx.set_style(style);
+}
+
+/// Name a latency figure by the same thresholds that colour it.
+///
+/// The colour already says good-or-bad to anyone who knows the convention;
+/// the word says it to everyone else, and it is the difference between a
+/// number on a chart and a number the user can act on.
+pub fn latency_verdict(ms: f64, s: &Settings) -> &'static str {
+    if ms < s.ping_ok_ms {
+        crate::i18n::live_scale_ok()
+    } else if ms < s.ping_bad_ms {
+        crate::i18n::live_scale_mid()
+    } else {
+        crate::i18n::live_scale_bad()
+    }
 }
 
 /// Colour a latency figure by the configured thresholds.

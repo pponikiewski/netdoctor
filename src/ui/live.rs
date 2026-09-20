@@ -1,9 +1,13 @@
 //! Live tab: the latency plot and the headline numbers.
 
 use eframe::egui;
-use egui_plot::{HLine, Line, Plot, PlotBounds, PlotPoints, VLine};
+use egui_plot::{HLine, Line, Plot, PlotBounds, PlotPoint, PlotPoints, Text, VLine};
 
-use super::{btn_width, button, button_ex, is_narrow, latency_colour, stat_card, App, Emphasis, Job, ACCENT, FG, FG_DIM, GREEN, RED, SERIES_COLOURS, S_MD, S_SM, S_XS, T_BODY, T_META, T_MICRO, YELLOW};
+use super::{
+    btn_width, button, button_ex, figure, is_narrow, latency_colour, App, Emphasis, Job, ACCENT,
+    BG2, BG3, FG, FG_DIM, GREEN, LINE, RED, SERIES_COLOURS, S_MD, S_SM, S_XS, T_BODY, T_HEAD,
+    T_META, T_MICRO, YELLOW,
+};
 use crate::i18n;
 use crate::probe::icmp;
 
@@ -76,6 +80,59 @@ fn swatch(ui: &mut egui::Ui, colour: egui::Color32) {
     ui.painter().rect_filled(rect, 1.5, colour);
 }
 
+/// One legend entry, drawn as a chip you can tell is a control.
+///
+/// It was a swatch and a word, which is what a legend looks like when it does
+/// nothing. This one is clickable, and everything about it now says so: a
+/// surface with an edge, a hover state, the pointer changing, and the target's
+/// current reading carried inside it so the chip is worth looking at even when
+/// nobody intends to click. Hidden series keep their place and lose their
+/// colour, because a legend that removes its own entries cannot be used to put
+/// them back.
+fn legend_chip(
+    ui: &mut egui::Ui,
+    colour: egui::Color32,
+    label: &str,
+    value: Option<(String, egui::Color32)>,
+    on: bool,
+) -> egui::Response {
+    // Reserved before the content so the background lands underneath it: the
+    // fill depends on the hover state, which is not known until the content
+    // has been laid out and the rect exists.
+    let bg = ui.painter().add(egui::Shape::Noop);
+
+    let inner = egui::Frame::none().inner_margin(egui::Margin::symmetric(S_SM, S_XS + 1.0)).show(
+        ui,
+        |ui| {
+            ui.spacing_mut().item_spacing.x = S_XS + 2.0;
+            ui.horizontal(|ui| {
+                swatch(ui, if on { colour } else { FG_DIM.linear_multiply(0.35) });
+                let text = egui::RichText::new(label).size(T_BODY).color(if on {
+                    FG
+                } else {
+                    FG_DIM.linear_multiply(0.55)
+                });
+                ui.label(if on { text } else { text.strikethrough() });
+                if let Some((v, c)) = value {
+                    let c = if on { c } else { FG_DIM.linear_multiply(0.45) };
+                    ui.label(figure(v, T_META, c));
+                }
+            });
+        },
+    );
+
+    let resp = inner.response.interact(egui::Sense::click());
+    let (fill, stroke) = if resp.hovered() {
+        (BG3, egui::Stroke::new(1.0, colour.linear_multiply(0.75)))
+    } else if on {
+        (BG2, egui::Stroke::new(1.0, LINE))
+    } else {
+        (egui::Color32::TRANSPARENT, egui::Stroke::new(1.0, LINE))
+    };
+    ui.painter().set(bg, egui::epaint::RectShape::new(resp.rect, 7.0, fill, stroke));
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// How long a window the chart covers, and what the buttons call it.
 pub const RANGES: [f64; 4] = [60.0, 300.0, 900.0, 3600.0];
 
@@ -108,6 +165,15 @@ pub struct ChartSeries {
     /// exactly like an outage, in red, which is the chart claiming a
     /// measurement it never took. Only these get the marker.
     pub outages: Vec<f64>,
+    /// Which stretch of the path this target measures.
+    ///
+    /// Carried on the series rather than looked up when the legend is drawn.
+    /// `Settings::targets()` resolves every hostname the user added, which is
+    /// a blocking DNS lookup, and the legend is drawn on every frame: at the
+    /// one moment the tab repaints continuously, when the pointer is over the
+    /// chart, that was a resolver query per frame from the render thread. The
+    /// cache is rebuilt every second or five, which is where that belongs.
+    pub scope: crate::settings::Scope,
 }
 
 /// The chart's data, held between frames.
@@ -154,8 +220,12 @@ fn refresh(app: &mut App) {
     let range = app.chart_range_s;
     let rows = app.store.samples_between(now - range, now);
 
+    // Resolved once per rebuild. Each call re-resolves every hostname the
+    // user added, and this function used to ask for the list twice.
+    let targets = app.settings.targets();
+
     let mut series = Vec::new();
-    for t in app.settings.targets() {
+    for t in &targets {
         let raw: Vec<(f64, Option<f64>)> = rows
             .iter()
             .filter(|(_, target, _, _)| *target == t.key)
@@ -172,15 +242,14 @@ fn refresh(app: &mut App) {
             points,
             losses,
             outages,
+            scope: t.scope,
         });
     }
 
     // Spikes are counted on the raw readings, not on the reduced ones: a
     // bucket's maximum is a spike by construction, so counting after
     // reduction would report one for every bucket that contains any jitter.
-    let raw_series: Vec<crate::monitor::Series> = app
-        .settings
-        .targets()
+    let raw_series: Vec<crate::monitor::Series> = targets
         .iter()
         .map(|t| {
             rows.iter()
@@ -350,11 +419,13 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
         .filter(|(_, s)| !app.hidden_series.contains(&s.key))
         .map(|(i, s)| (s.clone(), SERIES_COLOURS[i % SERIES_COLOURS.len()]))
         .collect();
-    let all: Vec<(String, String, egui::Color32)> = cache
+    let all: Vec<(String, String, egui::Color32, crate::settings::Scope)> = cache
         .series
         .iter()
         .enumerate()
-        .map(|(i, s)| (s.key.clone(), s.label.clone(), SERIES_COLOURS[i % SERIES_COLOURS.len()]))
+        .map(|(i, s)| {
+            (s.key.clone(), s.label.clone(), SERIES_COLOURS[i % SERIES_COLOURS.len()], s.scope)
+        })
         .collect();
 
     let (y_top, above) = scale(&visible, &app.settings);
@@ -366,100 +437,161 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
     // screen and a fifth of a desktop one.
     let plot_height = (ui.ctx().screen_rect().height() * 0.32).clamp(170.0, 420.0);
 
-    // No delay before the readout appears. egui waits a third of a second
-    // before a tooltip, which is right for a hint attached to a button and
-    // wrong for a value that is meant to track the pointer: by the time it
-    // arrived the pointer had moved, so it felt like lag rather than like
-    // reading the chart.
-    ui.style_mut().interaction.tooltip_delay = 0.0;
-    ui.style_mut().interaction.tooltip_grace_time = 0.0;
+    // The axis numbers were set in the body size, a step and a half above
+    // every other caption on the tab, which made the scale shout over the
+    // thing it was scaling. egui_plot resolves its tick labels against the
+    // style of the `Ui` the plot is added to, so a scope is the only place
+    // this can be said.
+    let plotted = ui
+        .scope(|ui| {
+            ui.style_mut().text_styles.insert(
+                egui::TextStyle::Body,
+                egui::FontId::new(T_MICRO, egui::FontFamily::Proportional),
+            );
+            Plot::new("latency")
+                .height(plot_height)
+                .allow_drag(false)
+                .allow_zoom(false)
+                .allow_scroll(false)
+                .allow_boxed_zoom(false)
+                .show_axes([true, true])
+                // No rotated "ms" down the side: two letters turned on end, drawn
+                // hard against the tick labels, collided with them and bought
+                // nothing. The unit is said once in the caption instead.
+                .x_axis_formatter(|mark, _| {
+                    // x is seconds relative to now, so label it as age. Rounding to
+                    // whole minutes past 90 s printed "-2m" on six consecutive ticks,
+                    // which is not a time axis -- it is the same word six times. Past
+                    // a minute the labels are m:ss, so every tick is its own moment.
+                    // The leading newline is the gap. egui_plot draws the x
+                    // labels at the very top of the axis strip, which is flush
+                    // with the bottom of the plot, and it has no padding to
+                    // offer: an empty first line is the only way to get the
+                    // numbers off the frame without drawing the axis by hand,
+                    // and drawing it by hand would mean picking tick positions
+                    // that the plot's own grid lines would then disagree with.
+                    let back = -mark.value;
+                    if back < 1.0 {
+                        format!("\n{}", i18n::live_x_now())
+                    } else if back < 60.0 {
+                        format!("\n-{back:.0}s")
+                    } else {
+                        let mins = (back / 60.0).floor();
+                        let secs = (back - mins * 60.0).round();
+                        format!("\n-{mins:.0}:{secs:02.0}")
+                    }
+                })
+                .y_axis_formatter(|mark, _| {
+                    // egui_plot right-aligns the y labels hard against the plot's
+                    // left edge and has no padding of its own, so "20" ended up
+                    // touching whichever line happened to pass near it and read as
+                    // part of the chart rather than as its scale. The gap has to be
+                    // part of the text; the spaces are non-breaking because a plain
+                    // trailing space is not guaranteed to keep its width through
+                    // layout.
+                    let v = mark.value;
+                    let text = if (v - v.round()).abs() < 0.05 {
+                        format!("{v:.0}")
+                    } else {
+                        format!("{v:.1}")
+                    };
+                    format!("{text}\u{a0}\u{a0}\u{a0}")
+                })
+                .label_formatter(|_, _| String::new())
+                .show(ui, |plot_ui| {
+                    plot_ui.set_plot_bounds(PlotBounds::from_min_max([x_min, 0.0], [0.0, y_top]));
 
-    let plotted = Plot::new("latency")
-        .height(plot_height)
-        .allow_drag(false)
-        .allow_zoom(false)
-        .allow_scroll(false)
-        .allow_boxed_zoom(false)
-        .show_axes([true, true])
-        // No rotated "ms" down the side: two letters turned on end, drawn
-        // hard against the tick labels, collided with them and bought
-        // nothing. The unit is said once in the caption instead.
-        .x_axis_formatter(|mark, _| {
-            // x is seconds relative to now, so label it as age. Rounding to
-            // whole minutes past 90 s printed "-2m" on six consecutive ticks,
-            // which is not a time axis -- it is the same word six times. Past
-            // a minute the labels are m:ss, so every tick is its own moment.
-            let back = -mark.value;
-            if back < 1.0 {
-                i18n::live_x_now().to_string()
-            } else if back < 60.0 {
-                format!("-{back:.0}s")
-            } else {
-                let mins = (back / 60.0).floor();
-                let secs = (back - mins * 60.0).round();
-                format!("-{mins:.0}:{secs:02.0}")
-            }
-        })
-        .label_formatter(|_, _| String::new())
-        .show(ui, |plot_ui| {
-            plot_ui.set_plot_bounds(PlotBounds::from_min_max([x_min, 0.0], [0.0, y_top]));
+                    // The unit, once, in the corner of the plot it belongs
+                    // to. It used to be a word in the caption row, a long way
+                    // from the numbers it was the unit for; two letters over
+                    // the top of the scale is the whole of what that word had
+                    // to say. "ms" is the same in both languages.
+                    plot_ui.text(
+                        Text::new(
+                            PlotPoint::new(x_min, y_top),
+                            egui::RichText::new("ms").size(T_MICRO).color(FG_DIM),
+                        )
+                        .anchor(egui::Align2::LEFT_TOP),
+                    );
 
-            for (level, colour) in
-                [(app.settings.ping_ok_ms, GREEN), (app.settings.ping_bad_ms, RED)]
-            {
-                if level > 0.0 && level < y_top {
-                    plot_ui.hline(HLine::new(level).color(colour.linear_multiply(0.25)));
-                }
-            }
-
-            for (ts, n) in &spikes.correlated {
-                let strength = if *n >= visible.len().max(2) { 0.42 } else { 0.22 };
-                plot_ui.vline(VLine::new(ts - newest).color(YELLOW.linear_multiply(strength)));
-            }
-
-            let hovered = plot_ui.pointer_coordinate();
-            if let Some(h) = hovered {
-                plot_ui.vline(VLine::new(h.x).color(FG_DIM.linear_multiply(0.30)));
-            }
-
-            for (s, colour) in &visible {
-                for ts in &s.losses {
-                    plot_ui.vline(VLine::new(ts - newest).color(RED.linear_multiply(0.30)));
-                }
-                for ts in &s.outages {
-                    plot_ui.vline(VLine::new(ts - newest).color(RED.linear_multiply(0.6)));
-                }
-
-                // Split at gaps so a lost packet breaks the line instead of
-                // drawing a straight segment across the outage.
-                let mut run: Vec<[f64; 2]> = Vec::new();
-                for (ts, rtt) in &s.points {
-                    let x = ts - newest;
-                    match rtt {
-                        Some(v) => run.push([x, *v]),
-                        None => {
-                            if run.len() > 1 {
-                                plot_ui.line(
-                                    Line::new(PlotPoints::from(std::mem::take(&mut run)))
-                                        .color(*colour)
-                                        .width(1.6)
-                                        .name(&s.label),
-                                );
-                            } else {
-                                run.clear();
-                            }
+                    // The two thresholds, each with its value written on it.
+                    // They were a faint green line and a faint red one with
+                    // nothing to say what height they marked: the reader had
+                    // to find the same number in the settings to learn what
+                    // the chart was drawing. The label sits at the oldest
+                    // edge, where the data is thinnest, and just above the
+                    // line it belongs to.
+                    for (level, colour) in
+                        [(app.settings.ping_ok_ms, GREEN), (app.settings.ping_bad_ms, RED)]
+                    {
+                        if level > 0.0 && level < y_top {
+                            plot_ui.hline(HLine::new(level).color(colour.linear_multiply(0.25)));
+                            plot_ui.text(
+                                Text::new(
+                                    PlotPoint::new(x_min, level),
+                                    egui::RichText::new(i18n::live_threshold_mark(level))
+                                        .size(T_MICRO)
+                                        .color(colour.linear_multiply(0.7)),
+                                )
+                                .anchor(egui::Align2::LEFT_BOTTOM),
+                            );
                         }
                     }
-                }
-                if run.len() > 1 {
-                    plot_ui.line(
-                        Line::new(PlotPoints::from(run)).color(*colour).width(1.6).name(&s.label),
-                    );
-                }
-            }
 
-            hovered
-        });
+                    for (ts, n) in &spikes.correlated {
+                        let strength = if *n >= visible.len().max(2) { 0.42 } else { 0.22 };
+                        plot_ui
+                            .vline(VLine::new(ts - newest).color(YELLOW.linear_multiply(strength)));
+                    }
+
+                    let hovered = plot_ui.pointer_coordinate();
+                    if let Some(h) = hovered {
+                        plot_ui.vline(VLine::new(h.x).color(FG_DIM.linear_multiply(0.30)));
+                    }
+
+                    for (s, colour) in &visible {
+                        for ts in &s.losses {
+                            plot_ui.vline(VLine::new(ts - newest).color(RED.linear_multiply(0.30)));
+                        }
+                        for ts in &s.outages {
+                            plot_ui.vline(VLine::new(ts - newest).color(RED.linear_multiply(0.6)));
+                        }
+
+                        // Split at gaps so a lost packet breaks the line instead of
+                        // drawing a straight segment across the outage.
+                        let mut run: Vec<[f64; 2]> = Vec::new();
+                        for (ts, rtt) in &s.points {
+                            let x = ts - newest;
+                            match rtt {
+                                Some(v) => run.push([x, *v]),
+                                None => {
+                                    if run.len() > 1 {
+                                        plot_ui.line(
+                                            Line::new(PlotPoints::from(std::mem::take(&mut run)))
+                                                .color(*colour)
+                                                .width(1.6)
+                                                .name(&s.label),
+                                        );
+                                    } else {
+                                        run.clear();
+                                    }
+                                }
+                            }
+                        }
+                        if run.len() > 1 {
+                            plot_ui.line(
+                                Line::new(PlotPoints::from(run))
+                                    .color(*colour)
+                                    .width(1.6)
+                                    .name(&s.label),
+                            );
+                        }
+                    }
+
+                    hovered
+                })
+        })
+        .inner;
 
     if let Some(at) = plotted.inner {
         // Repaint while the pointer is over the chart. Without it the readout
@@ -467,7 +599,12 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
         // looks like the crosshair sticking to the last place it was.
         ui.ctx().request_repaint();
         let x = at.x;
-        plotted.response.on_hover_ui(|ui| {
+        // Anchored to the pointer, not to the plot. The readout says what
+        // every series was at the moment under the crosshair, and the
+        // crosshair is wherever the pointer is: shown below the plot instead,
+        // the numbers sat a long way from the place on the chart they
+        // described, and on a tall plot that was most of the window away.
+        plotted.response.on_hover_ui_at_pointer(|ui| {
             readout(ui, &visible, &spikes, newest, x);
         });
     }
@@ -479,24 +616,26 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
     // long name. Two rows cost eight pixels and cannot collide.
     let mut toggled: Option<String> = None;
     ui.horizontal_wrapped(|ui| {
-        for (key, label, colour) in &all {
+        ui.spacing_mut().item_spacing = egui::vec2(S_XS + 2.0, S_XS);
+        for (key, label, colour, scope) in &all {
             let on = !app.hidden_series.contains(key);
-            let shown = if on { *colour } else { FG_DIM.linear_multiply(0.4) };
-            let resp = ui
-                .scope(|ui| {
-                    ui.spacing_mut().item_spacing.x = S_XS;
-                    ui.horizontal(|ui| {
-                        swatch(ui, shown);
-                        ui.label(
-                            egui::RichText::new(label)
-                                .size(T_BODY)
-                                .color(if on { FG_DIM } else { FG_DIM.linear_multiply(0.45) }),
-                        );
-                    })
-                    .response
-                })
-                .inner
-                .interact(egui::Sense::click());
+
+            // The last reading, shown on the chip. This is the number the
+            // user came to the legend for; making them hover for it was the
+            // legend keeping its own contents secret.
+            let sample = app.last.results.get(key);
+            let value = match sample {
+                Some(s) => match (&s.rtt_ms, &s.error) {
+                    (Some(rtt), _) => {
+                        Some((format!("{rtt:.0} ms"), latency_colour(*rtt, &app.settings)))
+                    }
+                    (None, Some(_)) => Some((i18n::live_hover_lost().to_string(), RED)),
+                    (None, None) => None,
+                },
+                None => None,
+            };
+
+            let resp = legend_chip(ui, *colour, label, value, on);
 
             // Four lines crossing each other is the state this chart is in
             // most of the time, and the question is usually about one of
@@ -504,58 +643,54 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
             if resp.clicked() {
                 toggled = Some(key.clone());
             }
-            let tip = match app.last.results.get(key) {
-                Some(sample) => match (&sample.rtt_ms, &sample.error) {
-                    (Some(rtt), _) => format!("{label}: {rtt:.2} ms"),
-                    (None, Some(err)) => format!("{label}: {err}"),
-                    (None, None) => format!("{label}: {}", i18n::live_no_data()),
+
+            // The reading, then what this target is and what a high figure on
+            // it means. The number alone was the part nobody could use: four
+            // lines of milliseconds say nothing until you know which stretch
+            // of the path each one measures.
+            let reading = match sample {
+                Some(s) => match (&s.rtt_ms, &s.error) {
+                    (Some(rtt), _) => (
+                        format!(
+                            "{rtt:.2} ms \u{2014} {}",
+                            super::latency_verdict(*rtt, &app.settings)
+                        ),
+                        latency_colour(*rtt, &app.settings),
+                    ),
+                    (None, Some(err)) => (err.clone(), RED),
+                    (None, None) => (i18n::live_no_data().to_string(), FG_DIM),
                 },
-                None => i18n::live_series_toggle().to_string(),
+                None => (i18n::live_no_data().to_string(), FG_DIM),
             };
-            resp.on_hover_text(format!("{tip}\n{}", i18n::live_series_toggle()));
-            ui.add_space(S_MD);
+            let meaning = i18n::live_target_meaning(key, *scope);
+            let hint = if on { i18n::live_series_toggle() } else { i18n::live_series_show() };
+            let label = label.clone();
+            resp.on_hover_ui(move |ui| {
+                ui.set_max_width(super::TIP_WIDTH);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&label).size(T_HEAD).color(FG).strong());
+                    ui.label(figure(&reading.0, T_BODY, reading.1));
+                });
+                ui.add_space(S_XS);
+                ui.separator();
+                ui.add_space(S_SM);
+                if !meaning.is_empty() {
+                    super::tip_prose(ui, meaning);
+                    ui.add_space(S_SM);
+                }
+                ui.label(
+                    egui::RichText::new(hint)
+                        .size(T_MICRO)
+                        .italics()
+                        .color(ACCENT.linear_multiply(0.85)),
+                );
+            });
         }
     });
 
-    ui.add_space(S_XS);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = S_SM;
-        ui.label(egui::RichText::new(i18n::live_axis_unit()).size(T_MICRO).color(FG_DIM));
-        dot(ui);
-        ui.label(egui::RichText::new(i18n::live_red_line()).size(T_MICRO).color(FG_DIM));
-        dot(ui);
-        ui.label(egui::RichText::new(i18n::live_amber_line()).size(T_MICRO).color(FG_DIM))
-            .on_hover_text(i18n::live_spike_explainer());
-        dot(ui);
-        ui.label(egui::RichText::new(i18n::live_scale_ok()).size(T_MICRO).color(GREEN));
-        ui.label(egui::RichText::new("/").size(T_MICRO).color(FG_DIM));
-        ui.label(egui::RichText::new(i18n::live_scale_bad()).size(T_MICRO).color(RED));
-        dot(ui);
-        ui.label(
-            egui::RichText::new(i18n::live_hover_hint()).size(T_MICRO).italics().color(FG_DIM),
-        );
-        if above > 0 {
-            dot(ui);
-            ui.label(
-                egui::RichText::new(i18n::live_above_scale(above, y_top))
-                    .size(T_MICRO)
-                    .color(YELLOW),
-            );
-        }
-    });
-
-    // The count is the part that reframes the chart: it says in one line how
-    // much of what looks like instability was never about the connection. It
-    // keeps its own line because it is a sentence, not a key.
-    if spikes.single + spikes.correlated.len() > 0 {
-        ui.add_space(S_XS);
-        ui.label(
-            egui::RichText::new(i18n::live_spike_tally(spikes.correlated.len(), spikes.single))
-                .size(T_META)
-                .color(FG_DIM),
-        )
-        .on_hover_text(i18n::live_spike_explainer());
-    }
+    ui.add_space(S_SM);
+    key_row(ui);
+    facts_row(ui, &spikes, above, y_top);
 
     if let Some(key) = toggled {
         if !app.hidden_series.remove(&key) {
@@ -572,7 +707,10 @@ fn range_controls(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(S_XS);
         for secs in RANGES {
             let on = (app.chart_range_s - secs).abs() < 0.5;
-            if ui.selectable_label(on, egui::RichText::new(i18n::range_name(secs)).size(T_META)).clicked() {
+            if ui
+                .selectable_label(on, egui::RichText::new(i18n::range_name(secs)).size(T_META))
+                .clicked()
+            {
                 app.chart_range_s = secs;
             }
         }
@@ -618,10 +756,7 @@ fn dot(ui: &mut egui::Ui) {
 /// threshold lines are drawn when they fall inside the scale and are simply
 /// absent when the link is nowhere near them -- which is itself the answer to
 /// "is that bad".
-fn scale(
-    series: &[(ChartSeries, egui::Color32)],
-    s: &crate::settings::Settings,
-) -> (f64, usize) {
+fn scale(series: &[(ChartSeries, egui::Color32)], s: &crate::settings::Settings) -> (f64, usize) {
     let mut vals: Vec<f64> =
         series.iter().flat_map(|(d, _)| d.points.iter().filter_map(|(_, r)| *r)).collect();
     if vals.is_empty() {
@@ -708,103 +843,246 @@ fn readout(
     }
 }
 
+/// The headline cards, and when they were last read out of the store.
+pub struct CardCache {
+    built_at: f64,
+    stats: Vec<Stat>,
+}
+
+/// How long a set of cards is allowed to stand before it is read again.
+///
+/// One sweep. The figures behind them are averages over five minutes and a
+/// count of a day's outages, so a second is already finer than the data can
+/// move, and it is the cadence the rest of the tab runs at.
+const CARD_MAX_AGE_S: f64 = 1.0;
+
+/// One card's worth of content, decided before anything is laid out.
+pub struct Stat {
+    label: &'static str,
+    value: String,
+    sub: String,
+    colour: egui::Color32,
+    tip: &'static str,
+}
+
+/// The first hop is on a different scale from the rest of the path.
+///
+/// The settings thresholds describe a trip across the internet, where 30 ms is
+/// good. Applied to the router they would call anything short of a disaster
+/// healthy: a wired first hop is a fraction of a millisecond, and a Wi-Fi one
+/// that has reached 20 ms is already the thing ruining every other figure on
+/// the page. These are the numbers that scale belongs on.
+const ROUTER_GOOD_MS: f64 = 5.0;
+const ROUTER_OK_MS: f64 = 20.0;
+
+/// A name lookup is paid once per site rather than per packet, so it is
+/// tolerable at a latency that would be unusable for traffic. Hence its own
+/// pair rather than the latency thresholds.
+const DNS_GOOD_MS: f64 = 60.0;
+const DNS_OK_MS: f64 = 150.0;
+
+/// A latency figure at the precision the size of the number deserves.
+///
+/// The cards printed whole milliseconds for the internet and one decimal for
+/// the router, which is two formats for the same unit sitting side by side.
+/// Below ten the decimal is the only thing distinguishing 1.2 ms from 1.9 ms;
+/// above it, it is noise on a value that moves by whole milliseconds anyway.
+fn ms_text(ms: f64) -> String {
+    // The bound is where the decimal would round away rather than at ten
+    // exactly: 9.95 printed as "10.0 ms" claims a precision the rounding just
+    // threw away, and sits next to "10 ms" from the branch below it.
+    if ms < 9.95 {
+        format!("{ms:.1} ms")
+    } else {
+        format!("{ms:.0} ms")
+    }
+}
+
+/// Green, amber or red by two thresholds, in the order they are crossed.
+fn band(v: f64, good: f64, ok: f64) -> egui::Color32 {
+    if v < good {
+        GREEN
+    } else if v < ok {
+        YELLOW
+    } else {
+        RED
+    }
+}
+
 fn cards(app: &mut App, ui: &mut egui::Ui) {
+    let now = crate::store::now();
+    let stale = match &app.card_cache {
+        Some(c) => now - c.built_at >= CARD_MAX_AGE_S,
+        None => true,
+    };
+    if stale {
+        app.card_cache = Some(CardCache { built_at: now, stats: collect_stats(app) });
+    }
+    let Some(cache) = app.card_cache.as_ref() else {
+        return;
+    };
+    let stats = &cache.stats;
+
+    // Cards of equal width in aligned columns, rather than a wrapped row.
+    //
+    // Wrapped, each card was as wide as its own contents, so the row's
+    // columns did not line up and the break landed wherever it happened to
+    // fall -- most often leaving two cards alone on a second row while the
+    // first had four. The count per row is chosen so that every row is full:
+    // six cards go six, three or two across and never five.
+    let per_row = if ui.available_width() >= 6.0 * CARD_MIN {
+        6
+    } else if ui.available_width() >= 3.0 * CARD_MIN {
+        3
+    } else {
+        2
+    };
+
+    for (row, chunk) in stats.chunks(per_row).enumerate() {
+        if row > 0 {
+            ui.add_space(S_SM);
+        }
+        ui.columns(per_row, |cols| {
+            for (i, stat) in chunk.iter().enumerate() {
+                // Never negative: the frame's own margins are wider than
+                // the column at the point a window is squeezed to nothing,
+                // and a negative width reaches egui's layout sanity check.
+                let width = (cols[i].available_width() - 2.0 * S_MD).max(0.0);
+                super::stat_card_ex(
+                    &mut cols[i],
+                    stat.label,
+                    &stat.value,
+                    &stat.sub,
+                    stat.colour,
+                    Some(width),
+                    stat.tip,
+                );
+            }
+        });
+    }
+}
+
+/// How narrow a card is allowed to get before the row drops to fewer of them.
+///
+/// A card holds a label, a figure at the metric size and a line of context;
+/// below about this width the context line is the one that gives, and it is
+/// the line doing the explaining.
+const CARD_MIN: f32 = 172.0;
+
+fn collect_stats(app: &App) -> Vec<Stat> {
     let s = &app.settings;
     let cf = app.store.stats("cloudflare", 300.0);
     let gw = app.store.stats("gateway", 300.0);
+    let mut out = Vec::with_capacity(6);
 
-    // Six cards at 140 px plus their margins need about 1100 px. Laid out in
-    // a plain horizontal row, the ones past the edge were simply clipped --
-    // and the last of them is the outage counter, which is the one worth
-    // reading. Wrapping costs a second row and loses nothing.
-    ui.horizontal_wrapped(|ui| {
-        match cf.avg {
-            Some(avg) => stat_card(
-                ui,
-                i18n::live_card_latency(),
-                &format!("{avg:.0} ms"),
-                &i18n::live_minmax(cf.min.unwrap_or(0.0), cf.max.unwrap_or(0.0)),
-                latency_colour(avg, s),
-            ),
-            None => stat_card(ui, i18n::live_card_latency(), "—", i18n::live_card_latency_sub_none(), FG_DIM),
+    out.push(match cf.avg {
+        Some(avg) => Stat {
+            label: i18n::live_card_latency(),
+            value: ms_text(avg),
+            sub: i18n::live_minmax(cf.min.unwrap_or(0.0), cf.max.unwrap_or(0.0)),
+            colour: latency_colour(avg, s),
+            tip: i18n::live_tip_latency(),
+        },
+        None => Stat {
+            label: i18n::live_card_latency(),
+            value: "—".into(),
+            sub: i18n::live_card_latency_sub_none().into(),
+            colour: FG_DIM,
+            tip: i18n::live_tip_latency(),
+        },
+    });
+
+    out.push(match cf.jitter {
+        Some(j) => Stat {
+            label: i18n::live_card_jitter(),
+            value: ms_text(j),
+            sub: i18n::live_card_jitter_sub().into(),
+            colour: band(j, s.jitter_good_ms, s.jitter_ok_ms),
+            tip: i18n::live_tip_jitter(),
+        },
+        None => Stat {
+            label: i18n::live_card_jitter(),
+            value: "—".into(),
+            sub: i18n::live_card_jitter_sub().into(),
+            colour: FG_DIM,
+            tip: i18n::live_tip_jitter(),
+        },
+    });
+
+    out.push(Stat {
+        label: i18n::live_card_loss(),
+        value: format!("{:.1}%", cf.loss_pct),
+        sub: i18n::live_card_loss_sub().into(),
+        colour: band(cf.loss_pct, s.loss_good_pct, s.loss_ok_pct),
+        tip: i18n::live_tip_loss(),
+    });
+
+    out.push(match gw.avg {
+        Some(avg) => Stat {
+            label: i18n::live_card_router(),
+            value: ms_text(avg),
+            sub: i18n::live_router_loss(gw.loss_pct),
+            colour: band(avg, ROUTER_GOOD_MS, ROUTER_OK_MS),
+            tip: i18n::live_tip_router(),
+        },
+        None => Stat {
+            label: i18n::live_card_router(),
+            value: "—".into(),
+            sub: i18n::live_card_router_none().into(),
+            colour: RED,
+            tip: i18n::live_tip_router(),
+        },
+    });
+
+    out.push(if !app.last.dns_error.is_empty() {
+        Stat {
+            label: i18n::live_card_dns(),
+            value: i18n::live_card_dns_err().into(),
+            sub: app.last.dns_error.clone(),
+            colour: RED,
+            tip: i18n::live_tip_dns(),
         }
-
-        match cf.jitter {
-            Some(j) => {
-                let colour = if j < s.jitter_good_ms {
-                    GREEN
-                } else if j < s.jitter_ok_ms {
-                    YELLOW
-                } else {
-                    RED
-                };
-                stat_card(ui, i18n::live_card_jitter(), &format!("{j:.1} ms"), i18n::live_card_jitter_sub(), colour)
-            }
-            None => stat_card(ui, i18n::live_card_jitter(), "—", "", FG_DIM),
-        }
-
-        let loss_colour = if cf.loss_pct < s.loss_good_pct {
-            GREEN
-        } else if cf.loss_pct < s.loss_ok_pct {
-            YELLOW
-        } else {
-            RED
-        };
-        stat_card(
-            ui,
-            i18n::live_card_loss(),
-            &format!("{:.1}%", cf.loss_pct),
-            i18n::live_card_loss_sub(),
-            loss_colour,
-        );
-
-        match gw.avg {
-            Some(avg) => stat_card(
-                ui,
-                i18n::live_card_router(),
-                &format!("{avg:.1} ms"),
-                &i18n::live_router_loss(gw.loss_pct),
-                if avg < 10.0 { GREEN } else { YELLOW },
-            ),
-            None => stat_card(ui, i18n::live_card_router(), "—", i18n::live_card_router_none(), RED),
-        }
-
-        if !app.last.dns_error.is_empty() {
-            stat_card(ui, i18n::live_card_dns(), i18n::live_card_dns_err(), &app.last.dns_error, RED);
-        } else {
-            match app.last.dns_ms {
-                Some(ms) => stat_card(
-                    ui,
-                    i18n::live_card_dns(),
-                    &format!("{ms:.0} ms"),
-                    i18n::live_card_dns_sub(),
-                    if ms < 60.0 { GREEN } else if ms < 150.0 { YELLOW } else { RED },
-                ),
-                None => stat_card(ui, i18n::live_card_dns(), "—", "", FG_DIM),
-            }
-        }
-
-        let events = app.store.events_since(24.0 * 3600.0);
-        if events.is_empty() {
-            stat_card(
-                ui,
-                i18n::live_card_uninterrupted(),
-                i18n::live_card_uninterrupted_val(),
-                i18n::live_card_uninterrupted_sub(),
-                GREEN,
-            );
-        } else {
-            let last = events.iter().map(|e| e.ts_start).fold(f64::NEG_INFINITY, f64::max);
-            let mins = (crate::store::now() - last) / 60.0;
-            stat_card(
-                ui,
-                i18n::live_card_since_outage(),
-                &format!("{mins:.0} min"),
-                &i18n::live_outages_24h(events.len()),
-                if events.len() < 3 { YELLOW } else { RED },
-            );
+    } else {
+        match app.last.dns_ms {
+            Some(ms) => Stat {
+                label: i18n::live_card_dns(),
+                value: ms_text(ms),
+                sub: i18n::live_card_dns_sub().into(),
+                colour: band(ms, DNS_GOOD_MS, DNS_OK_MS),
+                tip: i18n::live_tip_dns(),
+            },
+            None => Stat {
+                label: i18n::live_card_dns(),
+                value: "—".into(),
+                sub: i18n::live_card_dns_sub().into(),
+                colour: FG_DIM,
+                tip: i18n::live_tip_dns(),
+            },
         }
     });
+
+    let events = app.store.events_since(24.0 * 3600.0);
+    out.push(if events.is_empty() {
+        Stat {
+            label: i18n::live_card_uninterrupted(),
+            value: i18n::live_card_uninterrupted_val().into(),
+            sub: i18n::live_card_uninterrupted_sub().into(),
+            colour: GREEN,
+            tip: i18n::live_tip_uptime(),
+        }
+    } else {
+        let last = events.iter().map(|e| e.ts_start).fold(f64::NEG_INFINITY, f64::max);
+        let mins = (crate::store::now() - last) / 60.0;
+        Stat {
+            label: i18n::live_card_since_outage(),
+            value: format!("{mins:.0} min"),
+            sub: i18n::live_outages_24h(events.len()),
+            colour: if events.len() < 3 { YELLOW } else { RED },
+            tip: i18n::live_tip_uptime(),
+        }
+    });
+
+    out
 }
 
 /// The path, hop by hop, with the verdict on top.
@@ -828,9 +1106,7 @@ fn path_table(app: &mut App, ui: &mut egui::Ui) {
         Some(b) => {
             let owner = i18n::path_owner(b.owner);
             let headline = match b.added_ms {
-                Some(added) => {
-                    i18n::path_blame_delay(b.ttl, &b.addr.to_string(), added, owner)
-                }
+                Some(added) => i18n::path_blame_delay(b.ttl, &b.addr.to_string(), added, owner),
                 None => i18n::path_blame_loss(b.ttl, &b.addr.to_string(), b.loss_pct, owner),
             };
             ui.label(egui::RichText::new(headline).size(T_BODY).strong().color(RED));
@@ -846,69 +1122,64 @@ fn path_table(app: &mut App, ui: &mut egui::Ui) {
     }
 
     ui.add_space(S_SM);
-    egui::Grid::new("path_hops").num_columns(5).striped(true).spacing([14.0, 3.0]).show(
-        ui,
-        |ui| {
-            for h in [
-                i18n::live_path_col_hop(),
-                i18n::live_path_col_addr(),
-                i18n::live_path_col_owner(),
-                i18n::live_path_col_loss(),
-                i18n::live_path_col_avg(),
-            ] {
-                ui.label(egui::RichText::new(h).size(T_META).color(FG_DIM));
+    egui::Grid::new("path_hops").num_columns(5).striped(true).spacing([14.0, 3.0]).show(ui, |ui| {
+        for h in [
+            i18n::live_path_col_hop(),
+            i18n::live_path_col_addr(),
+            i18n::live_path_col_owner(),
+            i18n::live_path_col_loss(),
+            i18n::live_path_col_avg(),
+        ] {
+            ui.label(egui::RichText::new(h).size(T_META).color(FG_DIM));
+        }
+        ui.end_row();
+
+        let blamed = reading.blame.as_ref().map(|b| b.ttl);
+        for hop in &reading.hops {
+            let accused = blamed == Some(hop.ttl);
+            let name_colour = if accused { RED } else { FG_DIM };
+            // Loss is coloured on its own merits, so a hop that is losing
+            // packets still reads as losing them even when the verdict
+            // above declined to blame it for anything. A silent hop is
+            // the exception: it has no loss figure to colour, because it
+            // was never measured.
+            let loss_colour = match hop.loss_pct {
+                _ if hop.silent => FG_DIM,
+                l if l >= 8.0 => RED,
+                l if l > 0.0 => YELLOW,
+                _ => FG_DIM,
+            };
+
+            ui.label(super::figure(hop.ttl.to_string(), T_META, name_colour));
+            ui.label(
+                egui::RichText::new(hop.addr.to_string())
+                    .size(T_META)
+                    .monospace()
+                    .color(if accused { RED } else { FG_DIM }),
+            );
+            ui.label(egui::RichText::new(i18n::path_owner(hop.owner)).size(T_META).color(FG_DIM));
+            if hop.silent {
+                ui.label(
+                    egui::RichText::new(i18n::path_no_answer())
+                        .size(T_META)
+                        .italics()
+                        .color(FG_DIM),
+                );
+                ui.label(egui::RichText::new("").size(T_META));
+            } else {
+                ui.label(super::figure(format!("{:.0}%", hop.loss_pct), T_META, loss_colour));
+                ui.label(super::figure(
+                    match hop.avg_ms {
+                        Some(v) => format!("{v:.0} ms"),
+                        None => "—".into(),
+                    },
+                    T_META,
+                    latency_colour(hop.avg_ms.unwrap_or(0.0), &app.settings),
+                ));
             }
             ui.end_row();
-
-            let blamed = reading.blame.as_ref().map(|b| b.ttl);
-            for hop in &reading.hops {
-                let accused = blamed == Some(hop.ttl);
-                let name_colour = if accused { RED } else { FG_DIM };
-                // Loss is coloured on its own merits, so a hop that is losing
-                // packets still reads as losing them even when the verdict
-                // above declined to blame it for anything. A silent hop is
-                // the exception: it has no loss figure to colour, because it
-                // was never measured.
-                let loss_colour = match hop.loss_pct {
-                    _ if hop.silent => FG_DIM,
-                    l if l >= 8.0 => RED,
-                    l if l > 0.0 => YELLOW,
-                    _ => FG_DIM,
-                };
-
-                ui.label(super::figure(hop.ttl.to_string(), T_META, name_colour));
-                ui.label(
-                    egui::RichText::new(hop.addr.to_string())
-                        .size(T_META)
-                        .monospace()
-                        .color(if accused { RED } else { FG_DIM }),
-                );
-                ui.label(
-                    egui::RichText::new(i18n::path_owner(hop.owner)).size(T_META).color(FG_DIM),
-                );
-                if hop.silent {
-                    ui.label(
-                        egui::RichText::new(i18n::path_no_answer())
-                            .size(T_META)
-                            .italics()
-                            .color(FG_DIM),
-                    );
-                    ui.label(egui::RichText::new("").size(T_META));
-                } else {
-                    ui.label(super::figure(format!("{:.0}%", hop.loss_pct), T_META, loss_colour));
-                    ui.label(super::figure(
-                        match hop.avg_ms {
-                            Some(v) => format!("{v:.0} ms"),
-                            None => "—".into(),
-                        },
-                        T_META,
-                        latency_colour(hop.avg_ms.unwrap_or(0.0), &app.settings),
-                    ));
-                }
-                ui.end_row();
-            }
-        },
-    );
+        }
+    });
 
     ui.add_space(S_XS);
     ui.label(egui::RichText::new(i18n::live_path_note()).size(T_META).italics().color(FG_DIM));
@@ -977,7 +1248,6 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     });
-
 }
 
 /// The one-off route dump, beside the continuous hop table rather than under
@@ -996,11 +1266,9 @@ fn trace_panel(app: &App, ui: &mut egui::Ui) {
         return;
     }
 
-    egui::Frame::none()
-        .fill(super::BG2)
-        .rounding(6.0)
-        .inner_margin(egui::Margin::same(S_MD))
-        .show(ui, |ui| {
+    egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_MD)).show(
+        ui,
+        |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("trace_output")
                 .max_height(260.0)
@@ -1010,7 +1278,135 @@ fn trace_panel(app: &App, ui: &mut egui::Ui) {
                         ui.label(egui::RichText::new(line).monospace().size(T_META).color(ACCENT));
                     }
                 });
-        });
+        },
+    );
+}
+
+/// The chart's key: what the markings on it mean, and nothing else.
+///
+/// Each entry is a swatch in the colour it is about, followed by what that
+/// colour marks. The words that named the colours are gone — the swatch is
+/// the name — and so is everything that was not a marking: the unit, the
+/// threshold words and the instruction now live behind the badge at the end,
+/// which is where a thing you read once belongs.
+fn key_row(ui: &mut egui::Ui) {
+    // The heading gets a line of its own rather than a place at the head of
+    // the row. Inside the row it wrapped along with the entries, and a title
+    // that can end up alone at the end of a line is not a title.
+    ui.label(egui::RichText::new(i18n::live_key_heading()).size(T_MICRO).color(FG_DIM).strong());
+    ui.add_space(S_XS);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = S_XS + 2.0;
+
+        swatch(ui, RED);
+        micro(ui, i18n::live_key_lost());
+        ui.add_space(S_SM);
+
+        swatch(ui, YELLOW);
+        micro(ui, i18n::live_key_spike());
+        ui.add_space(S_SM);
+
+        micro(ui, i18n::live_key_bands());
+        for (i, colour) in [GREEN, YELLOW, RED].into_iter().enumerate() {
+            if i > 0 {
+                ui.add_space(S_XS * 0.5);
+            }
+            swatch(ui, colour);
+        }
+
+        ui.add_space(S_SM);
+        help_badge(ui);
+    });
+}
+
+/// What the data in view happens to be doing, kept off the key row.
+///
+/// These two are counts, not a legend: they change with the window and with
+/// the link, and mixed into the fixed key they were two more items in a row
+/// of seven that nobody could tell apart. On a quiet chart the row is not
+/// drawn at all.
+fn facts_row(ui: &mut egui::Ui, spikes: &crate::monitor::Spikes, above: usize, y_top: f64) {
+    let total = spikes.single + spikes.correlated.len();
+    if above == 0 && total == 0 {
+        return;
+    }
+
+    ui.add_space(S_XS);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = S_SM;
+        if above > 0 {
+            ui.label(
+                egui::RichText::new(i18n::live_above_scale(above, y_top))
+                    .size(T_MICRO)
+                    .color(YELLOW),
+            );
+        }
+        if above > 0 && total > 0 {
+            dot(ui);
+        }
+        if total > 0 {
+            // The tally is the line that reframes the chart: it says how much
+            // of what looks like instability was never about the connection.
+            // Short here, with the reasoning behind it on hover, because the
+            // full sentence was three lines of prose under a chart.
+            ui.label(
+                egui::RichText::new(i18n::live_spike_counts(
+                    spikes.correlated.len(),
+                    spikes.single,
+                ))
+                .size(T_MICRO)
+                .color(FG_DIM),
+            )
+            .on_hover_cursor(egui::CursorIcon::Help)
+            .on_hover_ui(|ui| {
+                super::tip_prose(
+                    ui,
+                    &format!(
+                        "{}
+
+{}",
+                        i18n::live_spike_tally(spikes.correlated.len(), spikes.single),
+                        i18n::live_spike_explainer()
+                    ),
+                );
+            });
+        }
+    });
+}
+
+/// One caption, at the size the captions are.
+fn micro(ui: &mut egui::Ui, text: &str) {
+    ui.label(egui::RichText::new(text).size(T_MICRO).color(FG_DIM));
+}
+
+/// The badge that holds everything about the chart worth explaining once.
+///
+/// A question mark and nothing else. It was a question mark followed by "what
+/// am I looking at?", which is three more words on a row whose whole problem
+/// was that it had too many: the mark is the oldest symbol there is for help
+/// behind it, and the row is a key, not a sentence. Someone who already knows
+/// what a millisecond is skips it with their eyes; someone who does not has
+/// one obvious place to ask.
+fn help_badge(ui: &mut egui::Ui) {
+    let size = T_MICRO + 2.0 * S_XS;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    let hovered = response.hovered();
+    ui.painter().circle_filled(
+        rect.center(),
+        size * 0.5,
+        if hovered { BG3.linear_multiply(1.6) } else { BG3 },
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "?",
+        egui::FontId::proportional(T_MICRO),
+        if hovered { FG } else { ACCENT },
+    );
+    response.on_hover_cursor(egui::CursorIcon::Help).on_hover_ui(|ui| {
+        super::tip_heading(ui, i18n::live_key_help());
+        super::tip_prose(ui, &i18n::live_chart_help());
+    });
 }
 
 #[cfg(test)]
@@ -1026,6 +1422,7 @@ mod tests {
                 points: values.iter().enumerate().map(|(i, v)| (i as f64, Some(*v))).collect(),
                 losses: Vec::new(),
                 outages: Vec::new(),
+                scope: crate::settings::Scope::Internet,
             },
             egui::Color32::WHITE,
         )]
@@ -1098,6 +1495,7 @@ mod tests {
                 points: vec![(0.0, None), (1.0, None)],
                 losses: Vec::new(),
                 outages: Vec::new(),
+                scope: crate::settings::Scope::Internet,
             },
             egui::Color32::WHITE,
         )];
