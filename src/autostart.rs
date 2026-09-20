@@ -53,12 +53,23 @@ pub fn is_stale() -> bool {
 
 pub fn enable() -> Result<String> {
     let cmd = command_line()?;
+    // A profile that has never had a startup entry has no Run key at all, and
+    // opening a key that is not there fails. Creating it first is a no-op on
+    // the machines that do have one, which is nearly all of them — but "Start
+    // with Windows" reporting "not found" on a fresh profile is not a failure
+    // anyone can act on.
+    winreg::create_key(Root::CurrentUser, RUN_KEY)?;
     winreg::write_string(Root::CurrentUser, RUN_KEY, VALUE, &cmd)?;
     Ok(crate::i18n::auto_enabled().into())
 }
 
 pub fn disable() -> Result<String> {
-    winreg::delete_value(Root::CurrentUser, RUN_KEY, VALUE)?;
+    // No Run key at all is already the state the caller is asking for, and an
+    // absent value is treated the same way one level down. Neither is worth
+    // reporting as a failure to switch something off.
+    if is_enabled() {
+        winreg::delete_value(Root::CurrentUser, RUN_KEY, VALUE)?;
+    }
     Ok(crate::i18n::auto_disabled().into())
 }
 
