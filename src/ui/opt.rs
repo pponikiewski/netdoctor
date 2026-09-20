@@ -66,19 +66,32 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(S_SM);
     }
 
+    // Reading the twenty-one states takes a third of a second of `netsh` and
+    // `powercfg`, so it runs on a worker thread. While it does, the rows on
+    // screen are whatever the last pass found, and the two buttons that act
+    // on that reading are held back rather than acting on a stale one.
+    let loading = app.tweaks_loading();
+
     ui.horizontal(|ui| {
-        if ui.button(i18n::btn_refresh()).clicked() {
+        if ui.add_enabled(!loading, egui::Button::new(i18n::btn_refresh())).clicked() {
             app.refresh_tweaks();
         }
         if ui
             .add_enabled(
-                app.elevated,
+                app.elevated && !loading,
                 egui::Button::new(i18n::opt_btn_apply_all()).fill(super::ACCENT),
             )
-            .on_disabled_hover_text(i18n::opt_needs_admin())
+            .on_disabled_hover_text(if app.elevated {
+                i18n::opt_reading()
+            } else {
+                i18n::opt_needs_admin()
+            })
             .clicked()
         {
             apply_all_safe(app, ui);
+        }
+        if loading {
+            ui.label(egui::RichText::new(i18n::opt_reading()).size(T_META).color(super::ACCENT));
         }
         if !app.elevated {
             ui.label(egui::RichText::new(i18n::opt_read_only()).size(T_META).color(YELLOW));
@@ -535,17 +548,28 @@ fn detail_panel(
 }
 
 /// Applies every low-risk, reversible tweak that is not already in place.
+///
+/// "Not already in place" comes from the states the worker thread just read,
+/// not from a second `read` per tweak: that second pass cost another 369 ms on
+/// the UI thread to learn what the app had learnt moments earlier. The button
+/// is disabled while a read is in flight, so the states here are never the
+/// ones from before an apply.
 fn apply_all_safe(app: &mut App, ui: &mut egui::Ui) {
     let net = app.net.clone();
     let now = ui.input(|i| i.time);
     let mut applied = 0;
     let mut failed = 0;
+    let states = app.tweak_states.clone();
 
     for t in optimize::all() {
         if t.risk() != Risk::Low || !t.reversible() {
             continue;
         }
-        if t.read(&net).optimal != Some(false) {
+        let known = states.iter().find(|(id, _, _)| id == t.id()).map(|(_, _, opt)| *opt);
+        // A tweak with no reading — the list has never been read, or this one
+        // is new since it was — is left alone. Applying on a guess is how a
+        // "safe" button stops being safe.
+        if known != Some(Some(false)) {
             continue;
         }
         match optimize::apply(t.as_ref(), &net) {

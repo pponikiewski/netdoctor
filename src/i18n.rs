@@ -1210,6 +1210,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     opt_nothing_to_revert => "Nothing saved to revert to", "Nie zapisano nic, do czego można wrócić";
     opt_needs_reboot => "takes effect after a restart", "działa po ponownym uruchomieniu";
     opt_irreversible => "cannot be undone", "nie da się cofnąć";
+    opt_reading => "reading the current state…", "odczytuję bieżący stan…";
     opt_all_ok =>
         "Everything safe is already set correctly.",
         "Wszystko, co bezpieczne, jest już ustawione poprawnie.";

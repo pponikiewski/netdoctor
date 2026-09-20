@@ -1238,6 +1238,33 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// What one pass of `refresh_tweaks` costs, tweak by tweak.
+    ///
+    /// Ignored by default: it shells out to `netsh` and `powercfg` and its
+    /// output is a measurement, not an assertion. Run it with
+    /// `cargo test --release -- --ignored read_cost --nocapture` before and
+    /// after touching anything on this path.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "measures the machine, not the code"]
+    fn read_cost_per_tweak() {
+        let net = NetState::default();
+        let mut total = std::time::Duration::ZERO;
+        let mut rows: Vec<(std::time::Duration, &'static str)> = Vec::new();
+        for t in all() {
+            let at = std::time::Instant::now();
+            let _ = t.read(&net);
+            let took = at.elapsed();
+            total += took;
+            rows.push((took, t.id()));
+        }
+        rows.sort_by_key(|r| std::cmp::Reverse(r.0));
+        for (took, id) in &rows {
+            println!("{id:<20} {:>8.1} ms", took.as_secs_f64() * 1000.0);
+        }
+        println!("refresh_tweaks total: {:.1} ms", total.as_secs_f64() * 1000.0);
+    }
+
     /// Tool names reached through a variable rather than a literal, so the
     /// scanner below cannot see them.
     ///

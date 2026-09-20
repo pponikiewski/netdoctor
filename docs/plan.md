@@ -10,7 +10,7 @@
 
 - [x] **1. Literówka `wevtutil.exe` zabija całą integrację z dziennikiem Windows**
 - [x] **2. Kwerendy listy zdarzeń ciągną 33 KB kontekstu na wiersz**
-- [ ] **3. `refresh_tweaks` blokuje wątek UI na 576 ms**
+- [x] **3. `refresh_tweaks` blokuje wątek UI na 576 ms**
 - [ ] **4. `notify_on_outage` to martwy przełącznik**
 - [ ] **5. Znaczniki awarii znikają przy interwale sondowania ≥ 2 s**
 - [ ] **6. `DwordTweak::read` gubi rozróżnienie „brak wartości" od „brak dostępu"**
@@ -182,9 +182,31 @@ pętlę apply robi synchronicznie w wątku UI, bez paska postępu.
 `Job`. Infrastruktura już jest (`ScanProgress`/`ScanDone`).
 
 **Kryterium akceptacji.**
-- [ ] Okno pojawia się bez czekania na odczyt tweaków.
-- [ ] Zakładka Optymalizacja pokazuje stan „odczytuję" zamiast zamarzać.
-- [ ] `apply_all_safe` nie czyta stanu po raz drugi.
+- [x] Okno pojawia się bez czekania na odczyt tweaków. Zmierzone przez
+      tymczasowy `eprintln!` wokół `App::new` (build debug, instrumentacja
+      usunięta po pomiarze): **406 ms → 658 µs**.
+- [x] Zakładka Optymalizacja pokazuje stan „odczytuję" zamiast zamarzać
+      (`i18n::opt_reading`, `App::tweaks_loading`). Na czas odczytu Odśwież
+      i Zastosuj wszystko są wyłączone, żeby nie działały na nieaktualnym
+      odczycie.
+- [x] `apply_all_safe` nie czyta stanu po raz drugi — bierze `tweak_states`
+      z ostatniego zakończonego odczytu. Tweak bez odczytu jest pomijany,
+      nie stosowany na ślepo.
+
+**Pomiar własny przed naprawą** (`optimize::tests::read_cost_per_tweak`,
+release, `--ignored`): `refresh_tweaks` = 369,2 ms, z czego `tcp_congestion`
+117,5 · `mtu` 105,4 · `tcp_autotuning` 102,1 · `wlan_power_plan` 44,0. Pozostałe
+17 tweaków razem: 0,1 ms. Plan mierzył 575,8 ms; rozkład ten sam, cała cena to
+cztery podprocesy.
+
+**Metryka, która nie działa.** Czas do `MainWindowHandle` z PowerShella nie
+mierzy tego kryterium: eframe tworzy okno **przed** wywołaniem `App::new`, więc
+uchwyt pojawia się, zanim odczyt tweaków w ogóle ruszy (48–916 ms, rozrzut od
+cache'u dysku). Stąd instrumentacja `App::new` zamiast pomiaru z zewnątrz.
+
+**Czego to nie naprawia.** Sama pętla `apply` dalej chodzi synchronicznie
+w wątku UI i nadal nie ma paska postępu. Plan wspomina o tym w opisie, ale nie
+w kryteriach.
 
 ---
 

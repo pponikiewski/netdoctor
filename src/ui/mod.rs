@@ -150,6 +150,12 @@ pub enum Job {
     /// Download progress, kept apart from `UpdateState` so the release does
     /// not have to be cloned once per percent.
     UpdateProgress(Option<f32>),
+    /// One pass of reading every tweak's current state, with the generation it
+    /// was started for. Four of the twenty-one shell out to `netsh` or
+    /// `powercfg`, which is 369 ms of the 369 ms this costs, so it does not
+    /// happen on the UI thread. The generation is what makes a read that
+    /// started before an apply land in the bin rather than on screen.
+    TweakStates(u64, Vec<(String, String, Option<bool>)>),
 }
 
 pub struct App {
@@ -204,6 +210,13 @@ pub struct App {
 
     pub tweak_states: Vec<(String, String, Option<bool>)>,
     pub selected_tweak: Option<usize>,
+    /// The read this app has asked for most recently. Bumped by every
+    /// `refresh_tweaks`; a result carrying an older number is a read that an
+    /// apply overtook, and is dropped.
+    tweaks_gen: u64,
+    /// The read that produced what `tweak_states` currently holds. Behind
+    /// `tweaks_gen` means a read is in flight and the list on screen is stale.
+    tweaks_shown_gen: u64,
 
     /// What the Wi-Fi card can hear around it, and the channel advice read
     /// off it. Empty until the first scan is asked for.
@@ -278,6 +291,8 @@ impl App {
             chart_cache: None,
             card_cache: None,
             tweak_states: Vec::new(),
+            tweaks_gen: 0,
+            tweaks_shown_gen: 0,
             selected_tweak: None,
             air: Default::default(),
             air_scanning: false,
@@ -303,15 +318,33 @@ impl App {
         app
     }
 
+    /// Starts a read of every tweak's state on a worker thread.
+    ///
+    /// This used to run inline, which put 369 ms of `netsh` and `powercfg`
+    /// on the UI thread: once before the first frame, so the window appeared
+    /// that much later, and again on every click of the Optimise tab and
+    /// after every apply.
     pub fn refresh_tweaks(&mut self) {
         let net = self.net.clone();
-        self.tweak_states = crate::optimize::all()
-            .iter()
-            .map(|t| {
-                let s = t.read(&net);
-                (t.id().to_string(), s.text, s.optimal)
-            })
-            .collect();
+        let tx = self.tx.clone();
+        self.tweaks_gen += 1;
+        let gen = self.tweaks_gen;
+        std::thread::spawn(move || {
+            let states = crate::optimize::all()
+                .iter()
+                .map(|t| {
+                    let s = t.read(&net);
+                    (t.id().to_string(), s.text, s.optimal)
+                })
+                .collect();
+            let _ = tx.send(Job::TweakStates(gen, states));
+        });
+    }
+
+    /// True while a read is in flight, so the tab can say so instead of
+    /// showing a list that is about to change under the pointer.
+    pub fn tweaks_loading(&self) -> bool {
+        self.tweaks_shown_gen != self.tweaks_gen
     }
 
     pub fn toast(&mut self, text: impl Into<String>, colour: egui::Color32, now: f64) {
@@ -373,6 +406,15 @@ impl App {
                 Job::UpdateProgress(frac) => {
                     if let crate::update::State::Downloading(_, f) = &mut self.update {
                         *f = frac;
+                    }
+                }
+                Job::TweakStates(gen, states) => {
+                    // A read started before the last apply describes the
+                    // machine as it was, not as it is. Showing it would put a
+                    // just-applied tweak back in the "worth changing" column.
+                    if gen == self.tweaks_gen {
+                        self.tweaks_shown_gen = gen;
+                        self.tweak_states = states;
                     }
                 }
                 Job::SysLog(id, events) => {
