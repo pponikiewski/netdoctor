@@ -234,8 +234,8 @@ fn refresh(app: &mut App) {
         if raw.is_empty() {
             continue;
         }
-        let raw = mark_recording_gaps(raw);
-        let (points, losses, outages) = reduce(&raw, range, app.chart_smooth);
+        let (raw, breaks) = mark_recording_gaps(raw);
+        let (points, losses, outages) = reduce(&raw, &breaks, range, app.chart_smooth);
         series.push(ChartSeries {
             key: t.key.clone(),
             label: t.label.clone(),
@@ -274,6 +274,34 @@ fn refresh(app: &mut App) {
     });
 }
 
+/// The sweep interval these samples were actually recorded at.
+///
+/// The median rather than the configured `probe_interval_ms`: the window can
+/// hold samples from an older run at a different cadence, and the setting says
+/// nothing about what is already in the database.
+fn cadence(points: &[(f64, Option<f64>)]) -> Option<f64> {
+    let mut deltas: Vec<f64> =
+        points.windows(2).map(|w| w[1].0 - w[0].0).filter(|d| *d > 0.0).collect();
+    if deltas.is_empty() {
+        return None;
+    }
+    deltas.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(deltas[deltas.len() / 2])
+}
+
+/// How far apart two samples have to be before the space between them means
+/// "nobody was watching" rather than "the probe failed".
+///
+/// Three missed sweeps, and never less than a couple of seconds: ordinary
+/// scheduling jitter must not be reported as the recorder stopping. Both the
+/// code that inserts the breaks and the code that reads them back use this,
+/// because they are two halves of one rule — and when only one of them knew
+/// the cadence, the other one hardcoded four seconds and lost every outage
+/// marker at any interval of two seconds or more.
+fn gap_threshold(step: f64) -> f64 {
+    (step * 3.0).max(step + 2.0)
+}
+
 /// Breaks the series wherever nothing was recorded for a while.
 ///
 /// A lost packet leaves a row saying so. Time the app spent closed leaves no
@@ -282,32 +310,36 @@ fn refresh(app: &mut App) {
 /// measured. The step is taken from the data rather than from the configured
 /// interval, so it stays right when the interval is changed or the samples
 /// come from an older run at a different cadence.
-fn mark_recording_gaps(points: Vec<(f64, Option<f64>)>) -> Vec<(f64, Option<f64>)> {
+/// Returns the series with the breaks inserted, and the timestamps of the
+/// breaks themselves.
+///
+/// The caller needs that second list because both a break and a lost packet
+/// are a `None` in the series, and they mean opposite things: "nobody was
+/// watching" against "we watched and nothing came back". Saying which is
+/// which is this function's business — it is the one that put them there —
+/// and the alternative, working it back out from how far apart the
+/// neighbours are, is what broke at any sweep interval of two seconds or more.
+fn mark_recording_gaps(points: Vec<(f64, Option<f64>)>) -> (Vec<(f64, Option<f64>)>, Vec<f64>) {
     if points.len() < 3 {
-        return points;
+        return (points, Vec::new());
     }
-    let mut deltas: Vec<f64> =
-        points.windows(2).map(|w| w[1].0 - w[0].0).filter(|d| *d > 0.0).collect();
-    if deltas.is_empty() {
-        return points;
-    }
-    deltas.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let step = deltas[deltas.len() / 2];
-    // Three missed sweeps, and never less than a couple of seconds: ordinary
-    // scheduling jitter must not be reported as the recorder stopping.
-    let threshold = (step * 3.0).max(step + 2.0);
+    let Some(step) = cadence(&points) else { return (points, Vec::new()) };
+    let threshold = gap_threshold(step);
 
     let mut out = Vec::with_capacity(points.len() + 8);
+    let mut breaks = Vec::new();
     for (i, point) in points.iter().enumerate() {
         if i > 0 {
             let previous = points[i - 1].0;
             if point.0 - previous > threshold {
-                out.push(((previous + point.0) * 0.5, None));
+                let at = (previous + point.0) * 0.5;
+                breaks.push(at);
+                out.push((at, None));
             }
         }
         out.push(*point);
     }
-    out
+    (out, breaks)
 }
 
 /// Buckets a series down to something a chart can draw without lying about it.
@@ -321,20 +353,17 @@ fn mark_recording_gaps(points: Vec<(f64, Option<f64>)>) -> Vec<(f64, Option<f64>
 /// read in the first place.
 type Reduced = (Vec<(f64, Option<f64>)>, Vec<f64>, Vec<f64>);
 
-fn reduce(raw: &[(f64, Option<f64>)], range: f64, smooth: bool) -> Reduced {
+fn reduce(raw: &[(f64, Option<f64>)], breaks: &[f64], range: f64, smooth: bool) -> Reduced {
     let mut losses = Vec::new();
     let mut outages = Vec::new();
     if raw.len() <= TARGET_POINTS && !smooth {
-        // Unreduced, a `None` is either a lost probe or a gap this pass
-        // inserted; only the first has a row of its own behind it, and a gap
-        // inserted by `mark_recording_gaps` sits between two samples that are
-        // further apart than the cadence. That is what tells them apart.
-        for (i, (ts, v)) in raw.iter().enumerate() {
-            if v.is_none() && i > 0 && i + 1 < raw.len() {
-                let span = raw[i + 1].0 - raw[i - 1].0;
-                if span < 4.0 {
-                    outages.push(*ts);
-                }
+        // Unreduced, a `None` is either a lost probe or a break
+        // `mark_recording_gaps` inserted. Only the first has a row of its own
+        // behind it, and the second is named in `breaks`, so no arithmetic is
+        // needed to tell them apart.
+        for (ts, v) in raw.iter() {
+            if v.is_none() && !breaks.contains(ts) {
+                outages.push(*ts);
             }
         }
         return (raw.to_vec(), losses, outages);
@@ -1445,6 +1474,65 @@ mod tests {
         )]
     }
 
+    /// Twelve sweeps at a given cadence, with three in the middle lost.
+    fn sweeps(interval_s: f64) -> Vec<(f64, Option<f64>)> {
+        (0..12)
+            .map(|i| {
+                let ts = 1_000.0 + i as f64 * interval_s;
+                (ts, if (5..8).contains(&i) { None } else { Some(14.0) })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn lost_probes_are_marked_at_every_configured_interval() {
+        // The bug this guards: the unreduced path tested the gap between a
+        // lost probe's neighbours against a hardcoded 4.0 seconds, which
+        // assumes a sweep every second. Settings allow anything from 300 ms
+        // up, and at two seconds every outage marker silently disappeared.
+        for interval in [0.3, 1.0, 2.0, 3.0, 5.0] {
+            let (raw, breaks) = mark_recording_gaps(sweeps(interval));
+            let (_, _, outages) = reduce(&raw, &breaks, 3_600.0, false);
+            assert_eq!(
+                outages.len(),
+                3,
+                "probe_interval = {interval} s produced {} marker(s) for 3 lost probes",
+                outages.len()
+            );
+        }
+    }
+
+    #[test]
+    fn a_hole_in_the_recording_is_not_an_outage() {
+        // The other half of the same rule: a break this app inserted because
+        // nothing was recorded must not be counted as a lost packet.
+        let mut points: Vec<(f64, Option<f64>)> =
+            (0..8).map(|i| (1_000.0 + i as f64, Some(14.0))).collect();
+        points.extend((0..8).map(|i| (1_400.0 + i as f64, Some(14.0))));
+
+        let (raw, breaks) = mark_recording_gaps(points);
+        let (_, _, outages) = reduce(&raw, &breaks, 3_600.0, false);
+        assert!(outages.is_empty(), "a recording gap is not a lost probe: {outages:?}");
+    }
+
+    #[test]
+    fn the_first_probe_lost_after_a_break_is_still_marked() {
+        // The case that decided how this is told apart. Inferring it from how
+        // far the neighbours sit apart gets this one wrong: the probe's left
+        // neighbour *is* the inserted break, so the span across it is wide,
+        // and the loss that started the moment recording resumed would be
+        // read as more of the silence. Asking the function that inserted the
+        // break has no such edge.
+        let mut points: Vec<(f64, Option<f64>)> =
+            (0..8).map(|i| (1_000.0 + i as f64, Some(14.0))).collect();
+        points.extend((0..8).map(|i| (1_400.0 + i as f64, Some(14.0))));
+        points[8].1 = None;
+
+        let (raw, breaks) = mark_recording_gaps(points);
+        let (_, _, outages) = reduce(&raw, &breaks, 3_600.0, false);
+        assert_eq!(outages, vec![1_400.0], "the probe after the break failed, and says so");
+    }
+
     #[test]
     fn one_outlier_does_not_set_the_whole_scale() {
         // The bug this guards: a single 400 ms reply set the top of the axis
@@ -1533,7 +1621,7 @@ mod reduce_tests {
     #[test]
     fn a_short_window_is_drawn_exactly_as_measured() {
         let raw = ramp(120, 12.0);
-        let (points, losses, _) = reduce(&raw, 120.0, false);
+        let (points, losses, _) = reduce(&raw, &[], 120.0, false);
         assert_eq!(points, raw, "nothing to gain by bucketing what already fits");
         assert!(losses.is_empty());
     }
@@ -1546,7 +1634,7 @@ mod reduce_tests {
         let mut raw = ramp(3600, 12.0);
         raw[1800] = (1800.0, Some(300.0));
 
-        let (points, _, _) = reduce(&raw, 3600.0, false);
+        let (points, _, _) = reduce(&raw, &[], 3600.0, false);
         assert!(points.len() < 2200, "an hour has to cost less than an hour: {}", points.len());
 
         let peak = points.iter().filter_map(|(_, v)| *v).fold(0.0, f64::max);
@@ -1560,7 +1648,7 @@ mod reduce_tests {
         let mut raw = ramp(3600, 12.0);
         raw[1800] = (1800.0, Some(300.0));
 
-        let (points, _, _) = reduce(&raw, 3600.0, true);
+        let (points, _, _) = reduce(&raw, &[], 3600.0, true);
         let peak = points.iter().filter_map(|(_, v)| *v).fold(0.0, f64::max);
         assert!(peak < 100.0, "a mean is not a maximum: {peak}");
         assert!(peak > 12.0, "but the spike still moved the average it landed in");
@@ -1572,7 +1660,7 @@ mod reduce_tests {
         for r in raw.iter_mut().take(700).skip(600) {
             r.1 = None;
         }
-        let (points, losses, outages) = reduce(&raw, 1200.0, false);
+        let (points, losses, outages) = reduce(&raw, &[], 1200.0, false);
         assert!(points.iter().any(|(_, v)| v.is_none()), "a full outage is a gap");
         assert!(losses.is_empty(), "a gap is not also a stray-loss mark");
         assert!(!outages.is_empty(), "and it is the kind of gap worth marking");
@@ -1585,7 +1673,7 @@ mod reduce_tests {
         let mut raw = ramp(3600, 12.0);
         raw[1234].1 = None;
 
-        let (points, losses, _) = reduce(&raw, 3600.0, false);
+        let (points, losses, _) = reduce(&raw, &[], 3600.0, false);
         assert_eq!(losses.len(), 1, "it is marked");
         assert!(!points.iter().any(|(_, v)| v.is_none()), "and the line stays whole");
     }
@@ -1599,8 +1687,8 @@ mod reduce_tests {
         let mut raw: Vec<(f64, Option<f64>)> = (0..60).map(|i| (i as f64, Some(12.0))).collect();
         raw.extend((0..60).map(|i| (600.0 + i as f64, Some(12.0))));
 
-        let marked = mark_recording_gaps(raw);
-        let (points, _, outages) = reduce(&marked, 660.0, false);
+        let (marked, breaks) = mark_recording_gaps(raw);
+        let (points, _, outages) = reduce(&marked, &breaks, 660.0, false);
 
         assert!(points.iter().any(|(_, v)| v.is_none()), "the line has to break across it");
         assert!(outages.is_empty(), "nothing was lost there; nothing was even asked");
@@ -1610,7 +1698,7 @@ mod reduce_tests {
     fn ordinary_jitter_in_the_sweep_is_not_a_recording_gap() {
         let raw: Vec<(f64, Option<f64>)> =
             (0..60).map(|i| (i as f64 * 1.0 + (i % 3) as f64 * 0.2, Some(12.0))).collect();
-        let marked = mark_recording_gaps(raw.clone());
+        let (marked, _) = mark_recording_gaps(raw.clone());
         assert_eq!(marked.len(), raw.len(), "a sweep that runs late has not stopped");
     }
 
@@ -1618,8 +1706,8 @@ mod reduce_tests {
     fn a_lost_probe_is_still_reported_as_one() {
         let mut raw: Vec<(f64, Option<f64>)> = (0..60).map(|i| (i as f64, Some(12.0))).collect();
         raw[30].1 = None;
-        let marked = mark_recording_gaps(raw);
-        let (_, _, outages) = reduce(&marked, 60.0, false);
+        let (marked, breaks) = mark_recording_gaps(raw);
+        let (_, _, outages) = reduce(&marked, &breaks, 60.0, false);
         assert_eq!(outages.len(), 1, "this one the probes are responsible for");
     }
 

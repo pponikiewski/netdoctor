@@ -12,7 +12,7 @@
 - [x] **2. Kwerendy listy zdarzeń ciągną 33 KB kontekstu na wiersz**
 - [x] **3. `refresh_tweaks` blokuje wątek UI na 576 ms**
 - [x] **4. `notify_on_outage` to martwy przełącznik**
-- [ ] **5. Znaczniki awarii znikają przy interwale sondowania ≥ 2 s**
+- [x] **5. Znaczniki awarii znikają przy interwale sondowania ≥ 2 s**
 - [ ] **6. `DwordTweak::read` gubi rozróżnienie „brak wartości" od „brak dostępu"**
 - [ ] **7. Snapshoty tweaków nie rozróżniają kart sieciowych**
 - [ ] **8. NetState zamarza na czas awarii; brak wykrywania APIPA/DHCP**
@@ -270,7 +270,21 @@ w kubełku, nie odstępy czasowe.
 odstępów w danych.
 
 **Kryterium akceptacji.**
-- [ ] Test parametryzowany po interwale 1/2/3/5 s, wszystkie dają 3 znaczniki.
+- [x] Test parametryzowany po interwale 1/2/3/5 s (plus 0,3 s, czyli dolna
+      granica ustawień), wszystkie dają 3 znaczniki:
+      `ui::live::tests::lost_probes_are_marked_at_every_configured_interval`.
+      Przed naprawą czerwony dokładnie tam, gdzie mówił plan: „probe_interval
+      = 2 s produced 0 marker(s) for 3 lost probes".
+
+**Naprawa poszła dalej niż próg.** Plan proponował wyprowadzić stałą 4.0
+z `probe_interval_ms`. Zrobiłem to inaczej: `mark_recording_gaps` zwraca teraz
+listę znaczników, które sam wstawił, a `reduce` porównuje `None` z tą listą,
+zamiast zgadywać z odstępu między sąsiadami. Powód: każdy próg wyprowadzony
+z odstępów myli się na pierwszej zgubionej sondzie po przerwie w nagrywaniu —
+jej lewym sąsiadem jest wstawiony znacznik, więc odstęp wychodzi szeroki
+i strata zostaje wzięta za dalszy ciąg ciszy. Funkcja, która wstawiła przerwę,
+wie to bez arytmetyki. Trzy testy: parametryzowany po interwale, przerwa
+w nagrywaniu nie jest awarią, pierwsza sonda po przerwie jest awarią.
 
 ---
 
