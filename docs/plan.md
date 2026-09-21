@@ -17,7 +17,7 @@
 - [x] **7. Snapshoty tweaków nie rozróżniają kart sieciowych**
 - [x] **8. NetState zamarza na czas awarii; brak wykrywania APIPA/DHCP**
 - [x] **9. Zamiatanie trwa 3,6 s, gdy cele nie odpowiadają**
-- [ ] **10. Druga, tylko-do-odczytu `Connection` dla UI**
+- [x] **10. Druga, tylko-do-odczytu `Connection` dla UI**
 - [ ] **11. Updater nie czyta `SHA256SUMS`, które sam publikuje**
 - [ ] **12. Brak strażnika pojedynczej instancji**
 - [ ] **13. Higiena repo (binarka w gicie, `__pycache__`, `legacy-python`, CI)**
@@ -568,7 +568,30 @@ z punktu 2 nie tylko zacinają rysowanie, ale blokują `add_samples` monitora.
 staje się prawdziwy, a punkty 2 i 10 razem zdejmują UI z drogi monitora.
 
 **Kryterium akceptacji.**
-- [ ] Wątek monitora nigdy nie czeka na blokadę trzymaną przez rysowanie.
+- [x] Wątek monitora nigdy nie czeka na blokadę trzymaną przez rysowanie.
+      Zmierzone testem `a_reader_drawing_a_chart_does_not_hold_up_the_monitors_writes`:
+      najgorszy zapis przy czytelniku mielącym godzinę próbek w pętli.
+
+**Pomiar** (baza na dysku, 14 400 próbek, czytelnik w pętli):
+
+| Konfiguracja | Najgorszy zapis |
+|---|---|
+| jedno `Mutex<Connection>` | **24–39 ms** |
+| osobne połączenia | **0,36–0,91 ms** |
+
+Próg w teście to 8 ms: rząd wielkości nad stanem naprawionym i trzykrotnie
+poniżej zepsutego. Mutacja kontrolna (odczyty zawrócone na połączenie pisarza)
+daje 38,8 ms i czerwony test.
+
+**Jak.** `Store` ma dwa połączenia: `conn` do zapisów i `read` do odczytów.
+Czytelnik dostaje `PRAGMA query_only=ON`, więc „UI nigdy tędy nie pisze" jest
+faktem o połączeniu, a nie umową o tym, którą metodę wywołać. Dla bazy
+w pamięci `read` jest `None` i odczyty wracają na jedyne połączenie — drugie
+połączenie do `:memory:` byłoby drugą, pustą bazą, nie innym widokiem tej samej.
+
+**Komentarz, który wreszcie jest prawdziwy.** WAL faktycznie pozwala czytać
+w trakcie zapisu, ale tylko **między połączeniami**. Przy jednym `Mutex` obie
+strony ustawiały się w kolejce w Ruście, zanim SQLite w ogóle je zobaczył.
 
 ---
 

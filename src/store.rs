@@ -126,7 +126,22 @@ pub struct TweakLogRow {
 }
 
 pub struct Store {
+    /// Everything that writes. The monitor owns this path in practice: a
+    /// sweep's samples, an outage opening and closing, the nightly prune.
     conn: Mutex<Connection>,
+    /// Everything that reads, on its own connection so the two never queue
+    /// behind each other.
+    ///
+    /// The comment this replaces claimed "WAL keeps the writer from blocking
+    /// the UI thread's reads". True of SQLite, and false of this code: with
+    /// one `Mutex<Connection>` the two serialise in Rust before SQLite ever
+    /// sees them, so a 7 ms chart query held the lock the monitor needed to
+    /// record a sample. WAL only pays for itself across connections, which is
+    /// what this is.
+    ///
+    /// `None` for an in-memory database, where a second connection would be a
+    /// second, empty database rather than another view of the same one.
+    read: Option<Mutex<Connection>>,
 }
 
 pub fn now() -> f64 {
@@ -148,19 +163,40 @@ impl Store {
         self.conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// The lock every read takes. Falls back to the writer's connection when
+    /// there is no second one — an in-memory database — where the two cannot
+    /// be separated and there is no disk to contend for anyway.
+    fn held_read(&self) -> std::sync::MutexGuard<'_, Connection> {
+        match &self.read {
+            Some(r) => r.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
+            None => self.held(),
+        }
+    }
+
     pub fn open_default() -> Result<Self> {
         std::fs::create_dir_all(settings::data_dir())?;
         Self::open(settings::db_path())
     }
 
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
         let conn = Connection::open(path)?;
-        // WAL keeps the writer from blocking the UI thread's reads.
+        // WAL is what lets the reader below see a consistent database while
+        // the writer is mid-transaction, instead of one of them waiting.
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
         conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn);
-        let store = Store { conn: Mutex::new(conn) };
+
+        // Opened after the schema exists, and marked read-only in SQLite
+        // itself: "the UI never writes through this" is then a fact about the
+        // connection rather than a convention about which method to call.
+        let read = Connection::open(path).and_then(|r| {
+            r.execute_batch("PRAGMA query_only=ON; PRAGMA busy_timeout=2000;")?;
+            Ok(r)
+        });
+
+        let store = Store { conn: Mutex::new(conn), read: read.ok().map(Mutex::new) };
         store.close_orphans();
         Ok(store)
     }
@@ -208,7 +244,7 @@ impl Store {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn);
-        Ok(Store { conn: Mutex::new(conn) })
+        Ok(Store { conn: Mutex::new(conn), read: None })
     }
 
     pub fn add_samples(&self, rows: &[(f64, String, Option<f64>, bool)]) -> Result<()> {
@@ -238,7 +274,7 @@ impl Store {
     /// with `LAG(rtt_ms) OVER (ORDER BY ts)` rather than making this bigger.
     pub fn stats(&self, target: &str, window_s: f64) -> Stats {
         let cutoff = now() - window_s;
-        let conn = self.held();
+        let conn = self.held_read();
         let mut stmt = match conn
             .prepare_cached("SELECT rtt_ms, ok FROM samples WHERE target=? AND ts>=? ORDER BY ts")
         {
@@ -325,7 +361,7 @@ impl Store {
     /// itself afterwards. Anything older than a day cannot change the answer,
     /// because the card it feeds tops out at 24 h.
     pub fn observing_since(&self, gap_s: f64) -> Option<f64> {
-        let conn = self.held();
+        let conn = self.held_read();
         conn.query_row(
             "SELECT MAX(ts) FROM (
                  SELECT ts, ts - LAG(ts) OVER (ORDER BY ts) AS gap
@@ -341,14 +377,14 @@ impl Store {
     /// The newest sample on record. Tells a restart whether it is resuming a
     /// stretch of observation or beginning one.
     pub fn last_sample_ts(&self) -> Option<f64> {
-        let conn = self.held();
+        let conn = self.held_read();
         conn.query_row("SELECT MAX(ts) FROM samples", [], |r| r.get(0)).ok().flatten()
     }
 
     /// Every sample for every target inside a time span, oldest first. This is
     /// what draws an outage's own timeline instead of a rolling live window.
     pub fn samples_between(&self, from: f64, to: f64) -> Vec<(f64, String, Option<f64>, bool)> {
-        let conn = self.held();
+        let conn = self.held_read();
         let Ok(mut stmt) = conn.prepare_cached(
             "SELECT ts, target, rtt_ms, ok FROM samples WHERE ts>=? AND ts<=? ORDER BY ts",
         ) else {
@@ -364,7 +400,7 @@ impl Store {
     /// outage is the first thing worth suspecting, and until now nothing in
     /// the app ever put the two tables side by side.
     pub fn tweaks_between(&self, from: f64, to: f64) -> Vec<TweakLogRow> {
-        let conn = self.held();
+        let conn = self.held_read();
         let Ok(mut stmt) = conn.prepare_cached(
             "SELECT ts, tweak_id, action, COALESCE(result,'') FROM tweaks \
              WHERE ts>=? AND ts<=? ORDER BY ts DESC",
@@ -384,7 +420,7 @@ impl Store {
 
     /// The stored evidence for one outage. `None` when the row is gone.
     pub fn event_context(&self, id: i64) -> Option<EventContext> {
-        let conn = self.held();
+        let conn = self.held_read();
         conn.query_row(
             "SELECT COALESCE(context,''), context_end FROM events WHERE id=?",
             params![id],
@@ -394,7 +430,7 @@ impl Store {
     }
 
     pub fn recent_events(&self, limit: usize) -> Vec<Event> {
-        let conn = self.held();
+        let conn = self.held_read();
         let sql =
             format!("SELECT {EVENT_COLUMNS} FROM events ORDER BY ts_start DESC LIMIT {limit}");
         let Ok(mut stmt) = conn.prepare(&sql) else {
@@ -405,7 +441,7 @@ impl Store {
     }
 
     fn query_events(&self, tail: &str, arg: Option<f64>) -> Vec<Event> {
-        let conn = self.held();
+        let conn = self.held_read();
         let sql = format!("SELECT {EVENT_COLUMNS} FROM events {tail}");
         let Ok(mut stmt) = conn.prepare(&sql) else {
             return Vec::new();
@@ -427,7 +463,7 @@ impl Store {
     }
 
     pub fn tweak_log(&self, limit: usize) -> Vec<TweakLogRow> {
-        let conn = self.held();
+        let conn = self.held_read();
         let sql = format!(
             "SELECT ts, tweak_id, action, COALESCE(result,'') FROM tweaks ORDER BY ts DESC LIMIT {limit}"
         );
@@ -559,6 +595,79 @@ mod tests {
         assert!(s.avg.is_none(), "an unreachable host has no average, not an average of zero");
     }
 
+    /// The monitor's writes must not queue behind the UI's reads.
+    ///
+    /// The bug this guards is not in SQLite: WAL has always allowed a writer
+    /// and a reader to work at once. It was one `Mutex<Connection>` in front
+    /// of it, which made them take turns in Rust before SQLite was consulted,
+    /// so a chart query over an hour of samples held the lock a sweep needed
+    /// to record its four rows.
+    ///
+    /// Written as a deadline rather than a comparison: what matters is not
+    /// that writes got faster but that the slowest one stays far inside the
+    /// sweep interval it belongs to.
+    #[test]
+    fn a_reader_drawing_a_chart_does_not_hold_up_the_monitors_writes() {
+        let path = std::env::temp_dir().join(format!("netdoctor-lock-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let store = std::sync::Arc::new(Store::open(&path).unwrap());
+
+        // An hour of four targets: enough that a read over the whole window
+        // is milliseconds of work rather than microseconds.
+        let t0 = now() - 3600.0;
+        let rows: Vec<(f64, String, Option<f64>, bool)> = (0..3600)
+            .flat_map(|i| {
+                ["gateway", "cloudflare", "google", "quad9"].into_iter().map(move |target| {
+                    (t0 + i as f64, target.to_string(), Some(12.0 + (i % 7) as f64), true)
+                })
+            })
+            .collect();
+        store.add_samples(&rows).unwrap();
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let drawing = {
+            let (store, stop) = (std::sync::Arc::clone(&store), std::sync::Arc::clone(&stop));
+            std::thread::spawn(move || {
+                let mut reads = 0u32;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = store.samples_between(t0, now());
+                    reads += 1;
+                }
+                reads
+            })
+        };
+
+        let mut worst = std::time::Duration::ZERO;
+        for i in 0..40 {
+            let ts = now() + i as f64;
+            let sweep = vec![(ts, "gateway".to_string(), Some(9.0), true)];
+            let at = std::time::Instant::now();
+            store.add_samples(&sweep).unwrap();
+            worst = worst.max(at.elapsed());
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let reads = drawing.join().unwrap();
+
+        println!("worst write {worst:?}, {reads} reads alongside");
+        assert!(reads > 0, "the drawing thread has to have been reading throughout");
+        // Measured on this machine: 0.4–0.9 ms with the connections split,
+        // 24 ms with the reads forced back onto the writer's connection. 8 ms
+        // sits an order of magnitude above the first and a third of the way
+        // to the second, so it separates the two without being a stopwatch on
+        // how fast this particular disk is.
+        assert!(
+            worst < std::time::Duration::from_millis(8),
+            "a sweep waited {worst:?} on the reader; the two share a connection again \
+             ({reads} reads ran alongside)"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
     #[test]
     fn samples_and_events_round_trip() {
         let store = Store::open_in_memory().unwrap();
@@ -615,7 +724,7 @@ mod tests {
         .unwrap();
         migrate(&conn);
 
-        let store = Store { conn: Mutex::new(conn) };
+        let store = Store { conn: Mutex::new(conn), read: None };
         let events = store.recent_events(10);
         assert_eq!(events.len(), 1, "the old row must still be readable");
         let ctx = store.event_context(events[0].id).expect("the old row is still there");
