@@ -92,7 +92,7 @@ pub fn discover(dest: Ipv4Addr, gateway: Option<Ipv4Addr>, timeout_ms: u32) -> P
 
         let owner = if Some(addr) == gateway {
             Owner::Gateway
-        } else if addr.is_private() {
+        } else if addr.is_private() || crate::diagnose::is_apipa(addr) {
             Owner::Local
         } else if is_cgnat(addr) || !past_private {
             // The first public address after the private stretch is the

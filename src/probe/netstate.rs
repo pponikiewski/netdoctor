@@ -12,7 +12,7 @@ use std::ptr;
 use windows::core::GUID;
 use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS, HANDLE};
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetAdaptersAddresses, GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST,
+    GetAdaptersAddresses, GetBestInterface, GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST,
     GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
 };
 use windows::Win32::NetworkManagement::Ndis::IF_OPER_STATUS;
@@ -26,6 +26,7 @@ use windows::Win32::Networking::WinSock::{AF_INET, AF_UNSPEC, SOCKADDR_IN};
 // Interface types from ifdef.h.
 const IF_TYPE_IEEE80211: u32 = 71;
 const IF_TYPE_ETHERNET_CSMACD: u32 = 6;
+const IF_TYPE_SOFTWARE_LOOPBACK: u32 = 24;
 
 // wlan_intf_opcode_* from wlanapi.h. The windows crate exposes these as a
 // struct-wrapped i32 whose constants are not all generated, so we name them.
@@ -125,7 +126,47 @@ fn wide_to_string(ptr: *const u16) -> String {
     }
 }
 
-/// Walks the adapter list and returns the one holding a default gateway.
+/// The interface index Windows itself would route the internet through.
+///
+/// `GetBestInterface` answers the question the enumeration order only guessed
+/// at. On a docked laptop with Wi-Fi and Ethernet both up, or with a VPN or a
+/// Hyper-V switch in the list, the first adapter carrying a gateway is not
+/// necessarily the one the traffic takes; the routing table knows, and this
+/// asks it. `None` when there is no route at all, which is exactly the case
+/// the caller has to survive rather than give up on.
+fn best_route_interface() -> Option<u32> {
+    // A public address rather than 0.0.0.0: the question is "which way out",
+    // and an all-zero destination is not a destination.
+    let dest = u32::from(Ipv4Addr::new(1, 1, 1, 1)).to_be();
+    let mut index = 0u32;
+    let rc = unsafe { GetBestInterface(dest, &mut index) };
+    (rc == ERROR_SUCCESS.0 && index != 0).then_some(index)
+}
+
+/// How good a candidate an adapter is, highest first.
+///
+/// Read as: the one the routing table named, then anything with a gateway,
+/// then anything that is up, and among equals the lower interface metric —
+/// which is how Windows breaks the same tie.
+fn rank(is_best_route: bool, has_gateway: bool, up: bool, metric: u32) -> (u8, u8, u8, i64) {
+    (is_best_route as u8, has_gateway as u8, up as u8, -(metric as i64))
+}
+
+/// Walks the adapter list and returns the connection worth describing.
+///
+/// It used to return the first adapter that had a gateway *and* was up, and
+/// nothing at all otherwise. That second half was the bug: during an outage
+/// there is no gateway, so the read came back empty, the monitor kept the last
+/// good state, and the app showed the SSID, the signal and the channel from
+/// before the failure — for the whole length of it, which is precisely when
+/// somebody is looking. Now an adapter with no gateway is still an adapter.
+///
+/// Measured on a live drop: `up` goes false and the Wi-Fi fields empty within
+/// a second, while the gateway and the local address linger for several more,
+/// because Windows holds the lease and the route entry for a while after the
+/// radio disassociates. So `up` and the empty SSID are the prompt facts here;
+/// `gateway.is_none()` is a slower one, and nothing should wait on it to
+/// notice that a link has gone.
 fn read_adapters() -> NetState {
     let flags = GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST;
     let mut size: u32 = 16 * 1024;
@@ -151,7 +192,9 @@ fn read_adapters() -> NetState {
         }
     }
 
+    let routed = best_route_interface();
     let mut best = NetState::default();
+    let mut best_rank = (0u8, 0u8, 0u8, i64::MIN);
     let mut cur = buf.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
 
     unsafe {
@@ -202,10 +245,15 @@ fn read_adapters() -> NetState {
                 dns = (*dns).Next;
             }
 
-            // The adapter that owns the default route is the one we care
-            // about; prefer an up interface with a gateway.
-            if st.gateway.is_some() && st.up && best.gateway.is_none() {
-                best = st;
+            // The loopback describes nothing about the link and would win on
+            // metric alone once adapters without a gateway are candidates.
+            if a.IfType != IF_TYPE_SOFTWARE_LOOPBACK {
+                let index = a.Anonymous1.Anonymous.IfIndex;
+                let score = rank(routed == Some(index), st.gateway.is_some(), st.up, a.Ipv4Metric);
+                if score > best_rank {
+                    best_rank = score;
+                    best = st;
+                }
             }
 
             cur = a.Next;
@@ -439,5 +487,68 @@ mod tests {
         // On a machine with no network this is all empty, which is fine; the
         // point is that the FFI walk stays inside its buffers.
         let _ = st.band();
+    }
+
+    #[test]
+    fn the_routing_table_outranks_every_other_signal() {
+        // The docked-laptop case: Ethernet and Wi-Fi both up, both with a
+        // gateway. Enumeration order used to decide, which is how an app can
+        // describe the Wi-Fi while the traffic goes over the cable.
+        let routed_wifi = rank(true, true, true, 30);
+        let idle_ethernet = rank(false, true, true, 5);
+        assert!(routed_wifi > idle_ethernet, "what Windows routes through wins on its own");
+    }
+
+    #[test]
+    fn an_adapter_without_a_gateway_still_beats_nothing() {
+        // The outage case. Before this, a state with no gateway was not a
+        // candidate at all and the read came back empty.
+        let stranded = rank(false, false, true, 30);
+        let nothing = (0u8, 0u8, 0u8, i64::MIN);
+        assert!(stranded > nothing);
+    }
+
+    #[test]
+    fn the_lower_interface_metric_breaks_a_tie() {
+        assert!(rank(false, true, true, 5) > rank(false, true, true, 30));
+        // But only as a tie-break: a gateway is worth more than a low metric.
+        assert!(rank(false, true, true, 30) > rank(false, false, true, 5));
+        // And being up is worth more than a low metric.
+        assert!(rank(false, false, true, 30) > rank(false, false, false, 5));
+    }
+
+    /// What the routing table answers on this machine, next to what `read()`
+    /// picked. Ignored: it describes the live machine.
+    #[test]
+    #[ignore = "watches the live machine"]
+    fn show_best_route_interface() {
+        println!("GetBestInterface -> {:?}", best_route_interface());
+        let st = read();
+        println!("read() picked adapter={} guid={}", st.adapter_name, st.adapter_guid);
+    }
+
+    /// Prints what `read()` makes of this machine, once a second.
+    ///
+    /// Ignored by default: it is a window onto the live machine, not an
+    /// assertion. Run it with
+    /// `cargo test -- --ignored watch_netstate --nocapture` and pull the cable
+    /// or drop the Wi-Fi while it runs. The question it answers is whether a
+    /// state without a default gateway still describes the adapter.
+    #[test]
+    #[ignore = "watches the live machine"]
+    fn watch_netstate() {
+        for i in 0..25 {
+            let st = read();
+            println!(
+                "{i:>2}s adapter={:<20} up={} gw={:<15} ip={:<15} ssid={} rssi={:?}",
+                if st.adapter_name.is_empty() { "<none>" } else { &st.adapter_name },
+                st.up,
+                st.gateway.map(|g| g.to_string()).unwrap_or_else(|| "-".into()),
+                st.local_ip.map(|g| g.to_string()).unwrap_or_else(|| "-".into()),
+                if st.ssid.is_empty() { "-" } else { &st.ssid },
+                st.rssi_dbm,
+            );
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
     }
 }

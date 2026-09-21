@@ -553,6 +553,14 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
         // so it is refreshed on its own slower cadence.
         if Instant::now() >= next_state_refresh {
             let fresh = netstate::read();
+            // Named adapter or gateway: either is a real reading. Only a
+            // wholly empty one — the enumeration itself failed — is worth
+            // keeping the previous state for.
+            //
+            // This guard used to collapse to "has a gateway", because
+            // `read_adapters` returned nothing at all without one. The state
+            // therefore froze for the length of every outage, showing the
+            // SSID, signal and channel from before it broke.
             if fresh.gateway.is_some() || !fresh.adapter_name.is_empty() {
                 net = fresh;
             }

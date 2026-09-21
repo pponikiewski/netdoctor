@@ -582,6 +582,19 @@ pub fn summarise(findings: &[Finding]) -> String {
 
 // ---------------------------------------------------------------------------
 
+/// 169.254.0.0/16, the address Windows gives itself when DHCP does not answer.
+///
+/// `Ipv4Addr::is_private` does not cover it — that is 10/8, 172.16/12 and
+/// 192.168/16 — so before this the app had no name for one of the most common
+/// domestic failures there is. A card with a link-local address is working;
+/// what failed is the conversation with the router, and "no connection" is the
+/// wrong thing to tell someone whose cable is plugged in and whose lights are
+/// on.
+pub fn is_apipa(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 169 && o[1] == 254
+}
+
 fn check_medium(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     if net.adapter_name.is_empty() {
         return vec![Finding::new(
@@ -591,6 +604,21 @@ fn check_medium(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
             i18n::f_no_connection_detail(),
         )
         .advise(i18n::f_no_connection_advice())];
+    }
+
+    // Checked before the medium is reported, because it outranks it: on a
+    // link-local address the link itself is up and nothing beyond this
+    // machine is reachable, so describing the Wi-Fi quality first would bury
+    // the one thing that is wrong.
+    if net.local_ip.is_some_and(is_apipa) {
+        let ip = net.local_ip.map(|i| i.to_string()).unwrap_or_default();
+        return vec![Finding::new(
+            "medium",
+            i18n::f_apipa(),
+            Severity::Critical,
+            i18n::f_apipa_detail(&net.adapter_name, &ip),
+        )
+        .advise(i18n::f_apipa_advice())];
     }
     match net.medium {
         Medium::Ethernet => vec![Finding::new(
@@ -792,7 +820,10 @@ fn find_edge(gw: Ipv4Addr, cfg: &Settings) -> Option<(Ipv4Addr, bool)> {
         if addr == gw {
             continue;
         }
-        if !addr.is_private() || is_cgnat(addr) {
+        // A link-local hop is this machine's own failure to get an address,
+        // not somebody's edge router; treating it as public would name it as
+        // the provider's and measure the latency to a nonexistent lease.
+        if (!addr.is_private() && !is_apipa(addr)) || is_cgnat(addr) {
             return Some((addr, false));
         }
         first_private.get_or_insert(addr);
@@ -1611,6 +1642,52 @@ mod tests {
             internet: Some(stats(12.0, 0.0)),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_link_local_address_is_named_as_a_dhcp_failure() {
+        // The gap this closes: 169.254/16 is not `is_private`, so a card that
+        // never got a lease was described as "no connection" — wrong advice
+        // for a working adapter with its lights on, and the most common
+        // domestic failure there is.
+        let net = NetState {
+            adapter_name: "Ethernet".into(),
+            medium: Medium::Ethernet,
+            local_ip: Some(Ipv4Addr::new(169, 254, 12, 9)),
+            up: true,
+            ..Default::default()
+        };
+        let store = Store::open_in_memory().unwrap();
+        let findings = check_medium(&net, &store, &Settings::default());
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(findings[0].title, i18n::f_apipa());
+        assert!(findings[0].detail.contains("169.254.12.9"), "{}", findings[0].detail);
+        assert!(!findings[0].advice.is_empty(), "a DHCP failure has a fix worth naming");
+    }
+
+    #[test]
+    fn an_ordinary_private_address_is_not_mistaken_for_one() {
+        let net = NetState {
+            adapter_name: "Ethernet".into(),
+            medium: Medium::Ethernet,
+            local_ip: Some(Ipv4Addr::new(192, 168, 1, 40)),
+            up: true,
+            ..Default::default()
+        };
+        let store = Store::open_in_memory().unwrap();
+        let findings = check_medium(&net, &store, &Settings::default());
+        assert_ne!(findings[0].title, i18n::f_apipa());
+    }
+
+    #[test]
+    fn the_apipa_range_is_exactly_169_254() {
+        assert!(is_apipa(Ipv4Addr::new(169, 254, 0, 1)));
+        assert!(is_apipa(Ipv4Addr::new(169, 254, 255, 254)));
+        assert!(!is_apipa(Ipv4Addr::new(169, 253, 0, 1)));
+        assert!(!is_apipa(Ipv4Addr::new(169, 255, 0, 1)));
+        assert!(!is_apipa(Ipv4Addr::new(192, 168, 0, 1)));
     }
 
     #[test]

@@ -723,6 +723,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "No adapter holds a default route.",
         "Żadna karta nie ma trasy domyślnej.";
     f_no_connection_advice => "Check the cable, or turn Wi-Fi on.", "Sprawdź kabel albo włącz Wi-Fi.";
+    f_apipa => "No address from the router", "Brak adresu od routera";
+    f_apipa_advice =>
+        "Restart the router, then reconnect. If it comes back, check that DHCP is on in the \
+         router's settings and that the cable runs to a LAN port, not a WAN one.",
+        "Zrestartuj router i połącz się ponownie. Jeśli wróci, sprawdź w ustawieniach routera, \
+         czy DHCP jest włączone, i czy kabel idzie do portu LAN, a nie WAN.";
     f_wired => "Wired connection", "Połączenie przewodowe";
     f_wired_advice =>
         "The best possible starting point for latency.",
@@ -2032,6 +2038,19 @@ pub fn live_spike_tally(correlated: usize, single: usize) -> String {
              {single} trafiło w jeden cel, gdy reszta była normalna — te nie mówią nic o Twoim \
              łączu.",
             correlated + single
+        ),
+    }
+}
+
+pub fn f_apipa_detail(adapter: &str, ip: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "{adapter} gave itself {ip}, which Windows does when no DHCP server answers. \
+             The link is up; the router never handed out an address."
+        ),
+        Lang::Pl => format!(
+            "{adapter} nadała sobie adres {ip} — Windows robi tak, gdy żaden serwer DHCP nie \
+             odpowiada. Łącze działa, ale router nie przydzielił adresu."
         ),
     }
 }

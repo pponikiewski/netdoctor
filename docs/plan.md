@@ -15,7 +15,7 @@
 - [x] **5. Znaczniki awarii znikają przy interwale sondowania ≥ 2 s**
 - [x] **6. `DwordTweak::read` gubi rozróżnienie „brak wartości" od „brak dostępu"**
 - [x] **7. Snapshoty tweaków nie rozróżniają kart sieciowych**
-- [ ] **8. NetState zamarza na czas awarii; brak wykrywania APIPA/DHCP**
+- [x] **8. NetState zamarza na czas awarii; brak wykrywania APIPA/DHCP**
 - [ ] **9. Zamiatanie trwa 3,6 s, gdy cele nie odpowiadają**
 - [ ] **10. Druga, tylko-do-odczytu `Connection` dla UI**
 - [ ] **11. Updater nie czyta `SHA256SUMS`, które sam publikuje**
@@ -437,10 +437,47 @@ naraz albo z kartą Hyper-V/VPN można opisać niewłaściwą kartę. Właściwe
 `GetBestInterface`/`GetBestRoute2` dla 0.0.0.0.
 
 **Kryterium akceptacji.**
-- [ ] Odłączenie kabla / wyłączenie Wi-Fi aktualizuje `NetState` zamiast go
-      zamrażać.
-- [ ] Adres 169.254.x.x produkuje własny `Finding` z radą o DHCP.
-- [ ] Wybór karty idzie po metryce trasy.
+- [x] Odłączenie kabla / wyłączenie Wi-Fi aktualizuje `NetState` zamiast go
+      zamrażać. **Odtworzone na żywo**, `netsh wlan disconnect` przy włączonym
+      `netstate::tests::watch_netstate` (za zgodą użytkownika).
+- [x] Adres 169.254.x.x produkuje własny `Finding` z radą o DHCP
+      (`diagnose::is_apipa` + gałąź w `check_medium`, trzy testy).
+- [x] Wybór karty idzie po metryce trasy — właściwie po samej trasie:
+      `GetBestInterface(1.1.1.1)`, a metryka interfejsu rozstrzyga remisy.
+      Sprawdzone na żywo: `GetBestInterface -> Some(22)`, co zgadza się
+      z jedyną trasą domyślną tej maszyny (`ifIndex 22`, `192.168.50.1`),
+      i `read()` wybrał WiFi.
+
+**Status weryfikacji zmieniony.** Plan pisał, że to jedyna pozycja oparta
+wyłącznie na czytaniu kodu. Już nie jest. Przebieg przed naprawą:
+
+```text
+ 4s adapter=WiFi    up=true  gw=192.168.50.1  ssid=wi-fi dom_2G  rssi=Some(-65)
+ 5s adapter=<none>  up=false gw=-             ssid=-             rssi=None
+ ...
+10s adapter=<none>  up=false gw=-             ssid=-             rssi=None
+```
+
+`read()` zwracał `NetState::default()`, więc strażnik w monitorze odrzucał
+odczyt i UI trzymał stan sprzed awarii. Po naprawie ten sam eksperyment:
+
+```text
+ 5s adapter=WiFi    up=false gw=192.168.50.1  ssid=-  rssi=None
+```
+
+**Czego pomiar nauczył ponad plan.** Brama i adres lokalny **nie znikają** od
+razu: Windows trzyma dzierżawę i wpis trasy jeszcze kilka sekund po utracie
+asocjacji. Prompt-owe fakty to `up` i puste pola Wi-Fi, nie `gateway.is_none()`.
+Zapisane w komentarzu przy `read_adapters`, żeby nikt nie zbudował detekcji
+zerwania na bramie. Drugie: w trakcie testu Windows sam podłączył się do innej
+sieci (inny SSID, inna brama) — czyli aplikacja potrafiła opisywać zupełnie
+inną sieć niż ta, o której myśli użytkownik.
+
+**Czego nie zweryfikowałem na żywo.** Gałąź APIPA. Wywołanie jej naprawdę
+wymaga zabrania maszynie DHCP albo wpisania statycznego 169.254.x.x, co
+oznacza admina i zerwanie łącza na dłużej. Pokryta trzema testami
+jednostkowymi, ścieżka od `local_ip` do `check_medium` jest prosta, ale to
+nadal jest test kodu, nie maszyny.
 
 ---
 
@@ -649,7 +686,8 @@ minutowy dla starych danych to oczywista droga, jeśli 367 MB uznasz za za dużo
 
 Uczciwie, żeby nie budować na piasku:
 
-- **Zamrożenie `NetState`** (punkt 8) — wywód z kodu, bez odtworzenia na żywo.
+- ~~**Zamrożenie `NetState`** (punkt 8)~~ — odtworzone na żywo 2026-09-21,
+  `netsh wlan disconnect` przy włączonym `watch_netstate`. Patrz punkt 8.
 - **Dwie instancje** (punkt 12) — nie odtwarzałem, żeby nie zaśmiecić prawdziwej
   bazy.
 - **Zacięcie `getaddrinfo` przy nieosiągalnym resolverze** — NXDOMAIN zmierzony
