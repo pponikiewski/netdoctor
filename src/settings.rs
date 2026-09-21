@@ -175,6 +175,20 @@ impl Settings {
         std::time::Duration::from_millis(self.probe_interval_ms.max(300))
     }
 
+    /// The ping timeout a sweep may actually use: the configured one, but
+    /// never so long that the sweep outlasts the interval it belongs to.
+    ///
+    /// The defaults are a second each, and a probe still waiting when the next
+    /// sweep is due has already answered the only question being asked —
+    /// nothing came back in time. Letting it run to the full second anyway
+    /// just thins out the recording, and during an outage that is exactly when
+    /// the samples are worth having. Only the monitor's cadence is capped;
+    /// a one-off scan or a traceroute uses the configured value as given.
+    pub fn sweep_timeout_ms(&self) -> u32 {
+        let ceiling = (self.interval().as_millis() as u64) * 4 / 5;
+        self.ping_timeout_ms.min(ceiling.max(100) as u32)
+    }
+
     /// Built-in targets plus whatever the user added. Invalid entries are
     /// skipped rather than failing the whole list.
     pub fn targets(&self) -> Vec<Target> {
@@ -238,6 +252,30 @@ pub fn resolve_target(text: &str) -> Option<Ipv4Addr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sweep_timeout_never_outlasts_its_own_interval() {
+        // The defaults are a second each, so an unanswered sweep used to take
+        // the whole interval before the next one could start, and the
+        // sampling cadence slipped by exactly as much as the outage was worth
+        // recording.
+        let s = Settings::default();
+        assert_eq!(s.probe_interval_ms, 1000);
+        assert_eq!(s.ping_timeout_ms, 1000);
+        assert!(
+            (s.sweep_timeout_ms() as u128) < s.interval().as_millis(),
+            "a sweep has to finish inside the interval it belongs to"
+        );
+
+        // A timeout shorter than the ceiling is left exactly as configured.
+        let quick = Settings { ping_timeout_ms: 200, ..Settings::default() };
+        assert_eq!(quick.sweep_timeout_ms(), 200);
+
+        // And the floor holds at the shortest interval the settings allow.
+        let fast = Settings { probe_interval_ms: 300, ..Settings::default() };
+        assert!(fast.sweep_timeout_ms() >= 100);
+        assert!((fast.sweep_timeout_ms() as u128) < fast.interval().as_millis());
+    }
 
     #[test]
     fn defaults_are_sane() {

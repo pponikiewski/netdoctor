@@ -68,6 +68,14 @@ impl PingResult {
     fn failed(e: PingError) -> Self {
         PingResult { rtt_ms: None, error: Some(e) }
     }
+
+    /// A probe that never ran: no handle to send it on, or the thread
+    /// carrying it died. Recorded as a timeout because that is what it looks
+    /// like from the outside — nothing came back — and inventing a reply
+    /// would be worse than admitting to a missed sample.
+    pub fn timeout() -> Self {
+        PingResult::failed(PingError::TimedOut)
+    }
 }
 
 /// Reply buffer for `IcmpSendEcho`.

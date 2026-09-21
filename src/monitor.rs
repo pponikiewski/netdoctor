@@ -514,11 +514,67 @@ fn run_path(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
     }
 }
 
+/// One ICMP handle per target, pinged at the same time.
+///
+/// Sequential probing cost one timeout per silent target, so a sweep that
+/// normally takes 40 ms took 3.6 s the moment everything stopped answering:
+/// the sampling cadence quietly dropped from the configured second to nearly
+/// four, exactly when the samples matter most, and the chart then read its own
+/// slow sweeps as "the app was not recording".
+///
+/// Each thread takes its own `Pinger` by `&mut`, which is what keeps this
+/// sound: `Pinger` is `Send` but deliberately not `Sync`, so a handle is moved
+/// to one thread rather than shared between them, and `IcmpSendEcho` never
+/// sees two calls on the same handle.
+#[derive(Default)]
+struct PingerPool {
+    handles: Vec<Pinger>,
+}
+
+impl PingerPool {
+    /// Pings every target at once and returns the results in the same order.
+    ///
+    /// A handle that cannot be opened leaves its target to be pinged on a
+    /// neighbour's handle afterwards, sequentially: fewer handles is slower,
+    /// not wrong.
+    fn sweep(&mut self, targets: &[Resolved], timeout_ms: u32) -> Vec<PingResult> {
+        while self.handles.len() < targets.len() {
+            match Pinger::new() {
+                Ok(p) => self.handles.push(p),
+                Err(_) => break,
+            }
+        }
+        if self.handles.is_empty() {
+            return Vec::new();
+        }
+
+        let mut out: Vec<Option<PingResult>> = (0..targets.len()).map(|_| None).collect();
+        // One chunk per available handle. With a handle each — the normal
+        // case — every chunk is a single target and the whole sweep costs one
+        // timeout rather than one per target.
+        let per_handle = targets.len().div_ceil(self.handles.len());
+
+        thread::scope(|s| {
+            let mut workers = Vec::new();
+            for (handle, chunk) in self.handles.iter_mut().zip(targets.chunks(per_handle)) {
+                workers.push(s.spawn(move || {
+                    chunk.iter().map(|t| handle.ping(t.host, timeout_ms)).collect::<Vec<_>>()
+                }));
+            }
+            for (i, worker) in workers.into_iter().enumerate() {
+                let Ok(results) = worker.join() else { continue };
+                for (j, r) in results.into_iter().enumerate() {
+                    out[i * per_handle + j] = Some(r);
+                }
+            }
+        });
+
+        out.into_iter().map(|r| r.unwrap_or_else(PingResult::timeout)).collect()
+    }
+}
+
 fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: Arc<AtomicBool>) {
-    let pinger = match Pinger::new() {
-        Ok(p) => p,
-        Err(_) => return,
-    };
+    let mut pool = PingerPool::default();
 
     let mut net = netstate::read();
     let mut last_bssid = net.bssid.clone();
@@ -579,11 +635,10 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
         let mut results = HashMap::new();
         let mut rows = Vec::new();
 
-        // Sequential on one handle: with four targets and sub-20 ms replies
-        // the whole sweep costs well under a tenth of the interval, and a
-        // shared handle avoids spawning threads every second.
-        for t in &targets {
-            let r: PingResult = pinger.ping(t.host, settings.ping_timeout_ms);
+        // All at once, one handle each: a sweep costs one timeout rather than
+        // one per target, so the cadence holds during an outage instead of
+        // stretching to four seconds exactly when the samples matter.
+        for (t, r) in targets.iter().zip(pool.sweep(&targets, settings.sweep_timeout_ms())) {
             let sample = Sample {
                 ok: r.ok(),
                 rtt_ms: r.rtt_ms,
@@ -770,6 +825,141 @@ fn quality_verdict(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Four addresses reserved for documentation (RFC 5737). Nothing answers
+    /// at them, so every ping runs the full timeout — which is the shape of a
+    /// real outage, when the router and all three internet targets are gone
+    /// at once.
+    const DEAD: [Ipv4Addr; 4] = [
+        Ipv4Addr::new(192, 0, 2, 1),
+        Ipv4Addr::new(192, 0, 2, 2),
+        Ipv4Addr::new(198, 51, 100, 1),
+        Ipv4Addr::new(203, 0, 113, 1),
+    ];
+
+    fn dead_targets() -> Vec<Resolved> {
+        DEAD.iter()
+            .enumerate()
+            .map(|(i, host)| Resolved {
+                key: format!("dead{i}"),
+                host: *host,
+                scope: Scope::Internet,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_sweep_costs_one_timeout_and_not_one_per_target() {
+        // The bug this guards: four silent targets pinged in turn cost four
+        // timeouts, so the sampling cadence fell from the configured second
+        // to nearly four during an outage — and `mark_recording_gaps` then
+        // read those slow sweeps as the app not recording at all.
+        //
+        // The threshold is not "one timeout", because a ping to an
+        // unreachable address does not come back inside a short one. Measured
+        // on this machine, four dead targets at a 150 ms timeout:
+        //
+        //     sequential 2.00 s   parallel 0.50 s
+        //
+        // The same 4x holds at 1000 ms (3.99 s against 1.01 s), and below
+        // roughly 500 ms per probe the timeout stops buying anything at all.
+        // So 1.2 s sits an octave clear of the parallel result and well under
+        // the serialised one, and the test costs half a second rather than
+        // four.
+        let targets = dead_targets();
+        let timeout = 150;
+
+        let mut pool = PingerPool::default();
+        let at = std::time::Instant::now();
+        let results = pool.sweep(&targets, timeout);
+        let elapsed = at.elapsed();
+
+        assert_eq!(results.len(), targets.len(), "every target gets a result");
+        assert!(results.iter().all(|r| !r.ok()), "nothing answers at a reserved address");
+        assert!(
+            elapsed < Duration::from_millis(1_200),
+            "four dead targets took {elapsed:?}; the sweep is serialised again"
+        );
+    }
+
+    #[test]
+    fn each_result_belongs_to_the_target_that_produced_it() {
+        // The pool hands chunks to threads and stitches the answers back
+        // together by index. Getting that wrong would file the router's
+        // latency under the name of an internet target, which is the kind of
+        // mistake that makes the whole verdict wrong rather than merely late.
+        let mut targets = dead_targets();
+        targets.insert(
+            2,
+            Resolved {
+                key: "loopback".into(),
+                host: Ipv4Addr::new(127, 0, 0, 1),
+                scope: Scope::Lan,
+            },
+        );
+
+        let mut pool = PingerPool::default();
+        let results = pool.sweep(&targets, 300);
+
+        assert_eq!(results.len(), 5);
+        for (t, r) in targets.iter().zip(&results) {
+            match t.key.as_str() {
+                "loopback" => assert!(r.ok(), "this machine answers itself"),
+                _ => assert!(!r.ok(), "{} is a reserved address and must not reply", t.key),
+            }
+        }
+    }
+
+    /// What a sweep costs when nothing answers. Ignored: it takes seconds and
+    /// measures the machine.
+    #[test]
+    #[ignore = "measures a sweep against unreachable targets"]
+    fn sweep_cost_with_dead_targets() {
+        let targets = dead_targets();
+        let timeout = 1000;
+
+        let pinger = Pinger::new().expect("an ICMP handle");
+        let at = std::time::Instant::now();
+        for t in &targets {
+            let _ = pinger.ping(t.host, timeout);
+        }
+        println!("sequential, one handle: {:?}", at.elapsed());
+
+        let mut pool = PingerPool::default();
+        let at = std::time::Instant::now();
+        let _ = pool.sweep(&targets, timeout);
+        println!("parallel, one handle each: {:?}", at.elapsed());
+
+        // Both paths at each timeout. The gap between them is what the
+        // non-ignored test asserts against, and the floor visible here is why
+        // that test cannot simply compare against the timeout.
+        for t_ms in [150u32, 300, 500, 1000] {
+            let one = Pinger::new().expect("an ICMP handle");
+            let at = std::time::Instant::now();
+            for t in &targets {
+                let _ = one.ping(t.host, t_ms);
+            }
+            let seq = at.elapsed();
+
+            let mut pool = PingerPool::default();
+            let at = std::time::Instant::now();
+            let _ = pool.sweep(&targets, t_ms);
+            println!("timeout {t_ms:>4} ms -> sequential {seq:?}, parallel {:?}", at.elapsed());
+        }
+
+        // What the monitor actually runs with, against the interval it has to
+        // fit inside.
+        let cfg = Settings::default();
+        let mut pool = PingerPool::default();
+        let at = std::time::Instant::now();
+        let _ = pool.sweep(&targets, cfg.sweep_timeout_ms());
+        println!(
+            "as configured: sweep_timeout {} ms -> {:?}, interval {:?}",
+            cfg.sweep_timeout_ms(),
+            at.elapsed(),
+            cfg.interval()
+        );
+    }
 
     fn sample(ok: bool, rtt: Option<f64>) -> Sample {
         Sample { ok, rtt_ms: rtt, error: None }

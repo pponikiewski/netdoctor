@@ -16,7 +16,7 @@
 - [x] **6. `DwordTweak::read` gubi rozróżnienie „brak wartości" od „brak dostępu"**
 - [x] **7. Snapshoty tweaków nie rozróżniają kart sieciowych**
 - [x] **8. NetState zamarza na czas awarii; brak wykrywania APIPA/DHCP**
-- [ ] **9. Zamiatanie trwa 3,6 s, gdy cele nie odpowiadają**
+- [x] **9. Zamiatanie trwa 3,6 s, gdy cele nie odpowiadają**
 - [ ] **10. Druga, tylko-do-odczytu `Connection` dla UI**
 - [ ] **11. Updater nie czyta `SHA256SUMS`, które sam publikuje**
 - [ ] **12. Brak strażnika pojedynczej instancji**
@@ -513,8 +513,44 @@ nie `Sync` — komentarz przy `unsafe impl Send` mówi wprost, żeby nie dodawa�
 `Sync` na jego podstawie.
 
 **Kryterium akceptacji.**
-- [ ] Zamiatanie z czterema martwymi celami mieści się w skonfigurowanym
-      interwale.
+- [x] Zamiatanie z czterema martwymi celami mieści się w skonfigurowanym
+      interwale: **503 ms przy interwale 1 s** (przed: 3,59–3,99 s).
+
+**Pomiar** (cztery adresy RFC 5737, build release):
+
+| Timeout | Sekwencyjnie | Równolegle |
+|---|---|---|
+| 150 ms | 2,00 s | 0,50 s |
+| 300 ms | 2,00 s | 0,50 s |
+| 500 ms | 2,00 s | 0,50 s |
+| 1000 ms | 3,99 s | 1,01 s |
+| jak konfiguruje monitor (800 ms) | — | **0,50 s** |
+
+**Jak.** `PingerPool`: jeden uchwyt ICMP na cel, każdy wątek bierze swój
+`Pinger` przez `&mut`. To jest to, co trzyma całość poprawną: `Pinger` jest
+`Send`, ale świadomie nie `Sync`, więc uchwyt jest **przenoszony** do wątku, a
+nie dzielony — `IcmpSendEcho` nigdy nie widzi dwóch wywołań na jednym uchwycie.
+Komentarz przy `unsafe impl Send` mówi wprost, żeby nie dodawać `Sync`; nie
+dodałem.
+
+**Dwie rzeczy, których pomiar nauczył ponad plan.**
+
+1. **Podłoga ~500 ms.** Ping do nieosiągalnego adresu nie wraca szybciej,
+   choćby timeout był 150 ms. Skracanie timeoutu poniżej pół sekundy nie kupuje
+   nic — czyli druga propozycja z planu („skrócenie timeoutu po serii porażek")
+   sama by tego nie rozwiązała.
+2. **Sam równoległy sweep nie wystarczał do kryterium.** Przy domyślnych
+   ustawieniach timeout i interwał to po sekundzie, więc sweep wychodził
+   1,01 s — dalej ponad interwał. Stąd `Settings::sweep_timeout_ms()`: sufit
+   80% interwału. Sonda, która wciąż czeka, gdy pora na następne zamiatanie,
+   już odpowiedziała na jedyne zadane pytanie. Sufit dotyczy tylko kadencji
+   monitora; jednorazowy skan i traceroute biorą ustawioną wartość wprost.
+
+**Testy.** Dwa w normalnym zestawie: koszt zamiatania (próg 1,2 s, skalibrowany
+na zmierzonych 0,50 s równolegle wobec 2,00 s sekwencyjnie) oraz test kolejności
+— wyniki muszą wracać przypisane do właściwych celów, bo pula tnie cele na
+kawałki i zszywa odpowiedzi po indeksie. Plus `sweep_cost_with_dead_targets`
+jako `#[ignore]`.
 
 ---
 
