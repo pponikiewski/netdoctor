@@ -107,7 +107,9 @@ impl ReplyBuf {
     /// Only valid once `IcmpSendEcho` has reported at least one reply, which
     /// is what fills the buffer.
     unsafe fn reply(&self) -> &ICMP_ECHO_REPLY {
-        &*(self.0.as_ptr() as *const ICMP_ECHO_REPLY)
+        // Alignment is the reason this buffer is `Vec<u64>` and not `Vec<u8>`;
+        // the caller's promise covers the contents.
+        unsafe { &*(self.0.as_ptr() as *const ICMP_ECHO_REPLY) }
     }
 }
 

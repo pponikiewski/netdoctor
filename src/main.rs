@@ -1,6 +1,12 @@
 // No console window when launched from Explorer, but keep one for `cargo run`
 // and for `--version`/`--report` on the command line.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// An `unsafe fn` is a promise the caller has to keep, not a licence for its
+// body to do anything it likes. Without this, every line inside one of them is
+// implicitly unsafe, so the 43 explicit `unsafe` blocks in this crate stop
+// marking where the risk actually is. This crate is mostly Win32 FFI; the
+// blocks are the map, and the map has to stay accurate.
+#![deny(unsafe_op_in_unsafe_fn)]
 
 mod autostart;
 mod bandwidth;
@@ -189,3 +195,4 @@ fn show_crash_notice(path: &str) {
 fn show_crash_notice(path: &str) {
     eprintln!("{}", i18n::crash_notice(path));
 }
+

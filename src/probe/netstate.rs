@@ -312,6 +312,10 @@ fn fill_wifi(st: &mut NetState) {
     }
 }
 
+/// # Safety
+/// `handle` must be an open WLAN client handle and `guid` one of the interface
+/// GUIDs it enumerated. On `Some`, the caller owns the returned block and must
+/// hand it to `WlanFreeMemory`.
 unsafe fn query_raw(
     handle: HANDLE,
     guid: &GUID,
@@ -320,26 +324,33 @@ unsafe fn query_raw(
     let mut size = 0u32;
     let mut data: *mut std::ffi::c_void = ptr::null_mut();
     let mut value_type = WLAN_OPCODE_VALUE_TYPE::default();
-    let rc = WlanQueryInterface(
-        handle,
-        guid,
-        windows::Win32::NetworkManagement::WiFi::WLAN_INTF_OPCODE(opcode),
-        None,
-        &mut size,
-        &mut data,
-        Some(&mut value_type),
-    );
+    let rc = unsafe {
+        WlanQueryInterface(
+            handle,
+            guid,
+            windows::Win32::NetworkManagement::WiFi::WLAN_INTF_OPCODE(opcode),
+            None,
+            &mut size,
+            &mut data,
+            Some(&mut value_type),
+        )
+    };
     if rc != ERROR_SUCCESS.0 || data.is_null() {
         return None;
     }
     Some((data, size))
 }
 
+/// # Safety
+/// As `query_raw`: `handle` open, `guid` enumerated from it.
 unsafe fn read_connection(handle: HANDLE, guid: &GUID, st: &mut NetState) {
-    let Some((data, _)) = query_raw(handle, guid, WLAN_INTF_OPCODE_CURRENT_CONNECTION) else {
+    let Some((data, _)) = (unsafe { query_raw(handle, guid, WLAN_INTF_OPCODE_CURRENT_CONNECTION) })
+    else {
         return;
     };
-    let conn = &*(data as *const WLAN_CONNECTION_ATTRIBUTES);
+    // The opcode decides the shape of what comes back, and this is the one
+    // Windows documents for CURRENT_CONNECTION.
+    let conn = unsafe { &*(data as *const WLAN_CONNECTION_ATTRIBUTES) };
     let assoc = &conn.wlanAssociationAttributes;
 
     let ssid_len = assoc.dot11Ssid.uSSIDLength as usize;
@@ -354,20 +365,24 @@ unsafe fn read_connection(handle: HANDLE, guid: &GUID, st: &mut NetState) {
     st.phy = phy_name(assoc.dot11PhyType);
     st.security = security_name(&conn.wlanSecurityAttributes);
 
-    WlanFreeMemory(data as *const _);
+    unsafe { WlanFreeMemory(data as *const _) };
 }
 
+/// # Safety
+/// As `query_raw`: `handle` open, `guid` enumerated from it.
 unsafe fn read_channel(handle: HANDLE, guid: &GUID, st: &mut NetState) {
-    if let Some((data, _)) = query_raw(handle, guid, WLAN_INTF_OPCODE_CHANNEL_NUMBER) {
-        st.channel = Some(*(data as *const u32));
-        WlanFreeMemory(data as *const _);
+    if let Some((data, _)) = unsafe { query_raw(handle, guid, WLAN_INTF_OPCODE_CHANNEL_NUMBER) } {
+        st.channel = Some(unsafe { *(data as *const u32) });
+        unsafe { WlanFreeMemory(data as *const _) };
     }
 }
 
+/// # Safety
+/// As `query_raw`: `handle` open, `guid` enumerated from it.
 unsafe fn read_rssi(handle: HANDLE, guid: &GUID, st: &mut NetState) {
-    if let Some((data, _)) = query_raw(handle, guid, WLAN_INTF_OPCODE_RSSI) {
-        st.rssi_dbm = Some(*(data as *const i32));
-        WlanFreeMemory(data as *const _);
+    if let Some((data, _)) = unsafe { query_raw(handle, guid, WLAN_INTF_OPCODE_RSSI) } {
+        st.rssi_dbm = Some(unsafe { *(data as *const i32) });
+        unsafe { WlanFreeMemory(data as *const _) };
     }
 }
 

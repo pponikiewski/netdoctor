@@ -95,19 +95,22 @@ mod imp {
         }
     }
 
+    /// # Safety
+    /// Only called by `EnumWindows`, and only with the `LPARAM` handed to it
+    /// there, which points at a `Search` that outlives the enumeration.
     unsafe extern "system" fn visit(hwnd: HWND, param: LPARAM) -> BOOL {
-        let search = &mut *(param.0 as *mut Search);
+        let search = unsafe { &mut *(param.0 as *mut Search) };
 
         // Not filtered on visibility: the case this exists for is autostart's
         // `--minimised` copy, whose window is built with `with_visible(false)`
         // and so is hidden rather than merely small. Filtered on having a
         // title instead, which is what separates the real window from the
         // message-only and helper windows winit keeps alongside it.
-        if GetWindowTextLengthW(hwnd) == 0 {
+        if unsafe { GetWindowTextLengthW(hwnd) } == 0 {
             return TRUE;
         }
         let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
         if pid == 0 {
             return TRUE;
         }
