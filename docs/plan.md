@@ -13,7 +13,7 @@
 - [x] **3. `refresh_tweaks` blokuje wątek UI na 576 ms**
 - [x] **4. `notify_on_outage` to martwy przełącznik**
 - [x] **5. Znaczniki awarii znikają przy interwale sondowania ≥ 2 s**
-- [ ] **6. `DwordTweak::read` gubi rozróżnienie „brak wartości" od „brak dostępu"**
+- [x] **6. `DwordTweak::read` gubi rozróżnienie „brak wartości" od „brak dostępu"**
 - [ ] **7. Snapshoty tweaków nie rozróżniają kart sieciowych**
 - [ ] **8. NetState zamarza na czas awarii; brak wykrywania APIPA/DHCP**
 - [ ] **9. Zamiatanie trwa 3,6 s, gdy cele nie odpowiadają**
@@ -314,8 +314,35 @@ błędu, dokładnie tak jak robi to już `AdapterPowerSaving::read`
 ([mod.rs:401](../src/optimize/mod.rs#L401)).
 
 **Kryterium akceptacji.**
-- [ ] Nieudany odczyt daje `optimal == None` i nie oferuje Zastosuj.
-- [ ] Test: tweak z nieczytelną wartością nie trafia do `apply_all_safe`.
+- [x] Nieudany odczyt daje `optimal == None` i nie oferuje Zastosuj.
+      Mapowanie wyjęte do `stack::dword_state(name, wanted, read)`, trzy testy
+      na trzy wyniki. Snapshot przy `Err` to `Value::Null`, nie
+      `{"value": null}` — nie ma czego przywracać, więc nie udajemy, że jest.
+- [x] Test: tweak z nieczytelną wartością nie trafia do `apply_all_safe`
+      (`ui::opt::tests::apply_all_safe_skips_what_it_could_not_read`, przez
+      wyciągniętą regułę `is_safe_candidate`).
+
+**Naprawa musiała zejść niżej, do `winreg`.** `read_dword` woła `open()`, które
+przy nieistniejącym **kluczu** zwracało `Err`. Gdyby zostawić to tak i tylko
+przemapować `Err` na `optimal: None`, popsułyby się wszystkie tweaki
+z `create: true` — ich klucz polityki z definicji nie istnieje, dopóki ktoś
+polityki nie ustawi, więc przestałyby oferować Zastosuj. Dlatego `read_dword`
+używa teraz `open_for_read`, które zwraca `Ok(None)` dla nieistniejącego klucza
+i `Err` tylko wtedy, gdy klucz jest, ale się nie otwiera (w praktyce: brak
+dostępu). Rozróżnienie zapada tam, gdzie jest informacja — przy kodzie błędu
+z systemu — a nie w zgadywance na poziomie tweaka.
+
+**Zmiana zachowania, którą trzeba znać.** Test `missing_key_is_an_error`
+utrwalał stare zachowanie i został przepisany na
+`a_missing_key_reads_as_absent_rather_than_as_a_failure`. Nowy test na ścieżkę
+„nie da się odczytać" nie potrzebuje admina: zapisuje `REG_SZ` tam, gdzie
+oczekiwany jest `REG_DWORD`, i sprawdza, że to jest błąd, a nie cztery pierwsze
+bajty napisu.
+
+**Czego nie ruszałem.** `mod.rs:801`, `802`, `867`, `870` robią
+`.ok().flatten()`, czyli sklejają „brak" z „nie da się odczytać" tak samo.
+Plan wskazywał `stack.rs:64` i tylko tam Revert kasował istniejącą wartość,
+więc reszta zostaje na osobną pozycję.
 
 ---
 

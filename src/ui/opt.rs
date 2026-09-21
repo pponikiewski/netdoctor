@@ -547,6 +547,17 @@ fn detail_panel(
     );
 }
 
+/// Whether "apply all safe" may touch a tweak, given what the last read found.
+///
+/// `known` is `None` when the list has never been read, `Some(None)` when the
+/// tweak was read and could not be made out — a value the process may not
+/// read, or one of the wrong type. Neither is permission to write. A tweak
+/// whose current value is unknown has no "before" worth recording, so
+/// applying it leaves Revert with nothing to go back to.
+fn is_safe_candidate(risk: Risk, reversible: bool, known: Option<Option<bool>>) -> bool {
+    risk == Risk::Low && reversible && known == Some(Some(false))
+}
+
 /// Applies every low-risk, reversible tweak that is not already in place.
 ///
 /// "Not already in place" comes from the states the worker thread just read,
@@ -562,14 +573,8 @@ fn apply_all_safe(app: &mut App, ui: &mut egui::Ui) {
     let states = app.tweak_states.clone();
 
     for t in optimize::all() {
-        if t.risk() != Risk::Low || !t.reversible() {
-            continue;
-        }
         let known = states.iter().find(|(id, _, _)| id == t.id()).map(|(_, _, opt)| *opt);
-        // A tweak with no reading — the list has never been read, or this one
-        // is new since it was — is left alone. Applying on a guess is how a
-        // "safe" button stops being safe.
-        if known != Some(Some(false)) {
+        if !is_safe_candidate(t.risk(), t.reversible(), known) {
             continue;
         }
         match optimize::apply(t.as_ref(), &net) {
@@ -591,4 +596,24 @@ fn apply_all_safe(app: &mut App, ui: &mut egui::Ui) {
         (n, f) => i18n::opt_applied_partial(n, f),
     };
     app.toast(text, if failed == 0 { GREEN } else { YELLOW }, now);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_all_safe_skips_what_it_could_not_read() {
+        // A tweak whose value could not be read shows as Unavailable, and an
+        // Unavailable tweak has no recorded "before". Applying it would leave
+        // Revert with nothing to go back to, so the bulk button steps over it
+        // however low its risk.
+        assert!(!is_safe_candidate(Risk::Low, true, Some(None)), "read and could not be made out");
+        assert!(!is_safe_candidate(Risk::Low, true, None), "never read at all");
+
+        assert!(is_safe_candidate(Risk::Low, true, Some(Some(false))), "read, and worth changing");
+        assert!(!is_safe_candidate(Risk::Low, true, Some(Some(true))), "already set");
+        assert!(!is_safe_candidate(Risk::Medium, true, Some(Some(false))), "not low risk");
+        assert!(!is_safe_candidate(Risk::Low, false, Some(Some(false))), "cannot be undone");
+    }
 }

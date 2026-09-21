@@ -31,6 +31,31 @@ pub struct DwordTweak {
     pub reboot: bool,
 }
 
+/// Turns a registry read into the state a row shows.
+///
+/// The three outcomes are three different things, and collapsing the last two
+/// was doing real damage: an unreadable value was reported as "worth
+/// changing", which offered Apply, qualified the tweak for "apply all safe",
+/// and recorded `{"value": null}` as the state to go back to — so Revert then
+/// *deleted* a value that had been there all along. `winreg` exists to keep
+/// "absent" and "cannot read" apart; this is the one place that has to honour
+/// that, the same way `AdapterPowerSaving::read` already does.
+fn dword_state(name: &str, wanted: u32, read: Result<Option<u32>>) -> State {
+    match read {
+        Ok(Some(v)) => {
+            State::new(crate::i18n::tw_dw_state(name, v), Some(v == wanted), json!({ "value": v }))
+        }
+        // The key or the value is missing, which both mean the same thing
+        // here: Windows is running on its own default.
+        Ok(None) => {
+            State::new(crate::i18n::tw_dw_unset(name), Some(false), json!({ "value": Value::Null }))
+        }
+        // No snapshot, because there is nothing to restore: whatever is in
+        // there was never read, and a snapshot of a guess is worse than none.
+        Err(e) => State::new(crate::i18n::tw_cannot_read(&e.to_string()), None, Value::Null),
+    }
+}
+
 impl Tweak for DwordTweak {
     fn id(&self) -> &'static str {
         self.id
@@ -55,20 +80,11 @@ impl Tweak for DwordTweak {
     }
 
     fn read(&self, _net: &NetState) -> State {
-        match winreg::read_dword(Root::LocalMachine, self.path, self.name) {
-            Ok(Some(v)) => State::new(
-                crate::i18n::tw_dw_state(self.name, v),
-                Some(v == self.wanted),
-                json!({ "value": v }),
-            ),
-            // The key or the value is missing, which both mean the same
-            // thing here: Windows is running on its own default.
-            Ok(None) | Err(_) => State::new(
-                crate::i18n::tw_dw_unset(self.name),
-                Some(false),
-                json!({ "value": Value::Null }),
-            ),
-        }
+        dword_state(
+            self.name,
+            self.wanted,
+            winreg::read_dword(Root::LocalMachine, self.path, self.name),
+        )
     }
 
     fn apply(&self, _net: &NetState) -> Result<String> {
@@ -275,6 +291,33 @@ pub fn all() -> Vec<Box<dyn Tweak>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_value_that_could_not_be_read_offers_nothing_and_snapshots_nothing() {
+        // The chain this breaks: Err was reported as `optimal: Some(false)`,
+        // which showed Apply, qualified the tweak for "apply all safe", and
+        // recorded {"value": null} as the state to return to — so Revert
+        // deleted a value that had been there all along.
+        let s = dword_state("TcpAckFrequency", 1, Err(anyhow::anyhow!("access denied")));
+        assert_eq!(s.optimal, None, "an unreadable value is not a value worth changing");
+        assert_eq!(s.snapshot, Value::Null, "and there is nothing to restore it to");
+        assert!(s.text.contains("access denied"), "the reason belongs on screen: {}", s.text);
+    }
+
+    #[test]
+    fn an_absent_value_is_still_worth_setting() {
+        // The other half: absent really does mean Windows is on its default,
+        // and that is the case these tweaks exist for.
+        let s = dword_state("TcpAckFrequency", 1, Ok(None));
+        assert_eq!(s.optimal, Some(false));
+        assert_eq!(s.snapshot, json!({ "value": Value::Null }));
+    }
+
+    #[test]
+    fn a_value_already_set_is_left_alone() {
+        assert_eq!(dword_state("TcpAckFrequency", 1, Ok(Some(1))).optimal, Some(true));
+        assert_eq!(dword_state("TcpAckFrequency", 1, Ok(Some(0))).optimal, Some(false));
+    }
 
     #[test]
     fn the_congestion_provider_is_read_out_of_the_internet_template() {

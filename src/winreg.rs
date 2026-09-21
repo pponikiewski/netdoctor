@@ -11,7 +11,9 @@ use std::os::windows::ffi::OsStrExt;
 
 use anyhow::{anyhow, Result};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR};
+use windows::Win32::Foundation::{
+    ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR,
+};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
     HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, KEY_WOW64_64KEY, REG_DWORD,
@@ -59,6 +61,33 @@ fn open(root: Root, path: &str, write: bool) -> Result<Key> {
     Ok(Key(hkey))
 }
 
+/// `Ok(None)` when the key itself is not there.
+///
+/// A missing key is not a failure to read. Several tweaks write a policy key
+/// that does not exist until someone sets the policy — which is why `apply`
+/// creates it — so "the key is absent" belongs with "the value is absent":
+/// both mean Windows is running on its own default. Only a key that exists
+/// and still would not open, which in practice means access denied, is an
+/// error, and the caller has to be able to say so rather than offer to change
+/// something it could not read.
+fn open_for_read(root: Root, path: &str) -> Result<Option<Key>> {
+    let mut hkey = HKEY::default();
+    let rc = unsafe {
+        RegOpenKeyExW(
+            root.hkey(),
+            PCWSTR(wide(path).as_ptr()),
+            0,
+            KEY_READ | KEY_WOW64_64KEY,
+            &mut hkey,
+        )
+    };
+    match rc {
+        ERROR_SUCCESS => Ok(Some(Key(hkey))),
+        e if e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND => Ok(None),
+        e => Err(anyhow!("cannot open {path}: {}", describe(e))),
+    }
+}
+
 /// Creates a key if it is missing, and does nothing if it is already there.
 /// Policy keys such as the Delivery Optimization one are absent on a machine
 /// that has never had the policy set, so a tweak that writes one has to make
@@ -94,7 +123,7 @@ pub fn create_key(root: Root, path: &str) -> Result<()> {
 /// configured off four bytes of something else is worse than one that admits
 /// it cannot tell.
 pub fn read_dword(root: Root, path: &str, name: &str) -> Result<Option<u32>> {
-    let key = open(root, path, false)?;
+    let Some(key) = open_for_read(root, path)? else { return Ok(None) };
     let mut data: u32 = 0;
     let mut size: u32 = 4;
     let mut kind = REG_DWORD;
@@ -314,8 +343,31 @@ mod tests {
     }
 
     #[test]
-    fn missing_key_is_an_error() {
-        assert!(read_dword(Root::LocalMachine, r"SOFTWARE\NetDoctorNope", "x").is_err());
+    fn a_missing_key_reads_as_absent_rather_than_as_a_failure() {
+        // This used to be an error, and the one caller that cared could not
+        // tell it apart from access denied, so it treated both as "not set"
+        // and offered to change a value it had never read. A key that is not
+        // there is the same fact as a value that is not there: Windows is on
+        // its own default. The tweaks that write policy keys create them.
+        let v = read_dword(Root::LocalMachine, r"SOFTWARE\NetDoctorNope", "x").unwrap();
+        assert!(v.is_none());
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_type_is_an_error_and_not_a_number() {
+        // The case that makes "cannot read" reachable without an admin shell:
+        // a REG_SZ where a DWORD is expected. RegQueryValueExW would happily
+        // hand back the first four bytes of the string.
+        // The same key the round-trip test uses, so the tests leave one stray
+        // key behind between them rather than one each.
+        let path = r"Software\NetDoctorTest";
+        create_key(Root::CurrentUser, path).unwrap();
+        write_string(Root::CurrentUser, path, "wrongtype", "not a number").unwrap();
+
+        let read = read_dword(Root::CurrentUser, path, "wrongtype");
+        assert!(read.is_err(), "four bytes of a string is not a reading: {read:?}");
+
+        delete_value(Root::CurrentUser, path, "wrongtype").unwrap();
     }
 
     #[test]
