@@ -474,7 +474,7 @@ fn detail_panel(
                 ui.label(egui::RichText::new(status.label()).size(T_META).color(status.colour()));
                 ui.label(egui::RichText::new(state_text).size(T_META).color(FG_DIM));
             });
-            if optimize::has_snapshot(t.id()) {
+            if optimize::has_snapshot(t.as_ref(), &app.net) {
                 ui.label(
                     egui::RichText::new(i18n::opt_revert_available())
                         .size(T_META)
@@ -508,7 +508,7 @@ fn detail_panel(
                 }
 
                 let can_revert = t.reversible()
-                    && optimize::has_snapshot(t.id())
+                    && optimize::has_snapshot(t.as_ref(), &app.net)
                     && (app.elevated || !t.needs_admin());
                 if ui
                     .add_enabled(can_revert, egui::Button::new(i18n::btn_revert()))

@@ -164,6 +164,12 @@ impl Tweak for AdvTweak {
         true
     }
 
+    /// Every one of these writes into `Ndi\Params` under *this* card's driver
+    /// key, so the "before" value belongs to the card and not to the tweak.
+    fn scope_key(&self, net: &NetState) -> String {
+        super::per_adapter_key(self.id(), net)
+    }
+
     fn read(&self, net: &NetState) -> State {
         if !self.applicable(net) {
             return State::new(

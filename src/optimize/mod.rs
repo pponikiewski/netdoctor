@@ -133,6 +133,19 @@ pub trait Tweak: Send + Sync {
         false
     }
 
+    /// The name this tweak's "before" value is filed under.
+    ///
+    /// Defaults to the id, which is right for everything that changes one
+    /// machine-wide setting. A tweak that writes to a key belonging to *this
+    /// adapter* has to say so, because the same id then means a different
+    /// value on every card: apply it on the Wi-Fi, dock the laptop, apply it
+    /// on the Ethernet, and the second machine-state was never recorded —
+    /// `record_first` saw the id already there and kept quiet, leaving Revert
+    /// pointing at the first card and the second changed for good.
+    fn scope_key(&self, _net: &NetState) -> String {
+        self.id().to_string()
+    }
+
     fn read(&self, net: &NetState) -> State;
     fn apply(&self, net: &NetState) -> Result<String>;
     fn revert(&self, net: &NetState, snapshot: &Value) -> Result<String>;
@@ -202,8 +215,38 @@ fn record_first(snaps: &mut HashMap<String, Value>, id: &str, snapshot: Value) -
     true
 }
 
-pub fn has_snapshot(id: &str) -> bool {
-    read_snapshots().map(|m| m.contains_key(id)).unwrap_or(false)
+/// Builds the per-adapter scope key, or falls back to the bare id when there
+/// is no adapter to name. A snapshot filed under the bare id is still a
+/// snapshot; see `snapshot_key_for`.
+pub(crate) fn per_adapter_key(id: &str, net: &NetState) -> String {
+    if net.adapter_guid.is_empty() {
+        return id.to_string();
+    }
+    format!("{id}@{}", net.adapter_guid)
+}
+
+/// Which key in the snapshot file this tweak's "before" value is under.
+///
+/// The scoped name first, then the bare id. The fallback is for entries
+/// written before snapshots knew about adapters: dropping them would make
+/// Revert vanish for anyone who had already applied something, and each of
+/// those tweaks records the registry key it read inside its own snapshot, so
+/// reverting one still writes to the card it was taken from.
+fn snapshot_key_for(
+    snaps: &HashMap<String, Value>,
+    tweak: &dyn Tweak,
+    net: &NetState,
+) -> Option<String> {
+    let scoped = tweak.scope_key(net);
+    if snaps.contains_key(&scoped) {
+        return Some(scoped);
+    }
+    let bare = tweak.id().to_string();
+    snaps.contains_key(&bare).then_some(bare)
+}
+
+pub fn has_snapshot(tweak: &dyn Tweak, net: &NetState) -> bool {
+    read_snapshots().map(|m| snapshot_key_for(&m, tweak, net).is_some()).unwrap_or(false)
 }
 
 /// Apply, then record the state it replaced — and only the *first* time.
@@ -223,7 +266,7 @@ pub fn apply(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
 
     let msg = tweak.apply(net)?;
 
-    if !record_first(&mut snaps, tweak.id(), state.snapshot) {
+    if !record_first(&mut snaps, &tweak.scope_key(net), state.snapshot) {
         return Ok(msg);
     }
     match save_snapshots(&snaps) {
@@ -242,11 +285,12 @@ pub fn revert(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
         return Err(anyhow!(crate::i18n::tw_revert_needs_admin()));
     }
     let mut snaps = read_snapshots()?;
-    let Some(snapshot) = snaps.get(tweak.id()) else {
+    let Some(key) = snapshot_key_for(&snaps, tweak, net) else {
         return Err(anyhow!(crate::i18n::tw_no_snapshot()));
     };
+    let snapshot = &snaps[&key];
     let msg = tweak.revert(net, snapshot)?;
-    snaps.remove(tweak.id());
+    snaps.remove(&key);
     save_snapshots(&snaps)?;
     Ok(msg)
 }
@@ -386,6 +430,10 @@ impl Tweak for AdapterPowerSaving {
     }
     fn needs_reboot(&self) -> bool {
         true
+    }
+
+    fn scope_key(&self, net: &NetState) -> String {
+        per_adapter_key(self.id(), net)
     }
 
     fn read(&self, net: &NetState) -> State {
@@ -792,6 +840,10 @@ impl Tweak for NagleOff {
     }
     fn needs_reboot(&self) -> bool {
         true
+    }
+
+    fn scope_key(&self, net: &NetState) -> String {
+        per_adapter_key(self.id(), net)
     }
 
     fn read(&self, net: &NetState) -> State {
@@ -1236,6 +1288,129 @@ mod tests {
         assert_eq!(read_snapshots_at(&path).unwrap()["power"], json!({ "value": 24 }));
         assert!(!path.with_extension("json.tmp").exists(), "the temp file is renamed, not left");
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// A tweak that writes to whichever adapter is current, like every one in
+    /// `radio.rs` and like `adapter_power`.
+    struct PerAdapter;
+
+    impl Tweak for PerAdapter {
+        fn id(&self) -> &'static str {
+            "per_adapter"
+        }
+        fn title(&self) -> &'static str {
+            "t"
+        }
+        fn what(&self) -> &'static str {
+            "w"
+        }
+        fn why(&self) -> &'static str {
+            "y"
+        }
+        fn risk(&self) -> Risk {
+            Risk::Low
+        }
+        fn category(&self) -> Category {
+            Category::Power
+        }
+        fn scope_key(&self, net: &NetState) -> String {
+            per_adapter_key(self.id(), net)
+        }
+        fn read(&self, _net: &NetState) -> State {
+            State::new("", Some(false), Value::Null)
+        }
+        fn apply(&self, _net: &NetState) -> Result<String> {
+            Ok(String::new())
+        }
+        fn revert(&self, _net: &NetState, _snapshot: &Value) -> Result<String> {
+            Ok(String::new())
+        }
+    }
+
+    fn on_adapter(guid: &str) -> NetState {
+        NetState { adapter_guid: guid.to_string(), ..Default::default() }
+    }
+
+    #[test]
+    fn a_second_adapter_gets_its_own_recorded_state() {
+        // The bug this guards: snapshots were filed under the tweak id alone.
+        // Apply on the Wi-Fi, dock the laptop, apply on the Ethernet, and
+        // `record_first` saw the id already there and recorded nothing — so
+        // Revert restored the Wi-Fi and left the Ethernet changed for good.
+        let tweak = PerAdapter;
+        let (a, b) = (on_adapter("{AAA}"), on_adapter("{BBB}"));
+        let mut snaps = HashMap::new();
+
+        assert!(record_first(&mut snaps, &tweak.scope_key(&a), json!({ "value": 1 })));
+        assert!(
+            record_first(&mut snaps, &tweak.scope_key(&b), json!({ "value": 2 })),
+            "the second card's state was never seen before and has to be recorded"
+        );
+
+        let key = snapshot_key_for(&snaps, &tweak, &b).expect("card B has a snapshot");
+        assert_eq!(snaps[&key], json!({ "value": 2 }), "revert on B must restore B");
+        let key = snapshot_key_for(&snaps, &tweak, &a).expect("card A still has its own");
+        assert_eq!(snaps[&key], json!({ "value": 1 }));
+    }
+
+    #[test]
+    fn applying_twice_on_one_adapter_still_keeps_the_first_reading() {
+        let tweak = PerAdapter;
+        let a = on_adapter("{AAA}");
+        let mut snaps = HashMap::new();
+
+        assert!(record_first(&mut snaps, &tweak.scope_key(&a), json!({ "value": 1 })));
+        assert!(
+            !record_first(&mut snaps, &tweak.scope_key(&a), json!({ "value": 99 })),
+            "the second apply must not record the tweak's own value as the original"
+        );
+        assert_eq!(snaps[&tweak.scope_key(&a)], json!({ "value": 1 }));
+    }
+
+    #[test]
+    fn a_snapshot_from_before_this_change_is_still_revertible() {
+        // Entries written by an earlier build are filed under the bare id.
+        // Dropping them would make Revert vanish for anyone who had already
+        // applied something.
+        let tweak = PerAdapter;
+        let a = on_adapter("{AAA}");
+        let mut snaps = HashMap::new();
+        snaps.insert("per_adapter".to_string(), json!({ "value": 7 }));
+
+        let key = snapshot_key_for(&snaps, &tweak, &a).expect("the legacy entry counts");
+        assert_eq!(key, "per_adapter");
+        assert_eq!(snaps[&key], json!({ "value": 7 }));
+    }
+
+    #[test]
+    fn the_tweaks_that_write_to_a_card_say_so_and_the_rest_do_not() {
+        // The assertion that outlives this change: whether a real tweak is
+        // filed per adapter is decided here, not in a test double. Every
+        // tweak in radio.rs writes under this card's driver key, and so do
+        // adapter_power and nagle_off.
+        let net = on_adapter("{AAA}");
+        let tweaks = all();
+        let key_of = |id: &str| {
+            tweaks
+                .iter()
+                .find(|t| t.id() == id)
+                .unwrap_or_else(|| panic!("{id} is gone"))
+                .scope_key(&net)
+        };
+
+        for id in ["adapter_power", "nagle_off", "radio_power_save", "nic_green_ethernet"] {
+            assert_eq!(key_of(id), format!("{id}@{{AAA}}"), "{id} belongs to one card");
+        }
+        for id in ["net_throttling", "fast_dns", "tcp_autotuning"] {
+            assert_eq!(key_of(id), id, "{id} is machine-wide and keeps its old snapshot key");
+        }
+    }
+
+    #[test]
+    fn a_tweak_falls_back_to_its_id_when_no_adapter_is_known() {
+        // Nothing to scope by: an id@ with an empty guid would be a third key
+        // space that matches neither the old entries nor the new ones.
+        assert_eq!(per_adapter_key("adapter_power", &NetState::default()), "adapter_power");
     }
 
     /// What one pass of `refresh_tweaks` costs, tweak by tweak.

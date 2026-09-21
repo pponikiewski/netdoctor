@@ -14,7 +14,7 @@
 - [x] **4. `notify_on_outage` to martwy przełącznik**
 - [x] **5. Znaczniki awarii znikają przy interwale sondowania ≥ 2 s**
 - [x] **6. `DwordTweak::read` gubi rozróżnienie „brak wartości" od „brak dostępu"**
-- [ ] **7. Snapshoty tweaków nie rozróżniają kart sieciowych**
+- [x] **7. Snapshoty tweaków nie rozróżniają kart sieciowych**
 - [ ] **8. NetState zamarza na czas awarii; brak wykrywania APIPA/DHCP**
 - [ ] **9. Zamiatanie trwa 3,6 s, gdy cele nie odpowiadają**
 - [ ] **10. Druga, tylko-do-odczytu `Connection` dla UI**
@@ -369,7 +369,29 @@ Trait `Tweak` może dostać metodę `scope_key(&self, net) -> String` z domyśln
 implementacją zwracającą samo `id()`.
 
 **Kryterium akceptacji.**
-- [ ] Test: apply na GUID A, apply na GUID B, revert na B przywraca stan B.
+- [x] Test: apply na GUID A, apply na GUID B, revert na B przywraca stan B
+      (`optimize::tests::a_second_adapter_gets_its_own_recorded_state`).
+
+**Jak.** Trait `Tweak` dostał `scope_key(&self, net) -> String` z domyślną
+implementacją zwracającą `id()`, dokładnie jak proponował plan. Klucz per karta
+to `"{id}@{guid}"`, deklarują go trzy miejsca: `AdapterPowerSaving`, `NagleOff`
+i `AdvTweak` (czyli wszystkie `radio_*` i `nic_*`). `apply`, `revert`
+i `has_snapshot` chodzą teraz po `scope_key`, nie po `id`.
+
+**Zgodność wstecz, o której plan nie wspominał.** Snapshoty zapisane przez
+wcześniejsze buildy leżą pod samym `id`. Gdyby zmienić klucz bez furtki, każdy,
+kto już coś zastosował, straciłby przycisk Cofnij — i to bez żadnego
+komunikatu. `snapshot_key_for` sprawdza więc najpierw klucz z zasięgiem, potem
+goły `id`. Stary wpis nadal cofa się poprawnie, bo każdy z tych tweaków trzyma
+ścieżkę klucza rejestru **wewnątrz** swojego snapshotu, więc revert pisze do
+karty, z której zdjęto stan.
+
+**Testy.** Pięć: dwie karty dostają osobne wpisy, drugi apply na tej samej
+karcie nie nadpisuje pierwszego odczytu, stary wpis bez zasięgu nadal działa,
+brak GUID-a nie tworzy trzeciej przestrzeni kluczy, oraz asercja na prawdziwych
+tweakach (`adapter_power`, `nagle_off`, `radio_power_save`, `nic_green_ethernet`
+per karta; `net_throttling`, `fast_dns`, `tcp_autotuning` bez zmian). Mutacja
+kontrolna: po usunięciu `scope_key` z `AdvTweak` ostatni test jest czerwony.
 
 ---
 
