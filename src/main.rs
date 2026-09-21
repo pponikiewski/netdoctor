@@ -257,4 +257,48 @@ mod tests {
             "README says {claimed} tests, the tree has {actual}. Update the README."
         );
     }
+
+    /// Three documents shipped with an unfilled template prompt in them, one of
+    /// them the first paragraph of the file that is supposed to explain what
+    /// this project even is. Nobody notices, because a template comment reads
+    /// as furniture rather than as a gap.
+    ///
+    /// ponytail: matches the template's own imperative, not emptiness. A
+    /// section left blank without one of these comments still slips through,
+    /// and that is the right trade while every placeholder here comes from the
+    /// same template — an emptiness check needs a list of the sections that
+    /// are allowed to be empty, and that list rots the same way.
+    #[test]
+    fn no_document_still_carries_an_unfilled_placeholder() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut docs = vec![root.join("CLAUDE.md"), root.join("README.md")];
+        let entries = std::fs::read_dir(root.join("docs")).expect("docs/ is missing");
+        docs.extend(
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "md")),
+        );
+
+        // Fewer files than that means the walk found nothing and every
+        // assertion below would pass on an empty list.
+        assert!(docs.len() >= 5, "only looked at {} documents", docs.len());
+
+        let mut unfilled = Vec::new();
+        for doc in &docs {
+            let Ok(text) = std::fs::read_to_string(doc) else { continue };
+            for (n, line) in text.lines().enumerate() {
+                let lower = line.to_lowercase();
+                // Both spellings: the mutation check showed that an editor
+                // typing without Polish diacritics walks straight past a
+                // match on the accented form alone.
+                let marks = lower.contains("uzupeł") || lower.contains("uzupel");
+                if lower.contains("<!--") && marks {
+                    unfilled.push(format!("{}:{}", doc.display(), n + 1));
+                }
+            }
+        }
+
+        assert!(unfilled.is_empty(), "template placeholders still unfilled: {unfilled:?}");
+    }
 }

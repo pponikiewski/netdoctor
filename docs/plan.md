@@ -22,7 +22,7 @@
 - [x] **12. Brak strażnika pojedynczej instancji**
 - [x] **13. Higiena repo (binarka w gicie, `__pycache__`, `legacy-python`, CI)**
       — bez przepisania historii gita, które zostaje osobną decyzją
-- [ ] **14. Niewypełnione placeholdery w trzech dokumentach**
+- [x] **14. Niewypełnione placeholdery w trzech dokumentach**
 
 ---
 
@@ -759,9 +759,32 @@ w repo. Świadomie nieruszone — osobna decyzja, poza tą pozycją.
 
 Trzy razy to samo brakujące zdanie „co to jest i dla kogo":
 
-- [ ] nagłówek [CLAUDE.md](../CLAUDE.md) — kotwica dla każdej decyzji agenta
-- [ ] „Co to jest" w [docs/_index.md](_index.md)
-- [ ] „Structure" w [docs/architecture.md](architecture.md)
+- [x] nagłówek [CLAUDE.md](../CLAUDE.md) — kotwica dla każdej decyzji agenta.
+      Do jednego zdania dołożona konsekwencja, bo samo zdanie niczego nie
+      rozstrzyga: aplikacja jest warta tyle, ile warty jest jej werdykt, więc
+      uczciwe „nie udało się odczytać" bije pewną siebie zgadywankę. To nie
+      jest hasło — pozycje 6 i 8 tego audytu wzięły się dokładnie z tego, że
+      porażka odczytu była raportowana jako pomiar.
+- [x] „Co to jest" w [docs/_index.md](_index.md) — co robi, dla kogo, i że
+      właściwym produktem jest zapis dowodów, nie bieżący odczyt.
+- [x] „Structure" w [docs/architecture.md](architecture.md) — mapa modułów
+      w czterech grupach (pomiar i zapis, wnioskowanie, zmienianie systemu,
+      reszta) plus zasada o rytmie pomiaru zamiast rytmu klatki, z której
+      złamania wzięły się trzy osobne pozycje tego audytu.
+
+**Kryterium dopisane, bo pozycja go nie miała.**
+- [x] Placeholder z szablonu nie wróci niezauważony:
+      `tests::no_document_still_carries_an_unfilled_placeholder` skanuje
+      `CLAUDE.md`, `README.md` i `docs/*.md`. Dopasowuje imperatyw z szablonu
+      wewnątrz komentarza HTML, nie pustkę — sprawdzenie pustki wymagałoby
+      listy sekcji, którym wolno być pustymi (`Open questions`, `inbox.md`),
+      a taka lista gnije tak samo jak to, czego pilnuje.
+
+**Czego nauczyła mutacja kontrolna.** Pierwsza wersja dopasowywała tylko
+„uzupełni" z ogonkami. Wstawiony do `inbox.md` placeholder napisany „Uzupelnij"
+przeszedł przez test na zielono — czyli strażnik miał dziurę dokładnie tam,
+gdzie ktoś pisze z klawiatury bez polskich znaków. Dopasowanie obejmuje teraz
+obie formy; powtórzona mutacja świeci czerwonym na każdej z nich.
 
 ---
 

@@ -1,7 +1,56 @@
 # netdoc — Architecture
 
 ## Structure
-<!-- uzupełniane w miarę rozwoju projektu -->
+
+Jedna binarka, trzy wątki, które się nie przeplatają: monitor mierzy, UI rysuje,
+zadania długie (skan, odczyt tweaków, test obciążenia, aktualizacja) idą na wątki
+robocze i wracają kanałem `Job`. Wszystkie trzy spotykają się wyłącznie na
+`Store`, i to jest jedyne miejsce, gdzie trzeba myśleć o współbieżności.
+
+**Pomiar i zapis**
+
+| Moduł | Za co odpowiada |
+|---|---|
+| `monitor.rs` | wątek zamiatania: `PingerPool` pinguje wszystkie cele naraz, wykrywa początek i koniec awarii, pisze próbki i zdarzenia |
+| `store.rs` | SQLite (WAL): próbki, awarie z kontekstem, dziennik tweaków. Osobne połączenie do zapisu i drugie `query_only` do odczytu, żeby UI nie stał w kolejce przed monitorem |
+| `probe/icmp.rs` | uchwyt ICMP (`Pinger`, `Send` ale nie `Sync`) i pula uchwytów |
+| `probe/netstate.rs` | która karta jest tą właściwą (`GetBestInterface`), jej adres, brama i stan Wi-Fi przez FFI do WLAN |
+| `probe/path.rs` | traceroute i to, na którym skoku zaczyna się strata |
+| `probe/eventlog.rs` | co Windows sam zapisał o zerwaniu, przez `wevtutil` |
+| `probe/airscan.rs` | skan otoczenia Wi-Fi i rekomendacja kanału |
+
+**Wnioskowanie**
+
+| Moduł | Za co odpowiada |
+|---|---|
+| `cause.rs` | z zapisanej awarii na nazwaną przyczynę i naprawę, z poziomem pewności |
+| `diagnose.rs` | skan jednorazowy: dziewięć kontroli, werdykt na górze, `Finding` pod nim |
+| `bandwidth.rs` | test obciążenia i ocena bufferbloatu |
+
+**Zmienianie systemu**
+
+| Moduł | Za co odpowiada |
+|---|---|
+| `optimize/mod.rs` | trait `Tweak`, snapshoty stanu pierwotnego (klucz `scope_key`, czyli per karta tam, gdzie to ma znaczenie), `system_tool` |
+| `optimize/stack.rs` | stos TCP, resolver i funkcje Windowsa, które same używają łącza |
+| `optimize/radio.rs` | to, co siedzi na zakładce Zaawansowane sterownika karty |
+| `winreg.rs` | rejestr, z rozróżnieniem „wartości nie ma" od „nie da się odczytać" |
+| `autostart.rs` | wpis w `HKCU\...\Run` |
+
+**Reszta**
+
+| Moduł | Za co odpowiada |
+|---|---|
+| `ui/` | egui: `mod.rs` to `App` i pętla klatki, reszta to po jednej zakładce na plik |
+| `settings.rs` | ustawienia w JSON, migracja starych kluczy, `data_dir()` |
+| `single.rs` | nazwany mutex i wyniesienie okna pierwszej instancji na wierzch |
+| `update.rs` | wydania z GitHuba, weryfikacja przez `SHA256SUMS`, podmiana działającej binarki |
+| `i18n.rs` | dwa języki, jeden wpis na komunikat |
+
+**Zasada, która trzyma to razem.** Wszystko, co dotyka bazy, sieci albo blokady
+dzielonej z monitorem, jest liczone w rytmie pomiaru i trzymane w pamięci
+podręcznej — nigdy w rytmie klatki. Trzy osobne pozycje audytu wzięły się
+z łamania dokładnie tej zasady.
 
 ## Decisions
 <!-- Append: date — decision — why -->

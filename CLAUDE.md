@@ -1,7 +1,14 @@
 # Project: netdoc
 
-> <!-- JEDNO ZDANIE: co to jest i dla kogo. Uzupełnij — to kotwiczy każdą decyzję agenta.
->      np. "Aplikacja webowa do skracania przepisów kulinarnych dla osób gotujących w domu." -->
+> A Windows desktop app that tells a home user which link broke when "the
+> internet drops" — the adapter, the Wi-Fi, the router, or the ISP — and keeps
+> enough recorded evidence to prove it to whoever has to fix it.
+>
+> What that anchors: the app is only worth having if its verdict is
+> trustworthy, so **an honest "I could not read this" always beats a confident
+> guess**. Several fixes in this repo exist because a failure was being
+> reported as a measurement. When a change would make the app claim more than
+> it knows, that is the reason to reject it.
 
 ## Stack
 - **Language:** Rust (edition 2021, rust-version 1.82) — Cargo.toml is the source of truth
