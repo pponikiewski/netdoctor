@@ -1,3 +1,10 @@
+> **Zamrożona referencja, nie kod do uruchamiania.**
+>
+> To jest poprzednia, pythonowa wersja NetDoctora, zachowana w repo z jednego
+> powodu: kiedy nowa wersja w Rust robi coś nieoczywistego, tutaj widać, jaka
+> była pierwotna intencja. Nikt tego nie utrzymuje i nikt nie powinien tego
+> instalować. Jeśli szukasz działającej aplikacji, jest w `../src`.
+
 # NetDoctor
 
 Diagnostyka i optymalizacja sieci pod Windows. Zbudowana wokół jednego pytania:

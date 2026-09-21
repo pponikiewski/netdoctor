@@ -15,3 +15,7 @@ Thumbs.db
 *.log
 .claude/settings.local.json
 CLAUDE.local.md
+
+# Python leftovers from the legacy-python reference tree
+__pycache__/
+*.pyc
