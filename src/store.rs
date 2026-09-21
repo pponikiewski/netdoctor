@@ -637,29 +637,35 @@ mod tests {
             })
         };
 
-        let mut worst = std::time::Duration::ZERO;
+        let mut took: Vec<std::time::Duration> = Vec::new();
         for i in 0..40 {
             let ts = now() + i as f64;
             let sweep = vec![(ts, "gateway".to_string(), Some(9.0), true)];
             let at = std::time::Instant::now();
             store.add_samples(&sweep).unwrap();
-            worst = worst.max(at.elapsed());
+            took.push(at.elapsed());
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
+        took.sort();
+        let median = took[took.len() / 2];
+        let worst = *took.last().expect("forty writes");
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let reads = drawing.join().unwrap();
 
-        println!("worst write {worst:?}, {reads} reads alongside");
+        println!("median write {median:?}, worst {worst:?}, {reads} reads alongside");
         assert!(reads > 0, "the drawing thread has to have been reading throughout");
-        // Measured on this machine: 0.4–0.9 ms with the connections split,
-        // 24 ms with the reads forced back onto the writer's connection. 8 ms
-        // sits an order of magnitude above the first and a third of the way
-        // to the second, so it separates the two without being a stopwatch on
-        // how fast this particular disk is.
+        // On the median rather than the maximum. Measured here: 0.4–0.9 ms
+        // worst case with the connections split, 24–39 ms with the reads
+        // forced back onto the writer's. A threshold on the maximum sat close
+        // enough to the noise that a loaded machine could trip it — it did,
+        // once, while the rest of the suite was running — and a test that
+        // fails for being unlucky teaches people to rerun rather than to
+        // look. Under a shared connection every write waits, so the median
+        // moves just as decisively as the worst case does.
         assert!(
-            worst < std::time::Duration::from_millis(8),
-            "a sweep waited {worst:?} on the reader; the two share a connection again \
-             ({reads} reads ran alongside)"
+            median < std::time::Duration::from_millis(5),
+            "the typical sweep waited {median:?} on the reader (worst {worst:?}); \
+             the two share a connection again ({reads} reads ran alongside)"
         );
 
         drop(store);

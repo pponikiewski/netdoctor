@@ -24,6 +24,8 @@ pub const REPO: &str = "pponikiewski/netdoctor";
 /// The asset name the release workflow uploads. Anything else attached to a
 /// release is not something this build knows how to install.
 const ASSET: &str = "netdoctor.exe";
+/// The checksum file the release workflow publishes beside the binary.
+const SUMS: &str = "SHA256SUMS";
 
 /// Suffix for the outgoing binary, left behind until the next start.
 const OLD_SUFFIX: &str = "old";
@@ -52,6 +54,13 @@ pub struct Release {
     /// Bytes, as GitHub reports them. `0` when the API omitted it, which only
     /// costs the progress bar its denominator.
     pub size: u64,
+    /// The `SHA256SUMS` the release workflow hangs next to the binary.
+    ///
+    /// `None` for a release published before the updater learned to read it.
+    /// Those still install on the shape checks alone, which is what they were
+    /// verified by when they were current; refusing them would break updating
+    /// *from* an old build, which is the one case an updater exists for.
+    pub sums_url: Option<String>,
 }
 
 /// How far along an update is. One value rather than a handful of booleans,
@@ -124,6 +133,12 @@ pub fn check() -> Result<Option<Release>> {
         return Ok(None);
     }
 
+    let sums_url = api
+        .assets
+        .iter()
+        .find(|a| a.name.eq_ignore_ascii_case(SUMS))
+        .map(|a| a.browser_download_url.clone());
+
     let asset = api
         .assets
         .into_iter()
@@ -136,6 +151,7 @@ pub fn check() -> Result<Option<Release>> {
         page: api.html_url,
         asset_url: asset.browser_download_url,
         size: asset.size,
+        sums_url,
     }))
 }
 
@@ -255,12 +271,51 @@ fn download(rel: &Release, to: &Path, on_progress: &mut impl FnMut(Option<f32>))
     Ok(())
 }
 
-/// Guard against installing something that is not a Windows executable: a
-/// rate-limit page, an error body, or a stream that was cut short.
+/// The digest a `SHA256SUMS` file records for one file name.
 ///
-/// ponytail: shape and size only. Signing the releases and checking the
-/// signature here is the real answer if the binary ever ships beyond people
-/// who know where it came from.
+/// The format is one line per file, `<hex>  <name>`, which is what
+/// `sha256sum` writes and what the release workflow reproduces from
+/// PowerShell's `Get-FileHash`. Parsed leniently on whitespace so a file
+/// written with one space, or with CRLF line endings, still reads.
+fn digest_for(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        let hex = parts.next()?;
+        let listed = parts.next()?.trim_start_matches('*');
+        (listed.eq_ignore_ascii_case(name) && hex.len() == 64).then(|| hex.to_ascii_lowercase())
+    })
+}
+
+fn sha256_of(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    // Streamed rather than read whole: the binary is several megabytes and
+    // there is no reason for a second copy of it in memory.
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Guard against installing something that is not the release it claims to be.
+///
+/// The shape checks catch a rate-limit page, an error body or a truncated
+/// stream. The checksum catches the rest of what a shape check cannot see: it
+/// is compared against the `SHA256SUMS` the release workflow publishes beside
+/// the binary, which until now the app hung there and never read.
+///
+/// ponytail: this still trusts HTTPS and GitHub, because both the binary and
+/// the digest come from the same place — anyone who can replace one can
+/// replace the other. It closes the accidental cases, not a compromised
+/// account. Signing the releases and checking the signature here is the real
+/// answer, and it costs a certificate.
 fn verify(path: &Path, rel: &Release) -> Result<()> {
     let len = std::fs::metadata(path)?.len();
     if len < MIN_PLAUSIBLE_BYTES {
@@ -273,6 +328,28 @@ fn verify(path: &Path, rel: &Release) -> Result<()> {
     std::fs::File::open(path)?.read_exact(&mut magic)?;
     if &magic != b"MZ" {
         bail!(i18n::upd_err_not_exe());
+    }
+
+    let Some(url) = &rel.sums_url else {
+        return Ok(());
+    };
+    let sums = ureq::get(url)
+        .set("User-Agent", UA)
+        .timeout(Duration::from_secs(15))
+        .call()?
+        .into_string()?;
+    check_digest(&sums, path)
+}
+
+/// The half of the checksum step that does not touch the network, so it can
+/// be tested against a real file and a real `SHA256SUMS`.
+fn check_digest(sums: &str, path: &Path) -> Result<()> {
+    // A checksum file that does not name the asset is a fault in the release,
+    // not a reason to install something unverified.
+    let want = digest_for(sums, ASSET).ok_or_else(|| anyhow!(i18n::upd_err_no_digest(ASSET)))?;
+    let got = sha256_of(path)?;
+    if got != want {
+        bail!(i18n::upd_err_checksum(&got, &want));
     }
     Ok(())
 }
@@ -329,6 +406,77 @@ pub fn open_in_browser(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The known answer for "abc", so a broken hash cannot agree with itself.
+    const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    fn temp_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("netdoctor-{}-{name}", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn the_hash_matches_a_known_answer() {
+        let path = temp_file("abc.bin", b"abc");
+        assert_eq!(sha256_of(&path).unwrap(), ABC_SHA256);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_file_larger_than_the_read_buffer_hashes_the_same_as_windows_does() {
+        // 200 000 bytes is three passes of the 64 KiB buffer plus a short
+        // one, so an off-by-one in the chunking shows up here and nowhere in
+        // the three-byte vector above. The expected digest was computed by
+        // PowerShell's Get-FileHash over the same bytes — a second
+        // implementation, which is the point of a known answer.
+        let bytes: Vec<u8> = (0..200_000usize).map(|i| (i % 251) as u8).collect();
+        let path = temp_file("chunked.bin", &bytes);
+        assert_eq!(
+            sha256_of(&path).unwrap(),
+            "e24bc62381f1224fbbb74688663f8f9743b9680b193edd666835e97b06e730eb"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_sums_file_is_read_the_way_the_workflow_writes_it() {
+        // PowerShell's Out-File gives CRLF, and the workflow joins the hash to
+        // the name with two spaces.
+        let sums = format!("{ABC_SHA256}  netdoctor.exe\r\n");
+        assert_eq!(digest_for(&sums, "netdoctor.exe").as_deref(), Some(ABC_SHA256));
+
+        // sha256sum's binary marker, a single space, and an unrelated line
+        // before the one that matters.
+        let mixed = format!("deadbeef  notes.txt\n{ABC_SHA256} *netdoctor.exe\n");
+        assert_eq!(digest_for(&mixed, "netdoctor.exe").as_deref(), Some(ABC_SHA256));
+
+        assert!(digest_for(&sums, "other.exe").is_none(), "only the named file counts");
+        assert!(
+            digest_for("abc123  netdoctor.exe", "netdoctor.exe").is_none(),
+            "a digest that is not 64 hex characters is not a digest"
+        );
+    }
+
+    #[test]
+    fn a_download_that_does_not_match_its_checksum_is_refused() {
+        let path = temp_file("staged.bin", b"abc");
+        let good = format!("{ABC_SHA256}  netdoctor.exe\n");
+        assert!(check_digest(&good, &path).is_ok(), "the real digest of the real file");
+
+        // One byte different, which is the whole point: the size and the
+        // shape checks pass and only the digest notices.
+        std::fs::write(&path, b"abd").unwrap();
+        let err = check_digest(&good, &path).expect_err("a changed file must not install");
+        assert!(err.to_string().contains(ABC_SHA256), "the message says what was expected");
+
+        let missing = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  other.exe";
+        assert!(
+            check_digest(missing, &path).is_err(),
+            "a checksum file that never names the asset verifies nothing"
+        );
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn newer_compares_numerically_not_lexically() {

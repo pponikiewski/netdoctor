@@ -53,8 +53,10 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      # Published next to the binary so anyone installing by hand can check
-      # what they downloaded. The in-app updater does not read it.
+      # Published next to the binary for anyone installing by hand, and read
+      # by the in-app updater: `update::verify` refuses to install a download
+      # whose digest is not the one listed here. The format matters — one line
+      # of `<hex>  netdoctor.exe` — because that is what the parser expects.
       - name: Checksum
         shell: pwsh
         run: |

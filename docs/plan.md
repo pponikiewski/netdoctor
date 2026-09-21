@@ -18,7 +18,7 @@
 - [x] **8. NetState zamarza na czas awarii; brak wykrywania APIPA/DHCP**
 - [x] **9. Zamiatanie trwa 3,6 s, gdy cele nie odpowiadają**
 - [x] **10. Druga, tylko-do-odczytu `Connection` dla UI**
-- [ ] **11. Updater nie czyta `SHA256SUMS`, które sam publikuje**
+- [x] **11. Updater nie czyta `SHA256SUMS`, które sam publikuje**
 - [ ] **12. Brak strażnika pojedynczej instancji**
 - [ ] **13. Higiena repo (binarka w gicie, `__pycache__`, `legacy-python`, CI)**
 - [ ] **14. Niewypełnione placeholdery w trzech dokumentach**
@@ -609,6 +609,33 @@ samej decyzji: kilkanaście linii, asset już istnieje.
 
 **Naprawa.** Pobrać `SHA256SUMS`, policzyć skrót pobranego pliku, porównać.
 Docelowo Authenticode, ale to koszt certyfikatu.
+
+**Zrobione.** `Release` niesie `sums_url`, `verify` po kontrolach kształtu
+pobiera plik sum, parsuje wiersz dla `netdoctor.exe` i porównuje z SHA-256
+policzonym ze strumienia (64 KiB na raz, bez drugiej kopii binarki w pamięci).
+
+- **Zależność:** `sha2`. Alternatywą był BCrypt z crate'a `windows` — zero
+  nowych zależności, około pięćdziesięciu linii unsafe FFI za skrót. Repo ma
+  42 bloki `unsafe` i pozycję 13 o tym, żeby pilnować ich ostrzej, więc kurs
+  jest odwrotny.
+- **Wydanie bez pliku sum** instaluje się dalej na samych kontrolach kształtu.
+  Odmowa zablokowałaby aktualizację *ze* starego builda, czyli jedyny przypadek,
+  dla którego updater istnieje. Zapisane w komentarzu przy polu.
+- **Model zaufania się nie zmienił:** binarka i suma przychodzą z tego samego
+  miejsca, więc kto podmieni jedno, podmieni i drugie. Zamknięte są przypadki
+  losowe — ucięty strumień, uszkodzone wydanie, podmieniony asset — a nie
+  przejęte konto. `ponytail:` w `update.rs` mówi to wprost.
+
+**Testy.** Cztery: znana odpowiedź dla „abc"; plik większy niż bufor odczytu
+(200 000 bajtów) przeciwko skrótowi policzonemu przez `Get-FileHash` Windowsa,
+czyli drugą implementację; parser w formacie, który naprawdę pisze workflow
+(CRLF, dwie spacje, marker `*`, obce wiersze); oraz odmowa instalacji pliku
+różniącego się o jeden bajt, gdzie rozmiar i kształt się zgadzają i tylko skrót
+to widzi.
+
+**Poprawione przy okazji.** Komentarz w `release.yml` twierdził „The in-app
+updater does not read it", a wpis w `docs/architecture.md` mówił, że weryfikacja
+jest wyłącznie kształtowa. Oba były prawdziwe do tej zmiany.
 
 ---
 

@@ -20,6 +20,10 @@ ureq = { version = "2", features = ["tls"] }
 anyhow = "1"
 crossbeam-channel = "0.5"
 dirs = "5"
+# Only for verifying the SHA256SUMS the release workflow publishes. The
+# alternative was BCrypt through the windows crate: no new dependency, fifty
+# lines of unsafe FFI for a hash. This repo is trying to have less of that.
+sha2 = "0.10"
 
 [dependencies.windows]
 version = "0.58"

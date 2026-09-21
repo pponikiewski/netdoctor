@@ -3549,6 +3549,26 @@ pub fn upd_err_too_small(bytes: u64) -> String {
     }
 }
 
+pub fn upd_err_no_digest(asset: &str) -> String {
+    match current() {
+        Lang::En => format!("The release's checksum file does not list {asset}."),
+        Lang::Pl => format!("Plik sum kontrolnych wydania nie wymienia {asset}."),
+    }
+}
+
+pub fn upd_err_checksum(got: &str, want: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "The download does not match the release's checksum. \
+             Expected {want}, got {got}. Nothing was installed."
+        ),
+        Lang::Pl => format!(
+            "Pobrany plik nie zgadza się z sumą kontrolną wydania. \
+             Oczekiwano {want}, jest {got}. Nic nie zostało zainstalowane."
+        ),
+    }
+}
+
 pub fn upd_err_size_mismatch(got: u64, want: u64) -> String {
     match current() {
         Lang::En => format!("The download is {got} bytes; the release says {want}."),
