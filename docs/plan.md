@@ -19,7 +19,7 @@
 - [x] **9. Zamiatanie trwa 3,6 s, gdy cele nie odpowiadają**
 - [x] **10. Druga, tylko-do-odczytu `Connection` dla UI**
 - [x] **11. Updater nie czyta `SHA256SUMS`, które sam publikuje**
-- [ ] **12. Brak strażnika pojedynczej instancji**
+- [x] **12. Brak strażnika pojedynczej instancji**
 - [ ] **13. Higiena repo (binarka w gicie, `__pycache__`, `legacy-python`, CI)**
 - [ ] **14. Niewypełnione placeholdery w trzech dokumentach**
 
@@ -656,6 +656,41 @@ skrót i uruchamia drugą.
 **Naprawa.** Nazwany mutex (`CreateMutexW`) i wyniesienie istniejącego okna na
 wierzch zamiast drugiego procesu.
 
+**Kryterium akceptacji** (dopisane, bo pozycja go nie miała).
+- [x] Objaw odtworzony, bez dotykania prawdziwej bazy:
+      `store::tests::a_second_writer_flatters_the_jitter_it_is_measuring`
+      pokazuje, że drugi pisarz nie tylko duplikuje historię, ale **zaniża
+      jitter** — przeplot rozsuwa kolejne wiersze, a `stats` liczy odległość
+      między kolejnymi.
+- [x] Druga instancja nie startuje monitora. Zmierzone na żywo: pierwszy proces
+      żyje, drugi kończy się kodem 0, w systemie zostaje jeden `netdoctor`.
+- [x] Druga instancja wynosi okno pierwszej na wierzch, również gdy pierwsza
+      poszła z autostartu z `--minimised`. Zmierzone: pół sekundy po drugim
+      uruchomieniu oknem pierwszego planu jest okno pierwszego procesu
+      (`foreground pid == pierwszy pid`), i tak przez kolejne dwie sekundy.
+
+**Uwagi z realizacji.**
+
+- Mutex jest w przestrzeni `Local\`, nie `Global\`. Historia leży w `AppData`
+  użytkownika, więc dwie osoby zalogowane naraz mają dwie osobne bazy i prawo
+  do kopii każda. `Global\` wymagałby dodatkowo uprawnienia, którego zwykłe
+  konto nie ma.
+- Okno szukane po **ścieżce pliku wykonywalnego** procesu, nie po tytule:
+  tytuł niesie wersję i tłumaczony podtytuł, a edytor z otwartym tym projektem
+  pasowałby do prefiksu.
+- Pierwszy szkic filtrował okna po `IsWindowVisible`, co wycięłoby dokładnie
+  scenariusz z planu (autostart z `--minimised`). Pomiar pokazał przy okazji,
+  że okno uruchomione z `--minimised` **jest** widoczne w sensie
+  `IsWindowVisible` — zgodnie z hipotezą, którą audyt już raz obalił. Filtr
+  stoi mimo to na niepustym tytule, bo to odróżnia prawdziwe okno od okien
+  pomocniczych winita niezależnie od stanu widoczności.
+- `--scan` nie bierze strażnika: nie pisze do historii i jest jedyną rzeczą,
+  którą skrypt może sensownie uruchomić przy działającej aplikacji.
+- Pierwsza wersja testu brała **prawdziwą** nazwę mutexa, więc `cargo test`
+  padał na każdej maszynie, na której aplikacja akurat chodzi. Złapane, bo
+  zestaw zaświecił się na czerwono zaraz po weryfikacji na żywo. Test bierze
+  teraz własną nazwę z PID-em; sprawdzone przy uruchomionej aplikacji.
+
 ---
 
 ## 13. Higiena repo
@@ -774,8 +809,9 @@ Uczciwie, żeby nie budować na piasku:
 
 - ~~**Zamrożenie `NetState`** (punkt 8)~~ — odtworzone na żywo 2026-09-21,
   `netsh wlan disconnect` przy włączonym `watch_netstate`. Patrz punkt 8.
-- **Dwie instancje** (punkt 12) — nie odtwarzałem, żeby nie zaśmiecić prawdziwej
-  bazy.
+- ~~**Dwie instancje** (punkt 12)~~ — odtworzone 2026-09-21 na poziomie
+  `Store` (dwa uchwyty, jeden plik tymczasowy), więc bez dotykania prawdziwej
+  bazy, i zweryfikowane na żywo dwoma procesami po naprawie. Patrz punkt 12.
 - **Zacięcie `getaddrinfo` przy nieosiągalnym resolverze** — NXDOMAIN zmierzony
   i szybki (25 ms), wolnej ścieżki nie umiałem wywołać bez zmiany DNS w systemie.
   `dns_lookup_ms` nie ma timeoutu i jest wołane w wątku zamiatania co 10 sweepów

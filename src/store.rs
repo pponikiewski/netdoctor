@@ -674,6 +674,58 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("db-shm"));
     }
 
+    /// What a second instance does to the numbers.
+    ///
+    /// Two processes sweeping the same targets into one file interleave their
+    /// rows, and `stats` reads the distance between *consecutive* rows as
+    /// jitter. The second instance therefore does not merely duplicate the
+    /// history — it reports a calmer line than the one being measured. This
+    /// is the reason [`crate::single`] exists; the plan called it out without
+    /// reproducing it, because reproducing it with two real processes means
+    /// writing into the real history.
+    #[test]
+    fn a_second_writer_flatters_the_jitter_it_is_measuring() {
+        let path = std::env::temp_dir().join(format!("netdoctor-two-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let one = Store::open(&path).unwrap();
+        let t = now();
+        // One sweep a second, alternating 5 ms and 45 ms: 40 ms of jitter.
+        let alone: Vec<_> = (0..20)
+            .map(|i| {
+                (
+                    t + i as f64,
+                    "gateway".to_string(),
+                    Some(if i % 2 == 0 { 5.0 } else { 45.0 }),
+                    true,
+                )
+            })
+            .collect();
+        one.add_samples(&alone).unwrap();
+        let honest = one.stats("gateway", 3600.0).jitter.unwrap();
+
+        // A second instance, half a second out of step, recording the same
+        // link and therefore the same readings.
+        let _ = std::fs::remove_file(&path);
+        let one = Store::open(&path).unwrap();
+        let two = Store::open(&path).unwrap();
+        one.add_samples(&alone).unwrap();
+        let shadow: Vec<_> =
+            alone.iter().map(|(ts, k, rtt, ok)| (ts + 0.5, k.clone(), *rtt, *ok)).collect();
+        two.add_samples(&shadow).unwrap();
+        let doubled = one.stats("gateway", 3600.0).jitter.unwrap();
+
+        assert!(
+            doubled < honest * 0.75,
+            "a second writer has to visibly distort the reading: {honest} alone, {doubled} doubled"
+        );
+
+        drop((one, two));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
     #[test]
     fn samples_and_events_round_trip() {
         let store = Store::open_in_memory().unwrap();

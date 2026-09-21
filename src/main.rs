@@ -11,6 +11,7 @@ mod monitor;
 mod optimize;
 mod probe;
 mod settings;
+mod single;
 mod store;
 mod ui;
 mod update;
@@ -94,6 +95,24 @@ fn main() -> eframe::Result<()> {
         }
         return Ok(());
     }
+
+    // Only the windowed run takes the guard. `--scan` writes nothing to the
+    // history and is the one thing a script might sensibly run while the app
+    // is up.
+    //
+    // Held in a binding rather than dropped straight away: the name is only
+    // taken for as long as this handle lives.
+    let _instance = match single::acquire() {
+        Some(guard) => guard,
+        None => {
+            // Not an error to report. Somebody launched the app that is
+            // already running — most often because autostart started it
+            // hidden — so the useful answer is the window they were looking
+            // for, not a message box.
+            single::raise_existing_window();
+            return Ok(());
+        }
+    };
 
     let minimised = args.iter().any(|a| a == "--minimised") || cfg.start_minimised;
 
