@@ -1,0 +1,46 @@
+name: ci
+
+# The release workflow already runs clippy and the tests, but only when a tag
+# is pushed — which is the worst moment to learn that main has been broken for
+# a week. This runs the same three checks on every push and every pull request,
+# so a regression is found by the commit that caused it.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run pointless; cancel it
+# rather than queue behind it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same pin as release.yml, and for the same reason: a red build should
+      # mean this repo changed, not that rustc did. Bump both together, or CI
+      # stops predicting what a release will do.
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Several tests read the live machine: the registry, the adapter list, a
+      # ping to loopback. They pass on windows-latest — measured, not assumed —
+      # so they stay in. A runner without a Wi-Fi radio is a case the code has
+      # to handle anyway, and the tests assert exactly that it does.
+      - name: Test
+        run: cargo test

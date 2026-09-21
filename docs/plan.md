@@ -20,7 +20,8 @@
 - [x] **10. Druga, tylko-do-odczytu `Connection` dla UI**
 - [x] **11. Updater nie czyta `SHA256SUMS`, które sam publikuje**
 - [x] **12. Brak strażnika pojedynczej instancji**
-- [ ] **13. Higiena repo (binarka w gicie, `__pycache__`, `legacy-python`, CI)**
+- [x] **13. Higiena repo (binarka w gicie, `__pycache__`, `legacy-python`, CI)**
+      — bez przepisania historii gita, które zostaje osobną decyzją
 - [ ] **14. Niewypełnione placeholdery w trzech dokumentach**
 
 ---
@@ -695,23 +696,62 @@ wierzch zamiast drugiego procesu.
 
 ## 13. Higiena repo
 
-- [ ] `NetDoctor-1.1.0-windows-x64/netdoctor.exe` (5,8 MB) w gicie — połowa wagi
-      `.git` (8,7 MB). 22 commity, więc `filter-repo` jest jeszcze tani.
-- [ ] `__pycache__/run.cpython-313.pyc` w gicie.
-- [ ] `legacy-python/` (17 plików) — zostawić tylko jeśli świadomie służy za
-      referencję, inaczej to martwy kod, który ktoś kiedyś zacznie czytać jak
-      żywy.
-- [ ] README mówi „43 tests", jest 178.
-- [ ] README nie wspomina, że `history.db` rośnie do ~367 MB (pomiar niżej).
-- [ ] README nie wspomina, że test obciążenia ciągnie dane ze
-      `speed.cloudflare.com` bez górnego limitu (4 strumienie w pętli).
-      `--scan` bez `--quick` robi to domyślnie — na łączu mobilnym to realne
-      pieniądze.
-- [ ] Brak `ci.yml` na push i PR. Dziś workflow rusza tylko na tag `v*`. Ten sam
-      zestaw kroków (clippy, test) na push do main łapałby regresję przed
-      wydaniem.
-- [ ] Brak atrybutów lintów przy 42 blokach `unsafe`.
-      `#![deny(unsafe_op_in_unsafe_fn)]` byłoby proporcjonalne.
+- [x] `NetDoctor-1.1.0-windows-x64/` usunięty z drzewa roboczego (exe 5,8 MB
+      plus `PRZECZYTAJ MNIE.txt`). **Historia gita nietknięta** — to osobna
+      decyzja, patrz niżej.
+- [x] `__pycache__/run.cpython-313.pyc` odśledzony, `__pycache__/` i `*.pyc`
+      dopisane do `.gitignore`.
+- [x] `legacy-python/` **zostaje** jako świadoma referencja. Argument nie jest
+      teoretyczny: pozycja 4 tej samej sesji użyła `legacy-python/netdoc/gui.py:731`
+      jako dowodu pierwotnej intencji przy `notify_on_outage`. Żeby nikt nie
+      wziął tego za żywy kod, `legacy-python/README.md` zaczyna się teraz od
+      ramki „zamrożona referencja, nie kod do uruchamiania".
+- [x] README mówił „43 tests". **Nie 178 — dziś jest 218** (214 chodzi, 4 pod
+      `#[ignore]`). Liczba w planie była nieaktualna już w chwili pisania.
+      Dopisany akapit, czym są te cztery: dwa benchmarki czasowe i dwa
+      podglądy żywej maszyny, plus komenda, która je uruchamia.
+- [x] README, sekcja Data: `history.db` przy ustawieniach domyślnych stoi na
+      **367 MB** i że to stan ustalony, nie wyciek — retencja go tam trzyma,
+      a siedem dni zamiast czternastu mniej więcej połowi.
+- [x] README: koszt testu obciążenia przy opisie zakładki i przy `--scan`,
+      plus `--scan --quick` dopisane do listy komend.
+- [x] `.github/workflows/ci.yml` na push do main, PR i `workflow_dispatch`:
+      `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+      `cargo test`. Ten sam pin toolchaina co `release.yml` (1.95.0), plus
+      `concurrency` z anulowaniem poprzedniego biegu.
+- [x] `#![deny(unsafe_op_in_unsafe_fn)]` w `main.rs`. Bloków `unsafe` jest
+      **43**, nie 42. Atrybut wymusił 14 poprawek w pięciu `unsafe fn`:
+      `icmp::ReplyBuf::reply`, `netstate::query_raw`, `read_connection`,
+      `read_channel`, `read_rssi` i `single::visit`. Przy okazji cztery z nich
+      dostały brakującą sekcję `# Safety`.
+
+**Poprawka do tezy planu o teście obciążenia.** Plan pisał „bez górnego limitu".
+To nieprawda w tej formie: `bandwidth::run` jest ograniczony **czasem**, nie
+bajtami — 4 strumienie przez 1,5 s rozbiegu plus 8 s (`--scan`) albo 12 s
+(zakładka). Koszt zależy więc od przepustowości i szybsze łącze płaci **więcej**:
+około 130 MB na 100 Mbit/s, około 1,3 GB na gigabicie. Do README poszły liczby,
+nie słowo „bez limitu", bo to jest ta wersja, która pozwala komuś podjąć decyzję.
+
+**Kryterium, którego pilnuje test.** Liczba w README to jedyny podpunkt, który
+zgnije po cichu, więc ma strażnika: `tests::the_readme_still_quotes_the_right_number_of_tests`
+skanuje `src/` po atrybutach `#[test]` (nie pyta harnessa, bo ten nie widzi
+`--ignored`) i porównuje z liczbą w README. Igła składana przez `concat!`, żeby
+skaner nie policzył samego siebie. Mutacja kontrolna w obie strony: przestawienie
+liczby w README o jeden — czerwony; dopisanie prawdziwego testu w innym pliku —
+czerwony z drugiej strony. Reszta podpunktów ma za weryfikację kompilator
+(`deny`) albo sam workflow, i nie da się na nie napisać sensownego testu.
+
+**`cargo test` na runnerze GitHuba nie jest hipotezą.** Bieg 35522011862
+z 2026-09-20 przeszedł 175 testów na `windows-latest`, razem z tymi, które
+czytają rejestr, listę kart i pingują loopback. Dlatego `ci.yml` puszcza pełne
+`cargo test`, a nie okrojone. Testy dopisane w tej sesji (`wevtutil`,
+`GetBestInterface`, mutex pojedynczej instancji) nie były jeszcze na runnerze —
+pierwszy push to zweryfikuje.
+
+**Zostaje otwarte: przepisanie historii.** Binarka 5,8 MB dalej siedzi
+w obiektach gita (`.git` = 9,8 MB, 34 commity, nie 22 jak pisał plan). Usunięcie
+jej wymaga `git filter-repo` i wymuszonego pusha, czyli zmiany każdego SHA
+w repo. Świadomie nieruszone — osobna decyzja, poza tą pozycją.
 
 ---
 
