@@ -196,3 +196,65 @@ fn show_crash_notice(path: &str) {
     eprintln!("{}", i18n::crash_notice(path));
 }
 
+#[cfg(test)]
+mod tests {
+    /// The README quotes a test count, and a quoted number rots the moment
+    /// someone adds a test. It sat at "43" while the suite grew to 213, which
+    /// is worse than no number at all: a reader who checks it once and finds
+    /// it wrong stops trusting the rest of the page.
+    ///
+    /// Counting attributes in the tree rather than asking the test harness is
+    /// deliberate — a harness can only report the tests it was asked to run,
+    /// so `--ignored` ones would go missing and the number would drift again.
+    fn test_attributes_in_source() -> usize {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        walk(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+
+        // Split so this file does not contain the literal it is looking for,
+        // which would make the scanner count itself.
+        let needle = concat!("#[", "test]");
+        files
+            .iter()
+            .filter_map(|f| std::fs::read_to_string(f).ok())
+            .map(|text| text.matches(needle).count())
+            .sum()
+    }
+
+    /// The number the README prints, from `"<n> tests,"`.
+    fn count_claimed_by_readme() -> Option<usize> {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+        )
+        .ok()?;
+        let at = text.find(" tests, covering")?;
+        let digits: String = text[..at].chars().rev().take_while(|c| c.is_ascii_digit()).collect();
+        digits.chars().rev().collect::<String>().parse().ok()
+    }
+
+    #[test]
+    fn the_readme_still_quotes_the_right_number_of_tests() {
+        let actual = test_attributes_in_source();
+
+        // A scanner that matched nothing would agree with any README, so it
+        // has to prove it read the tree before its answer means anything.
+        assert!(actual > 100, "the scanner only found {actual} tests, so it did not read the tree");
+
+        let claimed = count_claimed_by_readme().expect("README does not state a test count");
+        assert_eq!(
+            claimed, actual,
+            "README says {claimed} tests, the tree has {actual}. Update the README."
+        );
+    }
+}

@@ -121,9 +121,15 @@ somewhere you own and try again, or download the new version by hand.
 ```text
 netdoctor.exe              # the app
 netdoctor.exe --scan       # run the diagnostic scan on the console and exit
+netdoctor.exe --scan --quick  # the same scan without the load test
 netdoctor.exe --minimised  # start minimised (used by autostart)
 netdoctor.exe --help
 ```
+
+`--scan` includes the load test unless you add `--quick`, so a scripted scan
+downloads a few hundred megabytes every time it runs. See the Load test entry
+under Tabs for what that costs. `--quick` is the flag to reach for on a metered
+connection or in anything scheduled.
 
 Diagnostics need no elevation. Applying changes does; the app offers to relaunch
 itself when you ask it to apply one.
@@ -174,7 +180,11 @@ one English label that would silently fail everywhere else.
   explains itself, and some link straight to the fix.
 - **Load test** — bufferbloat: idle latency versus latency with the link
   saturated. Grade A–F and specific advice. This is usually the answer to
-  "good ping, still lagging".
+  "good ping, still lagging". **It costs data**: saturating the link is the
+  measurement, so it downloads from `speed.cloudflare.com` on four streams for
+  about 13 seconds, and a faster line therefore pays more. Roughly 130 MB on
+  100 Mbit/s, roughly 1.3 GB on gigabit. The result screen prints what it
+  actually pulled. On a metered or mobile connection, skip it.
 - **Optimise** — every tweak grouped by what it is about (power and sleep,
   radio and range, names and addresses, throughput and latency, what else
   uses the link, last resort), each row saying in words whether it is set,
@@ -295,11 +305,20 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-43 tests, covering the failure-blame logic, the statistics, the registry layer,
+218 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable
 findings.
+
+Four of them are marked `#[ignore]` and do not run by default. Two are timing
+benchmarks that only mean something in a release build on an otherwise quiet
+machine; two print what the live adapter is doing and are there to be read, not
+to pass or fail. Run them on purpose:
+
+```text
+cargo test --release -- --ignored --nocapture
+```
 
 ## Data
 
@@ -312,6 +331,12 @@ findings.
 
 Samples older than the configured retention (14 days by default) are pruned
 automatically.
+
+`history.db` is the one file here that gets big. At the defaults — four targets,
+one sweep a second — a full 14 days of retention measures **367 MB**. That is
+the steady state, not a leak: pruning keeps it there. If it is more than you
+want to spend, the retention setting is the dial, and dropping to seven days
+roughly halves it.
 
 ## Building
 
