@@ -44,6 +44,7 @@ robocze i wracają kanałem `Job`. Wszystkie trzy spotykają się wyłącznie na
 | `ui/` | egui: `mod.rs` to `App` i pętla klatki, reszta to po jednej zakładce na plik |
 | `settings.rs` | ustawienia w JSON, migracja starych kluczy, `data_dir()` |
 | `single.rs` | nazwany mutex i wyniesienie okna pierwszej instancji na wierzch |
+| `tray.rs` | ikona w zasobniku na własnym wątku Win32: kolor stanu, menu, powiadomienia Windows o awariach |
 | `update.rs` | wydania z GitHuba, weryfikacja przez `SHA256SUMS`, podmiana działającej binarki |
 | `i18n.rs` | dwa języki, jeden wpis na komunikat |
 
@@ -78,6 +79,12 @@ z łamania dokładnie tej zasady.
 - 2026-09-23 — pauza monitora to dwie rzeczy: pauza użytkownika (`set_paused`) i licznik blokad zadań (`hold`/`release`: skan głęboki, test obciążenia, skan Wi-Fi). Jedna flaga pozwalała pierwszemu kończącemu się zadaniu odpauzować monitor pod drugim albo wbrew użytkownikowi.
 
 - 2026-09-23 — reguły otwierania i zamykania awarii wydzielone do `monitor::Outages`, bez I/O, żeby dało się je testować. Dziura w obserwacji dłuższa niż `OBSERVATION_GAP_S` (sen, długa pauza) zamyka otwartą awarię na ostatnim pomiarze przed nią i czyści `lead`, bo pomiary sprzed snu nie są wstępem do niczego po nim. Krótsza pauza jest mostkowana: awaria wciąż trwająca po niej to ta sama awaria, a sekundy bez pomiaru trafiają do `context_end` jako `unwatched_s`; awaria, która minęła w trakcie pauzy, kończy się na ostatnim pomiarze przed pauzą. Monitor zawsze zamyka przez `Store::close_event_at` z jawnym czasem; „teraz" jest błędne po każdej pauzie.
+
+- 2026-09-23 — ikona w zasobniku na własnym wątku (`tray.rs`) z ukrytym oknem Win32 i własną pętlą komunikatów, bez crate'a `tray-icon`; czyta `monitor::Shared` bezpośrednio, a powiadomienia dostaje kanałem `Monitor::notices`. Powód: okno eframe jest przez większość czasu ukryte, a ukryte okno eframe nie dostaje klatek, więc nic, co żyje w pętli UI, nie może być tym, co widać, gdy okna nie widać. Powiadomienia to balony `Shell_NotifyIconW` (`NIF_INFO`), nie toasty WinRT, bo te wymagają AUMID i skrótu w Menu Start. Reguła „kiedy powiadomić” jest w `monitor::Announcer`, obok `Outages`, żeby powiadomienia i historia liczyły awarię tą samą miarą.
+
+- 2026-09-23 — trzy zachowania eframe 0.29/winit, na których opiera się chowanie okna, każde potwierdzone na żywym procesie: (1) eframe pokazuje okno po pierwszej klatce bez względu na `with_visible(false)`, a polecenia widoku wykonuje po tym pokazaniu; start zminimalizowany ustawia okno poza ekranem i chowa je w pierwszej klatce. (2) Ukryte okno nie dostaje klatek, więc WM_CLOSE do niego wisi; „Zakończ” pokazuje je najpierw `SW_SHOWMINNOACTIVE`. (3) winit wywołuje `ShowWindow` tylko przy zmianie własnej flagi, a zasobnik pokazuje okno przez Win32; chowanie wysyła `Visible(true)` i `Visible(false)`. Okno aplikacji rozpoznawane po prefiksie tytułu (`single::TITLE_PREFIX`), bo proces ma też okna IME i sterownika GL z tytułami. Przy podbiciu eframe każde z tych trzech trzeba sprawdzić na nowo (`tray_check`).
+
+- 2026-09-23 — straty i jitter oceniane od końca ostatniej twardej awarii, nie z pełnych 60 s, i dopiero przy 10 pomiarach. Pełne okno liczyło zgubione pingi samej awarii jako „wolne łącze” i przedłużało każdą awarię o ok. minutę; znalezione testem z prawdziwym odcięciem Wi-Fi.
 
 ## Open questions
 <!-- Track unresolved technical decisions -->

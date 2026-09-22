@@ -19,6 +19,7 @@ mod probe;
 mod settings;
 mod single;
 mod store;
+mod tray;
 mod ui;
 mod update;
 mod winreg;
@@ -146,18 +147,27 @@ fn main() -> eframe::Result<()> {
 
     let minimised = args.iter().any(|a| a == "--minimised") || cfg.start_minimised;
 
-    let viewport = egui::ViewportBuilder::default()
+    let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1120.0, 760.0])
         .with_min_inner_size([900.0, 620.0])
-        .with_title(format!("NetDoctor {VERSION} · {}", i18n::app_tagline()))
+        // Starts with `TITLE_PREFIX` on purpose: it is how the tray and a
+        // second launch find this window among the process's helper windows.
+        .with_title(format!("{}{VERSION} · {}", single::TITLE_PREFIX, i18n::app_tagline()))
         .with_visible(!minimised);
+    if minimised {
+        // eframe shows the window after its first frame whatever `visible`
+        // says, and the app can only hide it again from inside that frame.
+        // Off the screen, where Windows itself parks minimised windows, that
+        // moment is not seen. `App::update` brings it back.
+        viewport = viewport.with_position(ui::OFF_SCREEN);
+    }
 
     let options = eframe::NativeOptions { viewport, ..Default::default() };
 
     eframe::run_native(
         "NetDoctor",
         options,
-        Box::new(move |cc| Ok(Box::new(ui::App::new(cc, store, cfg)))),
+        Box::new(move |cc| Ok(Box::new(ui::App::new(cc, store, cfg, minimised)))),
     )
 }
 
@@ -216,6 +226,9 @@ fn install_panic_hook() {
             .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()))
             .is_ok();
 
+        // Before anything that might not return: this build aborts on
+        // panic, and the icon would otherwise outlive the process.
+        tray::remove_after_crash();
         previous(info);
         if wrote {
             show_crash_notice(&path.display().to_string());

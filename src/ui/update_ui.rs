@@ -60,7 +60,7 @@ fn restart(app: &mut App, ui: &mut egui::Ui) {
     match update::restart() {
         // Closing the window is what ends this process, and ending this
         // process is what unlocks the replaced binary for the next start.
-        Ok(()) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+        Ok(()) => app.quit(ui.ctx()),
         Err(e) => {
             let now = ui.input(|i| i.time);
             app.toast(i18n::upd_failed(&e.to_string()), RED, now);

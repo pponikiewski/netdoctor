@@ -210,7 +210,15 @@ An outage is only recorded if the monitor is running when it happens. So:
 - **Settings → Start with Windows** adds NetDoctor to the current user's `Run`
   key. No elevation needed, because monitoring does not need it.
 - **Start minimised**, or `--minimised`.
-- When the verdict changes, a banner names what broke and on whose side.
+- **An icon in the notification area** shows the line's state: green when it
+  works, yellow when it is slow, red when it is down, grey when nothing is
+  being measured (paused, or no reading yet). Hover for the verdict, click to
+  open the window, right-click for Quit.
+- **The close button hides the window to that icon** and measuring goes on.
+  Quit from the icon's menu to stop it.
+- **Windows notifies you** when an outage is serious enough to be recorded
+  (three failed readings in a row, and not merely slow), and again when the
+  line comes back, with how long it was down. Turn it off in Settings.
 
 ## Changes it can make
 
@@ -310,19 +318,31 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-231 tests, covering the failure-blame logic, the statistics, the registry layer,
+246 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable
 findings.
 
-Four of them are marked `#[ignore]` and do not run by default. Two are timing
+Seven of them are marked `#[ignore]` and do not run by default. Two are timing
 benchmarks that only mean something in a release build on an otherwise quiet
 machine; two print what the live adapter is doing and are there to be read, not
 to pass or fail. Run them on purpose:
 
 ```text
 cargo test --release -- --ignored --nocapture
+```
+
+Three check the notification-area icon and need a desktop session. One of
+those cuts the Wi-Fi for about ten seconds to produce a real outage, and checks
+that it is announced, that its end is announced promptly, and that the length
+recorded matches the cut. It writes to a scratch database, and needs to know
+what to reconnect to:
+
+```text
+set NETDOCTOR_TEST_WIFI_IFACE=WiFi
+set NETDOCTOR_TEST_WIFI_PROFILE=<your network's profile name>
+cargo test a_real_outage -- --ignored --nocapture
 ```
 
 ## Data

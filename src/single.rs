@@ -12,6 +12,20 @@
 //! shortcut. So the second launch raises the first one's window rather than
 //! saying no and leaving them with nothing.
 
+/// What the app's window title starts with. `main` builds the title from it,
+/// and it is how the window is told apart from the helper windows every GUI
+/// process also owns: IME windows ("Default IME"), the GL driver's dummies
+/// ("__wglDummyWindowFodder"). Those have titles too, so "has a title" picked
+/// one of them, and a WM_CLOSE or a `SW_RESTORE` meant for the app went to a
+/// window nobody can see.
+pub const TITLE_PREFIX: &str = "NetDoctor ";
+
+/// Whether a window title, as UTF-16, is the app's.
+fn has_app_title(title: &[u16]) -> bool {
+    let prefix: Vec<u16> = TITLE_PREFIX.encode_utf16().collect();
+    title.starts_with(&prefix)
+}
+
 #[cfg(windows)]
 mod imp {
     use windows::core::PCWSTR;
@@ -23,8 +37,8 @@ mod imp {
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, SetForegroundWindow,
-        ShowWindow, SW_RESTORE,
+        EnumWindows, GetWindowTextW, GetWindowThreadProcessId, SetForegroundWindow, ShowWindow,
+        SW_RESTORE,
     };
 
     /// Per session, not machine-wide. The history this guards lives under the
@@ -73,6 +87,13 @@ mod imp {
         (!already).then_some(guard)
     }
 
+    /// Whether `hwnd` is the app's main window. See [`super::TITLE_PREFIX`].
+    pub fn is_app_window(hwnd: HWND) -> bool {
+        let mut buf = [0u16; 64];
+        let n = unsafe { GetWindowTextW(hwnd, &mut buf) }.clamp(0, buf.len() as i32) as usize;
+        super::has_app_title(&buf[..n])
+    }
+
     struct Search {
         exe: Vec<u16>,
         found: HWND,
@@ -105,8 +126,9 @@ mod imp {
         // `--minimised` copy, whose window is built with `with_visible(false)`
         // and so is hidden rather than merely small. Filtered on having a
         // title instead, which is what separates the real window from the
-        // message-only and helper windows winit keeps alongside it.
-        if unsafe { GetWindowTextLengthW(hwnd) } == 0 {
+        // message-only and helper windows winit keeps alongside it, and not
+        // on merely having one: the IME and GL helper windows do too.
+        if !is_app_window(hwnd) {
             return TRUE;
         }
         let mut pid = 0u32;
@@ -175,6 +197,8 @@ mod imp {
     }
 }
 
+#[cfg(windows)]
+pub use imp::is_app_window;
 pub use imp::{acquire, raise_existing_window};
 
 /// [`acquire`], retried for up to `wait`.
@@ -210,6 +234,16 @@ mod tests {
     use super::imp::acquire_named;
     use super::retry_within;
     use std::time::Duration;
+
+    #[test]
+    fn only_the_app_s_own_title_counts_as_its_window() {
+        let t = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+        assert!(super::has_app_title(&t("NetDoctor 1.2.0 · diagnostyka sieci")));
+        // The helper windows the same process owns, all with titles.
+        for helper in ["Default IME", "MSCTFIME UI", "__wglDummyWindowFodder", "", "NetDoctor"] {
+            assert!(!super::has_app_title(&t(helper)), "{helper:?}");
+        }
+    }
 
     #[test]
     fn a_name_released_while_waiting_is_taken() {

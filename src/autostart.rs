@@ -95,13 +95,16 @@ pub fn relaunch_elevated() -> Result<()> {
         |s: &str| -> Vec<u16> { OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect() };
     let verb = wide("runas");
     let file = wide(&exe.to_string_lossy());
+    // The elevated copy starts while this one is still closing, so it has to
+    // wait for the single-instance name like an updated copy does.
+    let params = wide(crate::update::AFTER_UPDATE_FLAG);
 
     let result = unsafe {
         ShellExecuteW(
             None,
             PCWSTR(verb.as_ptr()),
             PCWSTR(file.as_ptr()),
-            PCWSTR::null(),
+            PCWSTR(params.as_ptr()),
             PCWSTR::null(),
             SW_SHOWNORMAL,
         )

@@ -392,6 +392,8 @@ impl DnsReading {
 pub struct Monitor {
     pub shared: Arc<Shared>,
     pub rx: Receiver<Snapshot>,
+    /// Outages worth a Windows notification. Read by [`crate::tray`].
+    pub notices: Receiver<Notice>,
     stop: Arc<AtomicBool>,
     /// The sweep, joined on drop: it closes an open outage on the way out.
     /// The other threads are not, see `start`.
@@ -405,13 +407,14 @@ impl Monitor {
         // Bounded so a stalled UI cannot grow the queue without limit; the
         // newest snapshot matters, older ones can be dropped.
         let (tx, rx) = bounded::<Snapshot>(64);
+        let (notice_tx, notices) = bounded::<Notice>(16);
 
         let handle = {
             let shared = Arc::clone(&shared);
             let stop = Arc::clone(&stop);
             thread::Builder::new()
                 .name("netdoctor-monitor".into())
-                .spawn(move || run_loop(shared, store, tx, stop))
+                .spawn(move || run_loop(shared, store, tx, notice_tx, stop))
                 // ponytail: a thread spawn failing means the OS is out of
                 // resources and nothing this app does next will work. Make
                 // `new` fallible if it ever needs to degrade instead of die.
@@ -446,7 +449,7 @@ impl Monitor {
                 .expect("spawn worker thread");
         }
 
-        Monitor { shared, rx, stop, handle: Some(handle) }
+        Monitor { shared, rx, notices, stop, handle: Some(handle) }
     }
 
     /// The user's own pause. Independent of any job's hold.
@@ -481,7 +484,7 @@ impl Monitor {
 }
 
 impl Shared {
-    fn new(settings: Settings) -> Shared {
+    pub(crate) fn new(settings: Settings) -> Shared {
         Shared {
             last: Mutex::new(Snapshot::default()),
             user_paused: AtomicBool::new(false),
@@ -494,8 +497,9 @@ impl Shared {
         }
     }
 
-    /// Whether the monitor should sample right now.
-    fn paused(&self) -> bool {
+    /// Whether the monitor is sampling right now: neither the user nor a job
+    /// has it paused.
+    pub fn paused(&self) -> bool {
         self.user_paused.load(Ordering::Relaxed) || self.holds.load(Ordering::Relaxed) > 0
     }
 
@@ -761,7 +765,7 @@ struct Outages {
     paused_after: Option<f64>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Step {
     Nothing,
     Open,
@@ -824,7 +828,74 @@ impl Outages {
     }
 }
 
-fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: Arc<AtomicBool>) {
+/// What the tray tells the user through Windows. Only outages that reach the
+/// history, and only hard ones: the user asked to hear "it is down" and "it is
+/// back", and "it is slow" is what the icon's colour is for.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Notice {
+    Down {
+        status: Status,
+        note: String,
+    },
+    /// The outage that was announced as down is over, after `secs`.
+    Up {
+        secs: f64,
+    },
+}
+
+/// Decides the notices, apart from the sweep, so the rules can be tested.
+#[derive(Debug, Default)]
+struct Announcer {
+    /// When the open outage opened, as the history records it.
+    opened_at: Option<f64>,
+    /// Whether "down" was said for it, which is what earns it an "up".
+    told: bool,
+}
+
+impl Announcer {
+    /// After a sweep's [`Step`]. `open` is whether an outage is open once the
+    /// step has been applied.
+    fn after_sweep(
+        &mut self,
+        step: Step,
+        open: bool,
+        status: Status,
+        note: &str,
+        ts: f64,
+        notify: bool,
+    ) -> Option<Notice> {
+        match step {
+            Step::Open => self.opened_at = Some(ts),
+            Step::Close { at, .. } => {
+                let opened = self.opened_at.take();
+                return std::mem::take(&mut self.told)
+                    .then(|| Notice::Up { secs: opened.map_or(0.0, |o| (at - o).max(0.0)) });
+            }
+            Step::Nothing => {}
+        }
+        // Said once per outage, on the first sweep of it that is a hard
+        // failure: an outage can open as "degraded" and turn into "ISP down".
+        let hard = !matches!(status, Status::Ok | Status::Degraded);
+        if open && hard && notify && !self.told {
+            self.told = true;
+            return Some(Notice::Down { status, note: note.to_string() });
+        }
+        None
+    }
+
+    /// The outage ended in a hole nobody watched.
+    fn hole(&mut self) {
+        *self = Announcer::default();
+    }
+}
+
+fn run_loop(
+    shared: Arc<Shared>,
+    store: Arc<Store>,
+    tx: Sender<Snapshot>,
+    notices: Sender<Notice>,
+    stop: Arc<AtomicBool>,
+) {
     let mut pool = PingerPool::default();
 
     let mut net = netstate::read();
@@ -833,6 +904,9 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
     let mut sweep: u64 = 0;
 
     let mut outages = Outages::default();
+    let mut announcer = Announcer::default();
+    // The last sweep that was a hard failure. See the quality window below.
+    let mut last_hard: Option<f64> = None;
     let mut open_event: Option<i64> = None;
     let mut lead: VecDeque<LeadSample> = VecDeque::with_capacity(LEAD_SWEEPS);
     let mut last_roam_ts: Option<f64> = None;
@@ -865,6 +939,8 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
         // another network while asleep has not roamed.
         if let Some(prev) = prev_sweep_ts {
             if store::now() - prev > store::OBSERVATION_GAP_S {
+                // Nobody saw it come back, so there is no "restored" to say.
+                announcer.hole();
                 if let (Step::Close { at, .. }, Some(id)) = (outages.hole(prev), open_event.take())
                 {
                     let _ = store.close_event_at(id, at, r#"{"closed_by":"gap"}"#);
@@ -949,7 +1025,18 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
             last_roam_ts = Some(ts);
         }
 
-        let (status, note) = classify(&results, &targets, &net, &dns_error, &settings, &store);
+        // Loss and jitter are read from after the last hard outage, never
+        // across it. Over a plain 60 s window the outage's own lost pings
+        // kept the line "degraded" for up to a minute after it came back,
+        // which held the outage open that long: every recorded outage ran a
+        // minute long, and "restored" arrived a minute late.
+        let quality_window =
+            last_hard.map_or(QUALITY_WINDOW_S, |h| (ts - h - 0.5).clamp(0.0, QUALITY_WINDOW_S));
+        let (status, note) =
+            classify(&results, &targets, &net, &dns_error, &settings, &store, quality_window);
+        if !matches!(status, Status::Ok | Status::Degraded) {
+            last_hard = Some(ts);
+        }
 
         let snap = Snapshot {
             ts,
@@ -978,7 +1065,8 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
         // causes usually lands a few sweeps after the BSSID actually changes.
         let roamed_recently = last_roam_ts.is_some_and(|t| ts - t <= 60.0);
 
-        match outages.sweep(ts, bad, settings.outage_after_fails) {
+        let step = outages.sweep(ts, bad, settings.outage_after_fails);
+        match step {
             Step::Open => {
                 let context = context_json(&snap, &lead, roamed_recently).to_string();
                 open_event =
@@ -1000,6 +1088,19 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
                 }
             }
             Step::Nothing => {}
+        }
+        let heard = announcer.after_sweep(
+            step,
+            outages.open,
+            status,
+            &snap.note,
+            ts,
+            settings.notify_on_outage,
+        );
+        if let Some(notice) = heard {
+            // A full queue means nobody is reading it; the tray is the only
+            // listener and drains it every second.
+            let _ = notices.try_send(notice);
         }
 
         *held(&shared.last) = snap.clone();
@@ -1033,7 +1134,19 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
     }
 }
 
+/// How far back the line's loss and jitter are judged from, at most.
+const QUALITY_WINDOW_S: f64 = 60.0;
+
+/// Fewer sweeps than this in the window, and loss and jitter are not judged
+/// at all. Right after an outage the window is short, and one lost reply out
+/// of three would read as 33% loss.
+const MIN_QUALITY_SAMPLES: usize = 10;
+
 /// The blame logic. Everything else in the app exists to support this.
+///
+/// `quality_window_s` is how far back loss and jitter are
+/// read from: [`QUALITY_WINDOW_S`], or less right after a hard outage (see
+/// `run_loop`).
 fn classify(
     results: &HashMap<String, Sample>,
     targets: &[Resolved],
@@ -1041,6 +1154,7 @@ fn classify(
     dns_error: &str,
     settings: &Settings,
     store: &Store,
+    quality_window_s: f64,
 ) -> (Status, String) {
     let internet_ok = targets
         .iter()
@@ -1053,7 +1167,7 @@ fn classify(
         if !dns_error.is_empty() {
             return (Status::DnsFail, i18n::mon_dns_detail(dns_error));
         }
-        return quality_verdict(results, settings, store);
+        return quality_verdict(results, settings, store, quality_window_s);
     }
 
     // Nothing on the internet answered. Who is still there?
@@ -1078,6 +1192,7 @@ fn quality_verdict(
     results: &HashMap<String, Sample>,
     settings: &Settings,
     store: &Store,
+    window_s: f64,
 ) -> (Status, String) {
     let worst = results
         .iter()
@@ -1085,13 +1200,15 @@ fn quality_verdict(
         .filter_map(|(_, s)| s.rtt_ms)
         .fold(f64::NAN, f64::max);
 
-    let stats = store.stats("cloudflare", 60.0);
-    if stats.loss_pct > settings.loss_ok_pct {
-        return (Status::Degraded, i18n::mon_loss_detail(stats.loss_pct));
-    }
-    if let Some(j) = stats.jitter {
-        if j > settings.jitter_ok_ms * 2.0 {
-            return (Status::Degraded, i18n::mon_jitter_detail(j));
+    let stats = store.stats("cloudflare", window_s);
+    if stats.count >= MIN_QUALITY_SAMPLES {
+        if stats.loss_pct > settings.loss_ok_pct {
+            return (Status::Degraded, i18n::mon_loss_detail(stats.loss_pct));
+        }
+        if let Some(j) = stats.jitter {
+            if j > settings.jitter_ok_ms * 2.0 {
+                return (Status::Degraded, i18n::mon_jitter_detail(j));
+            }
         }
     }
     if worst.is_finite() && worst > settings.ping_bad_ms {
@@ -1319,6 +1436,89 @@ mod tests {
         assert_eq!(o.hole(8000.0), Step::Nothing, "nothing open, nothing to close");
     }
 
+    /// Runs sweeps through `Outages` and `Announcer` together, the way
+    /// `run_loop` does, and collects what would be said.
+    fn heard(sweeps: &[(f64, Status)], notify: bool) -> Vec<Notice> {
+        let (mut o, mut a) = (Outages::default(), Announcer::default());
+        sweeps
+            .iter()
+            .filter_map(|(ts, status)| {
+                let step = o.sweep(*ts, *status != Status::Ok, 3);
+                a.after_sweep(step, o.open, *status, "note", *ts, notify)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_hard_outage_is_announced_once_when_it_reaches_the_history_and_again_when_it_ends() {
+        use Status::{IspDown, Ok};
+        let said = heard(
+            &[(0.0, IspDown), (1.0, IspDown), (2.0, IspDown), (3.0, IspDown), (32.0, Ok)],
+            true,
+        );
+        assert_eq!(
+            said,
+            vec![
+                Notice::Down { status: IspDown, note: "note".into() },
+                Notice::Up { secs: 30.0 },
+            ],
+            "nothing for the first two sweeps, one down at the third, one up with the length the history records"
+        );
+    }
+
+    #[test]
+    fn a_blip_shorter_than_the_threshold_says_nothing() {
+        use Status::{LanDown, Ok};
+        assert!(heard(&[(0.0, LanDown), (1.0, LanDown), (2.0, Ok)], true).is_empty());
+    }
+
+    #[test]
+    fn a_slow_line_is_the_icon_s_business_not_a_notification() {
+        use Status::{Degraded, Ok};
+        let said = heard(&[(0.0, Degraded), (1.0, Degraded), (2.0, Degraded), (3.0, Ok)], true);
+        assert!(said.is_empty(), "degraded opens an outage in the history, but is not 'down'");
+    }
+
+    #[test]
+    fn an_outage_that_turns_hard_is_announced_when_it_does() {
+        use Status::{Degraded, IspDown, Ok};
+        let said = heard(
+            &[(0.0, Degraded), (1.0, Degraded), (2.0, Degraded), (3.0, IspDown), (10.0, Ok)],
+            true,
+        );
+        assert_eq!(
+            said,
+            vec![Notice::Down { status: IspDown, note: "note".into() }, Notice::Up { secs: 8.0 },],
+            "the length runs from when the outage opened, as in the history"
+        );
+    }
+
+    #[test]
+    fn the_setting_silences_both_ends() {
+        use Status::{LanDown, Ok};
+        let s = [(0.0, LanDown), (1.0, LanDown), (2.0, LanDown), (9.0, Ok)];
+        assert!(heard(&s, false).is_empty());
+    }
+
+    #[test]
+    fn an_outage_lost_in_a_hole_is_never_called_restored() {
+        let (mut o, mut a) = (Outages::default(), Announcer::default());
+        for ts in [0.0, 1.0] {
+            let step = o.sweep(ts, true, 3);
+            assert_eq!(a.after_sweep(step, o.open, Status::LanDown, "", ts, true), None);
+        }
+        let step = o.sweep(2.0, true, 3);
+        assert!(matches!(
+            a.after_sweep(step, o.open, Status::LanDown, "", 2.0, true),
+            Some(Notice::Down { .. })
+        ));
+        // The machine slept; the sweep after waking is fine.
+        a.hole();
+        let _ = o.hole(2.0);
+        let step = o.sweep(9000.0, false, 3);
+        assert_eq!(a.after_sweep(step, o.open, Status::Ok, "", 9000.0, true), None);
+    }
+
     #[test]
     fn a_pause_with_nothing_open_changes_nothing() {
         let mut o = Outages::default();
@@ -1390,7 +1590,15 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(true, Some(2.0)));
         r.insert("cloudflare".into(), sample(true, Some(12.0)));
-        let (status, _) = classify(&r, &targets(), &wifi_state(), "", &Settings::default(), &store);
+        let (status, _) = classify(
+            &r,
+            &targets(),
+            &wifi_state(),
+            "",
+            &Settings::default(),
+            &store,
+            QUALITY_WINDOW_S,
+        );
         assert_eq!(status, Status::Ok);
     }
 
@@ -1400,8 +1608,15 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(true, Some(2.0)));
         r.insert("cloudflare".into(), sample(false, None));
-        let (status, note) =
-            classify(&r, &targets(), &wifi_state(), "", &Settings::default(), &store);
+        let (status, note) = classify(
+            &r,
+            &targets(),
+            &wifi_state(),
+            "",
+            &Settings::default(),
+            &store,
+            QUALITY_WINDOW_S,
+        );
         assert_eq!(status, Status::IspDown);
         assert!(note.contains("Router"));
     }
@@ -1412,7 +1627,15 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(false, None));
         r.insert("cloudflare".into(), sample(false, None));
-        let (status, _) = classify(&r, &targets(), &wifi_state(), "", &Settings::default(), &store);
+        let (status, _) = classify(
+            &r,
+            &targets(),
+            &wifi_state(),
+            "",
+            &Settings::default(),
+            &store,
+            QUALITY_WINDOW_S,
+        );
         assert_eq!(status, Status::LanDown);
     }
 
@@ -1422,7 +1645,8 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("cloudflare".into(), sample(false, None));
         let net = NetState { gateway: None, ..Default::default() };
-        let (status, _) = classify(&r, &targets(), &net, "", &Settings::default(), &store);
+        let (status, _) =
+            classify(&r, &targets(), &net, "", &Settings::default(), &store, QUALITY_WINDOW_S);
         assert_eq!(status, Status::AdapterDown);
     }
 
@@ -1439,6 +1663,7 @@ mod tests {
             "getaddrinfo failed",
             &Settings::default(),
             &store,
+            QUALITY_WINDOW_S,
         );
         assert_eq!(status, Status::DnsFail);
     }
@@ -1458,14 +1683,65 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(true, Some(2.0)));
         r.insert("cloudflare".into(), sample(true, Some(12.0)));
-        let (status, note) =
-            classify(&r, &targets(), &wifi_state(), "", &Settings::default(), &store);
+        let (status, note) = classify(
+            &r,
+            &targets(),
+            &wifi_state(),
+            "",
+            &Settings::default(),
+            &store,
+            QUALITY_WINDOW_S,
+        );
         assert_eq!(status, Status::Degraded);
         assert!(note.contains(if crate::i18n::current() == crate::i18n::Lang::Pl {
             "utraconych pakietów"
         } else {
             "packet loss"
         }));
+    }
+
+    fn line_up() -> HashMap<String, Sample> {
+        let mut r = HashMap::new();
+        r.insert("gateway".into(), sample(true, Some(2.0)));
+        r.insert("cloudflare".into(), sample(true, Some(12.0)));
+        r
+    }
+
+    #[test]
+    fn the_outage_s_own_lost_pings_do_not_keep_the_line_degraded() {
+        // Found live: Wi-Fi cut for ten seconds, back for fifteen, and the
+        // line was still "degraded" on the loss the outage itself caused.
+        let store = Store::open_in_memory().unwrap();
+        let t = store::now();
+        let mut rows = Vec::new();
+        for i in 21..=30 {
+            rows.push((t - i as f64, "cloudflare".to_string(), None, false));
+        }
+        for i in 1..=15 {
+            rows.push((t - i as f64, "cloudflare".to_string(), Some(12.0), true));
+        }
+        store.add_samples(&rows).unwrap();
+
+        let s = Settings::default();
+        let across = classify(&line_up(), &targets(), &wifi_state(), "", &s, &store, 60.0).0;
+        assert_eq!(across, Status::Degraded, "the old window reads the outage as loss");
+        let after = classify(&line_up(), &targets(), &wifi_state(), "", &s, &store, 16.0).0;
+        assert_eq!(after, Status::Ok, "from the outage's end on, nothing was lost");
+    }
+
+    #[test]
+    fn too_few_readings_are_not_judged_for_loss() {
+        let store = Store::open_in_memory().unwrap();
+        let t = store::now();
+        let rows = vec![
+            (t - 3.0, "cloudflare".to_string(), Some(12.0), true),
+            (t - 2.0, "cloudflare".to_string(), None, false),
+            (t - 1.0, "cloudflare".to_string(), Some(12.0), true),
+        ];
+        store.add_samples(&rows).unwrap();
+        let s = Settings::default();
+        let status = classify(&line_up(), &targets(), &wifi_state(), "", &s, &store, 5.0).0;
+        assert_eq!(status, Status::Ok, "one lost reply in three is not 33% loss");
     }
 
     #[test]

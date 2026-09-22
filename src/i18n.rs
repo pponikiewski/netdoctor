@@ -79,6 +79,13 @@ strings! {
     tab_history => "Outage history", "Historia awarii";
     tab_settings => "Settings", "Ustawienia";
 
+    // The notification-area icon: its menu and the tooltip's two states that
+    // are not a verdict.
+    tray_open => "Open NetDoctor", "Otwórz NetDoctor";
+    tray_quit => "Quit", "Zakończ";
+    tray_paused => "NetDoctor: measuring paused", "NetDoctor: pomiar wstrzymany";
+    tray_waiting => "NetDoctor: waiting for the first reading", "NetDoctor: czekam na pierwszy pomiar";
+
     btn_dismiss => "Dismiss", "Zamknij";
     btn_apply => "Apply", "Zastosuj";
     btn_revert => "Revert", "Cofnij";

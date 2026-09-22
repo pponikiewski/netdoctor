@@ -12,6 +12,7 @@ mod report;
 mod settings_tab;
 mod update_ui;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -23,6 +24,22 @@ use crate::monitor::{Monitor, Snapshot, Status};
 use crate::probe::netstate::NetState;
 use crate::settings::Settings;
 use crate::store::Store;
+
+/// Where a window started minimised spends its first frame. See `main`.
+pub const OFF_SCREEN: [f32; 2] = [-32000.0, -32000.0];
+
+/// Where a window that started off screen belongs: centred on the monitor, or
+/// near the corner when the monitor's size is not known yet.
+fn on_screen(ctx: &egui::Context) -> egui::Pos2 {
+    let (monitor, outer) =
+        ctx.input(|i| (i.viewport().monitor_size, i.viewport().outer_rect.map(|r| r.size())));
+    match (monitor, outer) {
+        (Some(m), Some(o)) => {
+            egui::pos2(((m.x - o.x) / 2.0).max(0.0), ((m.y - o.y) / 2.0).max(0.0))
+        }
+        _ => egui::pos2(80.0, 80.0),
+    }
+}
 
 // palette
 pub const BG: egui::Color32 = egui::Color32::from_rgb(0x14, 0x16, 0x1a);
@@ -249,18 +266,39 @@ pub struct App {
     pub update_banner: bool,
 
     pub toast: Option<(String, egui::Color32, f64)>,
-    pub last_status: Status,
-    pub outage_started: Option<f64>,
 
     pub tx: mpsc::Sender<Job>,
     pub rx: mpsc::Receiver<Job>,
+
+    /// Set when the app is meant to exit, rather than hide, on the close
+    /// that follows: the tray's Quit, an update's restart, an elevated
+    /// relaunch. Shared with the tray thread.
+    quit: Arc<AtomicBool>,
+    /// The notification-area icon. `None` if it could not be created, and
+    /// then the close button closes, since nothing could bring a hidden
+    /// window back. Dropped with the app, which removes the icon.
+    tray: Option<crate::tray::Tray>,
+    /// Hide the window on the first frame: `--minimised`, or the setting.
+    /// See `update`.
+    start_hidden: bool,
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, store: Arc<Store>, settings: Settings) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        store: Arc<Store>,
+        settings: Settings,
+        start_hidden: bool,
+    ) -> Self {
         apply_theme(&cc.egui_ctx);
         let monitor = Monitor::start(Arc::clone(&store), settings.clone());
         let (tx, rx) = mpsc::channel();
+        let quit = Arc::new(AtomicBool::new(false));
+        let tray = crate::tray::Tray::start(
+            Arc::clone(&monitor.shared),
+            monitor.notices.clone(),
+            Arc::clone(&quit),
+        );
 
         let mut app = App {
             store,
@@ -306,10 +344,11 @@ impl App {
             update: Default::default(),
             update_banner: false,
             toast: None,
-            last_status: Status::Ok,
-            outage_started: None,
             tx,
             rx,
+            quit,
+            tray,
+            start_hidden,
         };
         app.refresh_tweaks();
         if app.settings.check_updates {
@@ -345,6 +384,13 @@ impl App {
     /// showing a list that is about to change under the pointer.
     pub fn tweaks_loading(&self) -> bool {
         self.tweaks_shown_gen != self.tweaks_gen
+    }
+
+    /// Closes the app for real. The close button only hides it while there
+    /// is a tray icon, so anything that means to exit says so first.
+    pub fn quit(&self, ctx: &egui::Context) {
+        self.quit.store(true, Ordering::Relaxed);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     pub fn toast(&mut self, text: impl Into<String>, colour: egui::Color32, now: f64) {
@@ -429,118 +475,58 @@ impl App {
         }
     }
 
-    fn drain_snapshots(&mut self, now: f64) {
+    /// Takes the newest snapshot. Outages are announced by the tray, through
+    /// Windows, not here: this only runs while the window gets frames, and
+    /// the window is hidden most of the time.
+    fn drain_snapshots(&mut self) {
         let mut newest = None;
         while let Ok(snap) = self.monitor.rx.try_recv() {
             newest = Some(snap);
         }
         let Some(snap) = newest else { return };
-
-        // Announce a change of verdict — this is what the user needs to see
-        // even if they were not looking at the window.
-        if snap.status != self.last_status {
-            let announced = announcement(
-                self.last_status,
-                &snap,
-                self.outage_started,
-                self.settings.notify_on_outage,
-            );
-
-            // The bookkeeping runs whether or not anything is announced: the
-            // History tab and the "uninterrupted" card are built on it, and a
-            // user who turned off the pop-ups did not ask to stop recording.
-            if snap.status != Status::Ok {
-                self.outage_started = Some(snap.ts);
-            } else if self.last_status != Status::Ok {
-                self.outage_started = None;
-            }
-            self.last_status = snap.status;
-
-            if let Some((text, colour)) = announced {
-                self.toast(text, colour, now);
-            }
-        }
-
         self.net = snap.net.clone();
         self.last = snap;
     }
 }
 
-/// What a change of verdict should say, or `None` for silence.
-///
-/// A free function rather than part of `drain_snapshots` so the rule can be
-/// tested without an egui context — `notify_on_outage` was written, saved and
-/// drawn as a checkbox, and read by nothing at all, which is exactly the kind
-/// of gap a unit test closes and a compiler does not.
-fn announcement(
-    previous: Status,
-    snap: &Snapshot,
-    outage_started: Option<f64>,
-    notify: bool,
-) -> Option<(String, egui::Color32)> {
-    if !notify || snap.status == previous {
-        return None;
-    }
-    if snap.status != Status::Ok {
-        let text = format!(
-            "{}{}",
-            snap.status.headline(),
-            if snap.note.is_empty() { String::new() } else { format!(": {}", snap.note) }
-        );
-        return Some((text, status_colour(snap.status)));
-    }
-    if previous != Status::Ok {
-        let secs = outage_started.map(|s| snap.ts - s).unwrap_or(0.0);
-        return Some((crate::i18n::toast_restored(secs), GREEN));
-    }
-    None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn snapshot(status: Status, note: &str, ts: f64) -> Snapshot {
-        Snapshot { status, note: note.to_string(), ts, ..Default::default() }
-    }
-
-    #[test]
-    fn a_dropout_and_its_recovery_are_announced() {
-        let down = snapshot(Status::LanDown, "router stopped answering", 1_000.0);
-        let (text, colour) = announcement(Status::Ok, &down, None, true).expect("an outage speaks");
-        assert!(text.contains("router stopped answering"), "the note belongs in the toast: {text}");
-        assert_eq!(colour, status_colour(Status::LanDown));
-
-        let back = snapshot(Status::Ok, "", 1_030.0);
-        let (text, colour) =
-            announcement(Status::LanDown, &back, Some(1_000.0), true).expect("a recovery speaks");
-        assert_eq!(colour, GREEN);
-        assert_eq!(text, crate::i18n::toast_restored(30.0), "the outage lasted 30 s");
-    }
-
-    #[test]
-    fn the_setting_silences_both_ends_of_an_outage() {
-        // The bug this guards: the checkbox was saved to disk and drawn in
-        // Settings, and nothing ever read it.
-        let down = snapshot(Status::LanDown, "router stopped answering", 1_000.0);
-        assert!(announcement(Status::Ok, &down, None, false).is_none());
-
-        let back = snapshot(Status::Ok, "", 1_030.0);
-        assert!(announcement(Status::LanDown, &back, Some(1_000.0), false).is_none());
-    }
-
-    #[test]
-    fn an_unchanged_verdict_says_nothing() {
-        let same = snapshot(Status::Ok, "", 1_000.0);
-        assert!(announcement(Status::Ok, &same, None, true).is_none());
-    }
-}
-
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // eframe shows the window after its first frame whatever the viewport
+        // builder asked for (`post_rendering` in eframe 0.29), so starting
+        // minimised never hid anything: autostart put the window on screen.
+        // Our commands are applied after that show, in the same frame, so the
+        // window is gone before anyone sees it. Only with an icon to bring it
+        // back from.
+        if std::mem::take(&mut self.start_hidden) {
+            if self.tray.is_some() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            }
+            // Back from `OFF_SCREEN`, where `main` started it so the first
+            // frame is not seen. Hidden, it waits here for the tray; with no
+            // tray it simply appears here.
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(on_screen(ctx)));
+        }
+
+        // The close button hides to the tray; measuring goes on. Only a quit
+        // the app asked for itself goes through.
+        if ctx.input(|i| i.viewport().close_requested())
+            && self.tray.is_some()
+            && !self.quit.load(Ordering::Relaxed)
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            // Show, then hide. winit remembers visibility itself and only
+            // calls `ShowWindow` when its flag changes, but the tray and a
+            // second launch bring the window back through Win32 directly, so
+            // after the first hide the flag stayed "hidden" and every later
+            // hide did nothing. The window is visible here anyway; the first
+            // command only brings the flag back in line with it.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+
         let now = ctx.input(|i| i.time);
         self.drain_jobs();
-        self.drain_snapshots(now);
+        self.drain_snapshots();
 
         // The monitor produces a sample per second; repainting on that cadence
         // keeps the chart live without spinning the GPU.
@@ -740,7 +726,10 @@ impl App {
                             .clicked()
                         {
                             match crate::autostart::relaunch_elevated() {
-                                Ok(()) => std::process::exit(0),
+                                // Through the normal exit, not
+                                // `process::exit`: the tray icon has to be
+                                // removed and the outage closed on the way.
+                                Ok(()) => self.quit(ui.ctx()),
                                 Err(e) => {
                                     let now = ui.input(|i| i.time);
                                     self.toast(e.to_string(), RED, now);
