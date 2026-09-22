@@ -742,7 +742,14 @@ mod live_tests {
         drop(monitor);
 
         let events = store.recent_events(10);
-        let _ = std::fs::remove_file(&db);
+        // Closed before it is deleted: Windows will not remove an open file,
+        // and WAL leaves two more beside it.
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = db.clone().into_os_string();
+            path.push(suffix);
+            let _ = std::fs::remove_file(path);
+        }
         println!(
             "down notified: {down} after {down_after:?}; up notified: {up} {up_after:?} after the line was back; line was cut for {:?}; recorded: {:?}",
             back - cut,

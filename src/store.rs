@@ -917,6 +917,22 @@ mod tests {
     }
 
     #[test]
+    fn a_dropped_store_leaves_files_that_can_be_deleted() {
+        // What the live outage test relies on to clean up after itself:
+        // Windows will not delete an open file, and WAL adds two beside it.
+        let db = std::env::temp_dir().join(format!("netdoctor-drop-{}.db", std::process::id()));
+        let store = Store::open(&db).unwrap();
+        store.add_samples(&[(now(), "x".into(), Some(1.0), true)]).unwrap();
+        drop(store);
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = db.clone().into_os_string();
+            path.push(suffix);
+            let _ = std::fs::remove_file(&path);
+            assert!(!std::path::Path::new(&path).exists(), "{path:?} is still there");
+        }
+    }
+
+    #[test]
     fn an_outage_cut_short_by_sleep_ends_at_the_last_sweep_not_at_wake() {
         let store = Store::open_in_memory().unwrap();
         let id = store.open_event("isp_down", "isp", "", "{}").unwrap();
