@@ -254,9 +254,9 @@ fn start_scan(app: &mut App) {
     // The load test saturates the line. Anything the monitor sampled during it
     // would be measuring the test rather than the connection, and would then
     // pollute the very baseline the next scan compares against.
-    app.monitor_was_paused = app.monitor.is_paused();
     if app.deep_scan {
-        app.monitor.set_paused(true);
+        app.monitor.hold();
+        app.scan_held = true;
     }
 
     let tx = app.tx.clone();

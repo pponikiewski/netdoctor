@@ -334,11 +334,28 @@ impl Store {
     /// Closes an outage, recording the state it recovered *into*. The pair of
     /// contexts is what separates "the signal came back" from "the adapter was
     /// reset" — the recovery is as diagnostic as the failure.
+    ///
+    /// Tests only: the monitor always closes at a moment it names, with
+    /// [`Store::close_event_at`], because "now" is wrong after any pause.
+    #[cfg(test)]
     pub fn close_event(&self, id: i64, context_end: &str) -> Result<()> {
         let conn = self.held();
         conn.execute(
             "UPDATE events SET ts_end=?, context_end=? WHERE id=?",
             params![now(), context_end, id],
+        )?;
+        Ok(())
+    }
+
+    /// Closes an outage at a given moment rather than now: the last sweep
+    /// that actually watched it. Used when watching stopped — a pause, a
+    /// sleeping machine — so the time nobody measured is not billed to the
+    /// outage. Never earlier than its start.
+    pub fn close_event_at(&self, id: i64, ts_end: f64, context_end: &str) -> Result<()> {
+        let conn = self.held();
+        conn.execute(
+            "UPDATE events SET ts_end = MAX(ts_start, ?1), context_end = ?2 WHERE id = ?3",
+            params![ts_end, context_end, id],
         )?;
         Ok(())
     }
@@ -897,6 +914,24 @@ mod tests {
             ctx.context_end.unwrap().contains("restart"),
             "the end was inferred, and the row has to say so"
         );
+    }
+
+    #[test]
+    fn an_outage_cut_short_by_sleep_ends_at_the_last_sweep_not_at_wake() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store.open_event("isp_down", "isp", "", "{}").unwrap();
+        let start = store.recent_events(1)[0].ts_start;
+
+        // The machine slept thirty seconds in; it woke hours later.
+        store.close_event_at(id, start + 30.0, r#"{"closed_by":"gap"}"#).unwrap();
+        let row = store.recent_events(1).remove(0);
+        assert_eq!(row.duration_s(), Some(30.0));
+
+        // A last sweep from before the outage opened cannot make it negative.
+        let id = store.open_event("isp_down", "isp", "", "{}").unwrap();
+        store.close_event_at(id, 0.0, "{}").unwrap();
+        let row = store.recent_events(1).remove(0);
+        assert_eq!(row.duration_s(), Some(0.0));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 type: project
 project: netdoc
 status: active
-updated: 2026-09-20
+updated: 2026-09-23
 ---
 
 # 🧠 netdoc
@@ -32,6 +32,7 @@ zgadywanka.
 
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
+- 2026-09-23 — siedem błędów z przeglądu 2026-09-22 naprawionych: aplikacja nie znika już po restarcie z aktualizacji, DNS nie blokuje pomiaru, sen i pauza nie zawyżają awarii, Modern Standby rozpoznawany, Apply bez odczytanego stanu zablokowane, pauzy zadań się nie gryzą, `--scan` pisze na konsolę. Restart i konsola sprawdzone na prawdziwych procesach, ze starą wersją jako kontrolą.
 - 2026-09-21 — wydanie v1.2.0: czternastopunktowy audyt repo zamknięty w całości. Dziennik Windows wreszcie czytany (literówka w nazwie narzędzia zabijała 13 najmocniejszych kodów przyczyn), zamiatanie równoległe zamiast sekwencyjnego (3,6 s → 0,50 s przy czterech martwych celach), osobne połączenie do odczytu w store (najgorszy zapis 24–39 ms → 0,36–0,91 ms), odczyt tweaków zdjęty z wątku UI (start 406 ms → 658 µs), weryfikacja pobrania przez SHA-256, strażnik pojedynczej instancji, rozpoznanie APIPA, NetState opisujący kartę w trakcie awarii. Repo ma `ci.yml` na push i PR oraz `deny(unsafe_op_in_unsafe_fn)`.
 - 2026-09-20 — zakładka Na żywo tłumaczy każdą liczbę, którą pokazuje (legenda, kafelki, progi, ośie); repo ma przypiętą konfigurację rustfmt i przechodzi `cargo fmt --check`.
 - 2026-09-20 — aplikacja jest do pobrania z GitHuba (`pponikiewski/netdoctor`, wydanie v1.1.0) i potrafi się sama zaktualizować: workflow wydaniowy zielony na całej długości, `netdoctor.exe` i `SHA256SUMS` wiszą przy tagu, pobranie zweryfikowane bez uwierzytelniania.

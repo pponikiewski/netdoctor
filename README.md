@@ -131,6 +131,11 @@ downloads a few hundred megabytes every time it runs. See the Load test entry
 under Tabs for what that costs. `--quick` is the flag to reach for on a metered
 connection or in anything scheduled.
 
+NetDoctor is a windowed program, so `cmd` hands the prompt back before a
+command-line run finishes and its output lands after the prompt. Use
+`start /wait netdoctor.exe --scan` to wait for it and get its exit code in
+`%ERRORLEVEL%`, or redirect it (`netdoctor.exe --scan > scan.txt`).
+
 Diagnostics need no elevation. Applying changes does; the app offers to relaunch
 itself when you ask it to apply one.
 
@@ -305,7 +310,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-219 tests, covering the failure-blame logic, the statistics, the registry layer,
+231 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

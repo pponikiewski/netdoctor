@@ -177,9 +177,64 @@ mod imp {
 
 pub use imp::{acquire, raise_existing_window};
 
+/// [`acquire`], retried for up to `wait`.
+///
+/// For the copy an update starts. The process it replaces still holds the
+/// name until its window has closed and its threads have stopped, and giving
+/// up at once meant an update ended with no copy running at all: the new one
+/// saw the old one, deferred to it, and the old one was already on its way
+/// out.
+pub fn acquire_within(wait: std::time::Duration) -> Option<imp::Guard> {
+    retry_within(wait, std::time::Duration::from_millis(250), acquire)
+}
+
+fn retry_within<T>(
+    wait: std::time::Duration,
+    every: std::time::Duration,
+    mut attempt: impl FnMut() -> Option<T>,
+) -> Option<T> {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        if let Some(v) = attempt() {
+            return Some(v);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(every);
+    }
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::imp::acquire_named;
+    use super::retry_within;
+    use std::time::Duration;
+
+    #[test]
+    fn a_name_released_while_waiting_is_taken() {
+        // The update case: the old copy lets go a moment after the new one
+        // starts asking.
+        let name = format!("Local\\netdoctor-test-wait-{}", std::process::id());
+        let mut old = acquire_named(&name);
+        assert!(old.is_some());
+        let mut tries = 0;
+        let got = retry_within(Duration::from_secs(5), Duration::from_millis(10), || {
+            tries += 1;
+            if tries == 3 {
+                old.take(); // the old process exits
+            }
+            acquire_named(&name)
+        });
+        assert!(got.is_some(), "the name was free by the fourth try");
+    }
+
+    #[test]
+    fn a_name_never_released_gives_up_after_the_wait() {
+        let got: Option<()> =
+            retry_within(Duration::from_millis(50), Duration::from_millis(10), || None);
+        assert!(got.is_none());
+    }
 
     #[test]
     fn the_name_is_held_by_one_holder_at_a_time() {

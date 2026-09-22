@@ -191,7 +191,18 @@ impl Settings {
 
     /// Built-in targets plus whatever the user added. Invalid entries are
     /// skipped rather than failing the whole list.
+    ///
+    /// Resolves every hostname the user added, so it blocks on DNS. The
+    /// monitor must not call it: see [`Settings::targets_with`].
     pub fn targets(&self) -> Vec<Target> {
+        self.targets_with(resolve_target)
+    }
+
+    /// The same list, with the user's entries resolved by `resolve` instead
+    /// of by a live lookup. The monitor passes a cache kept by its own
+    /// thread, because a lookup inside the sweep stalls it for seconds
+    /// exactly when DNS is what broke.
+    pub fn targets_with(&self, resolve: impl Fn(&str) -> Option<Ipv4Addr>) -> Vec<Target> {
         let mut out = vec![
             Target {
                 key: "gateway".into(),
@@ -224,7 +235,7 @@ impl Settings {
             if text.is_empty() {
                 continue;
             }
-            if let Some(addr) = resolve_target(text) {
+            if let Some(addr) = resolve(text) {
                 out.push(Target {
                     key: format!("custom{i}"),
                     label: text.to_string(),
@@ -237,7 +248,7 @@ impl Settings {
     }
 }
 
-/// Accepts a literal IPv4 address or a hostname to resolve once at load time.
+/// Accepts a literal IPv4 address or a hostname, resolved now (blocking).
 pub fn resolve_target(text: &str) -> Option<Ipv4Addr> {
     if let Ok(addr) = text.parse::<Ipv4Addr>() {
         return Some(addr);

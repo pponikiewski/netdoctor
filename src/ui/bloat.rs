@@ -130,7 +130,7 @@ fn start(app: &mut App) {
     app.bloat_progress = 0.0;
     app.bloat_label = i18n::bloat_starting().into();
     // Our own probes would otherwise count as part of the load.
-    app.monitor.set_paused(true);
+    app.monitor.hold();
 
     let tx = app.tx.clone();
     let timeout = app.settings.ping_timeout_ms;

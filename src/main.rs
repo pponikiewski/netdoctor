@@ -1,9 +1,9 @@
-// No console window when launched from Explorer, but keep one for `cargo run`
-// and for `--version`/`--report` on the command line.
+// No console window when launched from Explorer. A command-line run borrows
+// the console of the shell that started it: see `attach_parent_console`.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 // An `unsafe fn` is a promise the caller has to keep, not a licence for its
 // body to do anything it likes. Without this, every line inside one of them is
-// implicitly unsafe, so the 43 explicit `unsafe` blocks in this crate stop
+// implicitly unsafe, so the explicit `unsafe` blocks in this crate stop
 // marking where the risk actually is. This crate is mostly Win32 FFI; the
 // blocks are the map, and the map has to stay accurate.
 #![deny(unsafe_op_in_unsafe_fn)]
@@ -32,7 +32,21 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Everything the command line accepts. An argument outside this list is a
 /// typo, and a typo used to be ignored — `--qiuck` quietly ran the full scan,
 /// which saturates the line for a quarter of a minute.
-const FLAGS: [&str; 7] = ["--scan", "--quick", "--minimised", "--version", "-V", "--help", "-h"];
+const FLAGS: [&str; 8] = [
+    "--scan",
+    "--quick",
+    "--minimised",
+    "--version",
+    "-V",
+    "--help",
+    "-h",
+    update::AFTER_UPDATE_FLAG,
+];
+
+/// How long a copy started by an update waits for the one it replaces to let
+/// go. The old copy has to close its window and stop its threads, and the
+/// path thread can be most of a traceroute into its walk.
+const AFTER_UPDATE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn main() -> eframe::Result<()> {
     install_panic_hook();
@@ -42,6 +56,11 @@ fn main() -> eframe::Result<()> {
     update::clean_old();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Anything but the flags a windowed start uses means text is coming.
+    if args.iter().any(|a| a != "--minimised" && a != update::AFTER_UPDATE_FLAG) {
+        attach_parent_console();
+    }
 
     let cfg = settings::Settings::load();
     // Before anything that produces text, including --help and --scan.
@@ -108,7 +127,12 @@ fn main() -> eframe::Result<()> {
     //
     // Held in a binding rather than dropped straight away: the name is only
     // taken for as long as this handle lives.
-    let _instance = match single::acquire() {
+    let acquired = if args.iter().any(|a| a == update::AFTER_UPDATE_FLAG) {
+        single::acquire_within(AFTER_UPDATE_WAIT)
+    } else {
+        single::acquire()
+    };
+    let _instance = match acquired {
         Some(guard) => guard,
         None => {
             // Not an error to report. Somebody launched the app that is
@@ -136,6 +160,30 @@ fn main() -> eframe::Result<()> {
         Box::new(move |cc| Ok(Box::new(ui::App::new(cc, store, cfg)))),
     )
 }
+
+/// The release build is a windowed program, so Windows gives it no console,
+/// and everything `--scan`, `--version` and `--help` printed went nowhere
+/// while the README promised it on the console. This borrows the console of
+/// the shell that started it.
+///
+/// Only when standard output is not already somewhere: a redirect to a file
+/// or a pipe is a handle of its own, and it has to win.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows::Win32::System::Console::{
+        AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
+    };
+    let redirected =
+        unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }.is_ok_and(|h| !h.is_invalid() && !h.0.is_null());
+    if !redirected {
+        // Fails when there is no parent console (started from Explorer with
+        // an argument), and then there is nowhere to print anyway.
+        let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_parent_console() {}
 
 fn print_help() {
     println!("netdoctor {VERSION} · {}\n\n{}", i18n::app_tagline(), i18n::cli_help());

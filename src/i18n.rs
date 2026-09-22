@@ -1025,6 +1025,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     tw_no_snapshot =>
         "No saved state for this change. Nothing to revert to.",
         "Brak zapisanego stanu dla tej zmiany. Nie ma do czego wrócić.";
+    tw_before_unknown =>
+        "The current value could not be read, so Revert would have nothing to go back to. Nothing was changed.",
+        "Nie udało się odczytać obecnej wartości, więc Cofnij nie miałoby do czego wrócić. Niczego nie zmieniono.";
     tw_state_unreadable => "cannot read", "nie można odczytać";
     tw_snapshots_unreadable_hint =>
         "The saved-state file is damaged, so Revert is unavailable for every change. The file was not overwritten — it can still be repaired by hand.",
@@ -3098,6 +3101,13 @@ pub fn hist_cause_for(when: &str) -> String {
 }
 
 /// Ping by address works but names do not resolve.
+pub fn dns_no_answer(secs: u64) -> String {
+    match current() {
+        Lang::En => format!("resolver did not answer within {secs} s"),
+        Lang::Pl => format!("resolver nie odpowiedział w ciągu {secs} s"),
+    }
+}
+
 pub fn mon_dns_detail(err: &str) -> String {
     match current() {
         Lang::En => format!("Ping by IP works, name resolution does not: {err}"),

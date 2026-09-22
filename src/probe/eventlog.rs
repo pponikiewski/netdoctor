@@ -185,7 +185,10 @@ fn classify(provider: &str, id: u32, level: u32) -> Option<Kind> {
     let short = p.rsplit('-').next().unwrap_or(&p);
 
     let known = match (p.as_str(), id) {
-        ("microsoft-windows-kernel-power", 42) => Some(Kind::Sleep),
+        // 42 is classic S3 sleep. 506 is entering Modern Standby, which is how
+        // most laptops sold since ~2020 sleep; without it their sleep was only
+        // ever visible as the 507 that ends it.
+        ("microsoft-windows-kernel-power", 42 | 506) => Some(Kind::Sleep),
         ("microsoft-windows-kernel-power", 107 | 507) => Some(Kind::Resume),
         ("microsoft-windows-power-troubleshooter", 1) => Some(Kind::Resume),
         ("microsoft-windows-networkprofile", 10000) => Some(Kind::LinkUp),
@@ -570,6 +573,9 @@ mod tests {
     #[test]
     fn sleep_and_resume_are_recognised_apart() {
         assert_eq!(classify("Microsoft-Windows-Kernel-Power", 42, 4), Some(Kind::Sleep));
+        // Modern Standby: entering and leaving it.
+        assert_eq!(classify("Microsoft-Windows-Kernel-Power", 506, 4), Some(Kind::Sleep));
+        assert_eq!(classify("Microsoft-Windows-Kernel-Power", 507, 4), Some(Kind::Resume));
         assert_eq!(classify("Microsoft-Windows-Power-Troubleshooter", 1, 4), Some(Kind::Resume));
         assert_eq!(classify("Microsoft-Windows-NetworkProfile", 10001, 4), Some(Kind::LinkDown));
     }

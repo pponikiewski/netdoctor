@@ -361,11 +361,16 @@ fn writable(dir: &Path) -> bool {
     ok
 }
 
+/// Tells the new copy that the one it replaces is still shutting down, so it
+/// waits for the single-instance name instead of deferring to a process that
+/// is about to be gone. See [`crate::single::acquire_within`].
+pub const AFTER_UPDATE_FLAG: &str = "--after-update";
+
 /// Start the freshly installed binary. The caller exits straight after, which
 /// is what releases the lock on the copy left behind.
 pub fn restart() -> Result<()> {
     let exe = std::env::current_exe()?;
-    std::process::Command::new(exe).spawn()?;
+    std::process::Command::new(exe).arg(AFTER_UPDATE_FLAG).spawn()?;
     Ok(())
 }
 

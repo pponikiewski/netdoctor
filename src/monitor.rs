@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::Ipv4Addr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -288,7 +288,11 @@ fn lead_sample(snap: &Snapshot) -> LeadSample {
 /// The evidence written into an outage row. `lead_up` is the part that was
 /// missing: a single snapshot says what the connection looked like once it had
 /// already broken, which is rarely the thing that broke it.
-fn context_json(snap: &Snapshot, lead: &VecDeque<LeadSample>, roamed_recently: bool) -> String {
+fn context_json(
+    snap: &Snapshot,
+    lead: &VecDeque<LeadSample>,
+    roamed_recently: bool,
+) -> serde_json::Value {
     let net = &snap.net;
     serde_json::json!({
         "adapter": net.adapter_name,
@@ -315,7 +319,6 @@ fn context_json(snap: &Snapshot, lead: &VecDeque<LeadSample>, roamed_recently: b
         "roamed": roamed_recently,
         "lead_up": lead.iter().collect::<Vec<_>>(),
     })
-    .to_string()
 }
 
 /// Takes a lock, ignoring poisoning.
@@ -331,7 +334,13 @@ fn held<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 pub struct Shared {
     pub last: Mutex<Snapshot>,
-    pub paused: AtomicBool,
+    /// The pause the user asked for with the Live tab's button.
+    user_paused: AtomicBool,
+    /// Pauses held by the app's own jobs: a load test, a deep scan, an air
+    /// scan. Counted rather than flagged, because two of them can overlap and
+    /// the first to finish used to unpause the monitor under the second, and
+    /// under a pause the user had set themselves.
+    holds: AtomicU32,
     pub settings: Mutex<Settings>,
     /// The per-hop picture, maintained by its own thread — see
     /// [`crate::probe::path`] and `run_path`.
@@ -340,25 +349,58 @@ pub struct Shared {
     /// on the sweep cadence and changes when the machine moves between
     /// networks, which is exactly when the path has to be walked again.
     pub gateway: Mutex<Option<Ipv4Addr>>,
+    /// The latest DNS test, kept by `run_dns`.
+    dns: Mutex<DnsReading>,
+    /// The user's extra targets that are hostnames, resolved by `run_hosts`.
+    hosts: Mutex<HashMap<String, Ipv4Addr>>,
+}
+
+/// How long a DNS test may run before the sweep calls it a failure. A healthy
+/// resolver answers in milliseconds; the Windows client's own retries run to
+/// about twelve seconds, and the sweep cannot wait that out.
+const DNS_STALL: Duration = Duration::from_secs(5);
+/// How often the DNS test runs. The same ten seconds the sweep used to count.
+const DNS_EVERY: Duration = Duration::from_secs(10);
+/// How often the user's hostnames are looked up again when they all resolved.
+const HOSTS_EVERY: Duration = Duration::from_secs(300);
+/// And when one of them did not.
+const HOSTS_RETRY: Duration = Duration::from_secs(30);
+
+/// One DNS test, as `run_dns` last left it.
+#[derive(Debug, Clone, Default)]
+struct DnsReading {
+    ms: Option<f64>,
+    error: String,
+    /// Set while a lookup is running, so one that hangs can be reported as a
+    /// failure instead of leaving the last good answer on screen.
+    started: Option<Instant>,
+}
+
+impl DnsReading {
+    /// What the sweep reports: the last finished lookup, unless the one
+    /// running now has been silent for longer than a working resolver takes.
+    fn current(&self, now: Instant) -> (Option<f64>, String) {
+        match self.started {
+            Some(t) if now.saturating_duration_since(t) > DNS_STALL => {
+                (None, i18n::dns_no_answer(DNS_STALL.as_secs()))
+            }
+            _ => (self.ms, self.error.clone()),
+        }
+    }
 }
 
 pub struct Monitor {
     pub shared: Arc<Shared>,
     pub rx: Receiver<Snapshot>,
     stop: Arc<AtomicBool>,
+    /// The sweep, joined on drop: it closes an open outage on the way out.
+    /// The other threads are not, see `start`.
     handle: Option<thread::JoinHandle<()>>,
-    path_handle: Option<thread::JoinHandle<()>>,
 }
 
 impl Monitor {
     pub fn start(store: Arc<Store>, settings: Settings) -> Monitor {
-        let shared = Arc::new(Shared {
-            last: Mutex::new(Snapshot::default()),
-            paused: AtomicBool::new(false),
-            settings: Mutex::new(settings),
-            path: Mutex::new(PathReading::default()),
-            gateway: Mutex::new(None),
-        });
+        let shared = Arc::new(Shared::new(settings));
         let stop = Arc::new(AtomicBool::new(false));
         // Bounded so a stalled UI cannot grow the queue without limit; the
         // newest snapshot matters, older ones can be dropped.
@@ -376,30 +418,56 @@ impl Monitor {
                 .expect("spawn monitor thread")
         };
 
-        // The path lives on its own thread rather than inside the sweep. A
-        // walk is a dozen sequential probes and a hop that never answers
-        // costs a full timeout, so folding it into the sweep would stall the
-        // one measurement that has to keep its cadence to mean anything.
-        let path_handle = {
+        // Three more threads, none of them joined on drop. They touch nothing
+        // but `Shared`, so there is nothing for them to finish, and waiting
+        // for them could take long enough to matter: the process has to be
+        // gone before an update's new copy can start (see
+        // `single::acquire_within`).
+        //
+        // The path walk is a dozen sequential probes, and a hop that never
+        // answers costs a full timeout, so in the sweep it would stall the one
+        // measurement that has to keep its cadence; at shutdown it could be
+        // most of a traceroute from noticing the stop.
+        //
+        // Name lookups block for as long as the resolver makes them, which is
+        // longest exactly when DNS is what broke. So they run here, and the
+        // sweep only ever reads their last result.
+        for (name, job) in [
+            ("netdoctor-path", run_path as fn(Arc<Shared>, Arc<AtomicBool>)),
+            ("netdoctor-dns", run_dns),
+            ("netdoctor-hosts", run_hosts),
+        ] {
             let shared = Arc::clone(&shared);
             let stop = Arc::clone(&stop);
             thread::Builder::new()
-                .name("netdoctor-path".into())
-                .spawn(move || run_path(shared, stop))
-                // ponytail: as above — unrecoverable, so it is not dressed up
-                // as a recoverable error.
-                .expect("spawn path thread")
-        };
+                .name(name.into())
+                .spawn(move || job(shared, stop))
+                // ponytail: as above.
+                .expect("spawn worker thread");
+        }
 
-        Monitor { shared, rx, stop, handle: Some(handle), path_handle: Some(path_handle) }
+        Monitor { shared, rx, stop, handle: Some(handle) }
     }
 
+    /// The user's own pause. Independent of any job's hold.
     pub fn set_paused(&self, paused: bool) {
-        self.shared.paused.store(paused, Ordering::Relaxed);
+        self.shared.user_paused.store(paused, Ordering::Relaxed);
     }
 
+    /// Whether the user paused it. A job's hold does not show here, so the
+    /// Live tab's button keeps meaning what the user last pressed.
     pub fn is_paused(&self) -> bool {
-        self.shared.paused.load(Ordering::Relaxed)
+        self.shared.user_paused.load(Ordering::Relaxed)
+    }
+
+    /// Stops sampling for the length of a job. Every `hold` needs exactly one
+    /// `release`.
+    pub fn hold(&self) {
+        self.shared.hold();
+    }
+
+    pub fn release(&self) {
+        self.shared.release();
     }
 
     pub fn update_settings(&self, s: Settings) {
@@ -412,11 +480,105 @@ impl Monitor {
     }
 }
 
+impl Shared {
+    fn new(settings: Settings) -> Shared {
+        Shared {
+            last: Mutex::new(Snapshot::default()),
+            user_paused: AtomicBool::new(false),
+            holds: AtomicU32::new(0),
+            settings: Mutex::new(settings),
+            path: Mutex::new(PathReading::default()),
+            gateway: Mutex::new(None),
+            dns: Mutex::new(DnsReading::default()),
+            hosts: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Whether the monitor should sample right now.
+    fn paused(&self) -> bool {
+        self.user_paused.load(Ordering::Relaxed) || self.holds.load(Ordering::Relaxed) > 0
+    }
+
+    fn hold(&self) {
+        self.holds.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn release(&self) {
+        // Saturating: a stray release must not wrap round to a permanent hold.
+        let _ = self.holds.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+    }
+}
+
 impl Drop for Monitor {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        for h in [self.handle.take(), self.path_handle.take()].into_iter().flatten() {
+        if let Some(h) = self.handle.take() {
             let _ = h.join();
+        }
+    }
+}
+
+/// Sleeps in slices so a stop request is noticed promptly. `false` once
+/// stopped.
+fn nap(stop: &AtomicBool, total: Duration) -> bool {
+    let mut left = total;
+    while left > Duration::ZERO {
+        if stop.load(Ordering::Relaxed) {
+            return false;
+        }
+        let step = left.min(Duration::from_millis(200));
+        thread::sleep(step);
+        left = left.saturating_sub(step);
+    }
+    !stop.load(Ordering::Relaxed)
+}
+
+/// Times a lookup of the test host every [`DNS_EVERY`].
+fn run_dns(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
+    while !stop.load(Ordering::Relaxed) {
+        if !shared.paused() {
+            held(&shared.dns).started = Some(Instant::now());
+            let (ms, error) = netstate::dns_lookup_ms(DNS_TEST_HOST);
+            *held(&shared.dns) = DnsReading { ms, error, started: None };
+        }
+        if !nap(&stop, DNS_EVERY) {
+            return;
+        }
+    }
+}
+
+/// Keeps the user's hostname targets resolved, off the sweep.
+///
+/// A failed lookup keeps the address it had: a host the user asked to watch
+/// should not drop out of the sweep for the length of a DNS outage, which is
+/// what happened when the sweep resolved them itself.
+fn run_hosts(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
+    let mut last_list: Option<Vec<String>> = None;
+    let mut next = Instant::now();
+    while !stop.load(Ordering::Relaxed) {
+        let list = held(&shared.settings).extra_targets.clone();
+        if last_list.as_ref() != Some(&list) || Instant::now() >= next {
+            let old = held(&shared.hosts).clone();
+            let mut fresh = HashMap::new();
+            let mut missing = false;
+            for raw in &list {
+                let text = raw.trim();
+                if text.is_empty() || text.parse::<Ipv4Addr>().is_ok() {
+                    continue;
+                }
+                match crate::settings::resolve_target(text).or_else(|| old.get(text).copied()) {
+                    Some(addr) => {
+                        fresh.insert(text.to_string(), addr);
+                    }
+                    None => missing = true,
+                }
+            }
+            *held(&shared.hosts) = fresh;
+            last_list = Some(list);
+            next = Instant::now() + if missing { HOSTS_RETRY } else { HOSTS_EVERY };
+        }
+        if !nap(&stop, Duration::from_secs(1)) {
+            return;
         }
     }
 }
@@ -428,9 +590,15 @@ struct Resolved {
     scope: Scope,
 }
 
-fn resolve_targets(settings: &Settings, net: &NetState) -> Vec<Resolved> {
+/// `hosts` is `run_hosts`'s cache. Nothing here touches DNS.
+fn resolve_targets(
+    settings: &Settings,
+    net: &NetState,
+    hosts: &HashMap<String, Ipv4Addr>,
+) -> Vec<Resolved> {
     let mut out = Vec::new();
-    for t in settings.targets() {
+    let cached = |text: &str| text.parse().ok().or_else(|| hosts.get(text).copied());
+    for t in settings.targets_with(cached) {
         let host = match t.key.as_str() {
             "gateway" => net.gateway,
             "dns_isp" => {
@@ -476,7 +644,7 @@ fn run_path(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
     let mut last_gateway: Option<Ipv4Addr> = None;
 
     while !stop.load(Ordering::Relaxed) {
-        if shared.paused.load(Ordering::Relaxed) {
+        if shared.paused() {
             thread::sleep(Duration::from_millis(200));
             continue;
         }
@@ -573,6 +741,89 @@ impl PingerPool {
     }
 }
 
+/// Outage bookkeeping, kept apart from the probes and the database so the
+/// rules about holes in the watching can be tested.
+///
+/// Two kinds of hole. One wider than [`store::OBSERVATION_GAP_S`] is a
+/// machine that slept or a long pause: nothing is known about what happened
+/// in it, so an open outage ends at the last sweep before it. A shorter one is
+/// a load test or an air scan holding the monitor for a few seconds: an outage
+/// that is still there on the far side is the same outage, and splitting it
+/// in two would double-count it. The seconds nobody watched are recorded with
+/// it, so its length is never read as fully observed.
+#[derive(Debug, Default)]
+struct Outages {
+    open: bool,
+    fail_streak: u32,
+    /// Seconds inside the open outage that were bridged over, not watched.
+    unwatched_s: f64,
+    /// The last sweep before the current pause, while it lasts.
+    paused_after: Option<f64>,
+}
+
+#[derive(Debug, PartialEq)]
+enum Step {
+    Nothing,
+    Open,
+    /// Close the open outage, ending at `at`.
+    Close {
+        at: f64,
+        unwatched_s: f64,
+    },
+}
+
+impl Outages {
+    /// The monitor is paused. `last_sweep` is the newest sweep it ran.
+    fn pause(&mut self, last_sweep: Option<f64>) {
+        if self.paused_after.is_none() {
+            self.paused_after = last_sweep;
+        }
+    }
+
+    /// A hole too wide to bridge ended at `last_seen`.
+    fn hole(&mut self, last_seen: f64) -> Step {
+        self.fail_streak = 0;
+        self.paused_after = None;
+        self.finish(last_seen)
+    }
+
+    /// One sweep at `ts`, good or bad.
+    fn sweep(&mut self, ts: f64, bad: bool, open_after: u32) -> Step {
+        let resumed_from = self.paused_after.take();
+        self.fail_streak = if bad { self.fail_streak + 1 } else { 0 };
+
+        if self.open {
+            if bad {
+                if let Some(from) = resumed_from {
+                    self.unwatched_s += (ts - from).max(0.0);
+                }
+                return Step::Nothing;
+            }
+            // Recovered. After a pause, all that is known is that it was
+            // still down at the last sweep before it.
+            return self.finish(resumed_from.unwrap_or(ts));
+        }
+        if bad && self.fail_streak >= open_after {
+            self.open = true;
+            self.unwatched_s = 0.0;
+            return Step::Open;
+        }
+        Step::Nothing
+    }
+
+    /// The database refused the outage it was asked to open.
+    fn abandon(&mut self) {
+        self.open = false;
+    }
+
+    fn finish(&mut self, at: f64) -> Step {
+        if !std::mem::take(&mut self.open) {
+            return Step::Nothing;
+        }
+        Step::Close { at, unwatched_s: std::mem::take(&mut self.unwatched_s) }
+    }
+}
+
 fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: Arc<AtomicBool>) {
     let mut pool = PingerPool::default();
 
@@ -581,13 +832,10 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
     let mut next_state_refresh = Instant::now();
     let mut sweep: u64 = 0;
 
-    let mut fail_streak: u32 = 0;
+    let mut outages = Outages::default();
     let mut open_event: Option<i64> = None;
     let mut lead: VecDeque<LeadSample> = VecDeque::with_capacity(LEAD_SWEEPS);
     let mut last_roam_ts: Option<f64> = None;
-
-    let mut dns_ms: Option<f64> = None;
-    let mut dns_error = String::new();
 
     // Continuity of observation. The first sweep asks the database whether it
     // is resuming a stretch or starting one; after that the loop is the only
@@ -600,9 +848,32 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
         let started = Instant::now();
         let settings = held(&shared.settings).clone();
 
-        if shared.paused.load(Ordering::Relaxed) {
+        if shared.paused() {
+            // Nobody is watching from here on. What that means for an open
+            // outage is decided when watching resumes: see `Outages`.
+            outages.pause(prev_sweep_ts);
             thread::sleep(Duration::from_millis(200));
             continue;
+        }
+
+        // A hole this wide is a machine that slept, or a pause too long to
+        // bridge. Whatever was open ended, as far as anyone can tell, at the
+        // last sweep before it: an outage that happened to span a night used
+        // to come back as eight hours of "ISP down". And the sweeps from
+        // before the hole are not the lead-up to anything after it, so they
+        // go too, as does the last access point, because a laptop carried to
+        // another network while asleep has not roamed.
+        if let Some(prev) = prev_sweep_ts {
+            if store::now() - prev > store::OBSERVATION_GAP_S {
+                if let (Step::Close { at, .. }, Some(id)) = (outages.hole(prev), open_event.take())
+                {
+                    let _ = store.close_event_at(id, at, r#"{"closed_by":"gap"}"#);
+                }
+                lead.clear();
+                last_bssid.clear();
+                last_roam_ts = None;
+                next_state_refresh = Instant::now();
+            }
         }
 
         // Adapter state changes slowly and costs more to read than the pings,
@@ -624,13 +895,11 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
             *held(&shared.gateway) = net.gateway;
         }
 
-        if sweep % 10 == 0 {
-            let (ms, err) = netstate::dns_lookup_ms(DNS_TEST_HOST);
-            dns_ms = ms;
-            dns_error = err;
-        }
+        // Read, never run: the lookup lives on `run_dns`.
+        let (dns_ms, dns_error) = held(&shared.dns).current(Instant::now());
 
-        let targets = resolve_targets(&settings, &net);
+        let hosts = held(&shared.hosts).clone();
+        let targets = resolve_targets(&settings, &net, &hosts);
         let ts = store::now();
         let mut results = HashMap::new();
         let mut rows = Vec::new();
@@ -704,26 +973,33 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
         // Event bookkeeping: only open after a few consecutive bad sweeps so a
         // single dropped packet does not fill the log with noise.
         let bad = status != Status::Ok;
-        if bad {
-            fail_streak += 1;
-        } else {
-            fail_streak = 0;
-        }
 
         // A roam counts as "recent" for a minute either way; the disconnect it
         // causes usually lands a few sweeps after the BSSID actually changes.
         let roamed_recently = last_roam_ts.is_some_and(|t| ts - t <= 60.0);
 
-        if bad && fail_streak >= settings.outage_after_fails && open_event.is_none() {
-            let context = context_json(&snap, &lead, roamed_recently);
-            open_event = store.open_event(status.key(), status.scope(), &snap.note, &context).ok();
-        } else if !bad {
-            if let Some(id) = open_event.take() {
-                // An empty lead-up: what matters at recovery is the state the
-                // connection came back into, not another copy of the history.
-                let end = context_json(&snap, &VecDeque::new(), roamed_recently);
-                let _ = store.close_event(id, &end);
+        match outages.sweep(ts, bad, settings.outage_after_fails) {
+            Step::Open => {
+                let context = context_json(&snap, &lead, roamed_recently).to_string();
+                open_event =
+                    store.open_event(status.key(), status.scope(), &snap.note, &context).ok();
+                if open_event.is_none() {
+                    outages.abandon();
+                }
             }
+            Step::Close { at, unwatched_s, .. } => {
+                if let Some(id) = open_event.take() {
+                    // An empty lead-up: what matters at recovery is the state
+                    // the connection came back into, not another copy of the
+                    // history.
+                    let mut end = context_json(&snap, &VecDeque::new(), roamed_recently);
+                    if unwatched_s > 0.0 {
+                        end["unwatched_s"] = serde_json::json!(unwatched_s);
+                    }
+                    let _ = store.close_event_at(id, at, &end.to_string());
+                }
+            }
+            Step::Nothing => {}
         }
 
         *held(&shared.last) = snap.clone();
@@ -748,10 +1024,12 @@ fn run_loop(shared: Arc<Shared>, store: Arc<Store>, tx: Sender<Snapshot>, stop: 
         }
     }
 
-    // Shutting down while an outage is open: close it, but say nothing about a
-    // recovery that never happened.
+    // Shutting down while an outage is open: close it at the last sweep that
+    // saw it (the app may have sat paused for a while first), and say nothing
+    // about a recovery that never happened.
     if let Some(id) = open_event {
-        let _ = store.close_event(id, "");
+        let at = prev_sweep_ts.unwrap_or_else(store::now);
+        let _ = store.close_event_at(id, at, "");
     }
 }
 
@@ -988,6 +1266,124 @@ mod tests {
         }
     }
 
+    /// Three bad sweeps a second apart from `t`, which opens an outage at the
+    /// default threshold.
+    fn opened_at(t: f64) -> Outages {
+        let mut o = Outages::default();
+        assert_eq!(o.sweep(t, true, 3), Step::Nothing);
+        assert_eq!(o.sweep(t + 1.0, true, 3), Step::Nothing);
+        assert_eq!(o.sweep(t + 2.0, true, 3), Step::Open);
+        o
+    }
+
+    #[test]
+    fn an_unbroken_outage_closes_when_a_sweep_sees_it_recover() {
+        let mut o = opened_at(0.0);
+        assert_eq!(o.sweep(3.0, true, 3), Step::Nothing);
+        assert_eq!(o.sweep(4.0, false, 3), Step::Close { at: 4.0, unwatched_s: 0.0 });
+        assert_eq!(o.sweep(5.0, false, 3), Step::Nothing, "closed once, not twice");
+    }
+
+    #[test]
+    fn an_outage_still_there_after_a_short_pause_is_the_same_outage() {
+        // A load test holds the monitor for twenty seconds in the middle of
+        // an outage. Closing on pause split this into two outages.
+        let mut o = opened_at(0.0);
+        o.pause(Some(2.0));
+        o.pause(Some(2.0)); // every paused iteration calls it
+        assert_eq!(o.sweep(22.0, true, 3), Step::Nothing, "still open, not reopened");
+        assert_eq!(
+            o.sweep(23.0, false, 3),
+            Step::Close { at: 23.0, unwatched_s: 20.0 },
+            "the bridged seconds travel with it"
+        );
+    }
+
+    #[test]
+    fn a_recovery_during_a_pause_ends_at_the_last_sweep_that_saw_it_down() {
+        // Nobody saw when it came back, only that it was down at 2 s and up
+        // at 22 s. Ending it at 22 would bill the pause to the outage.
+        let mut o = opened_at(0.0);
+        o.pause(Some(2.0));
+        assert_eq!(o.sweep(22.0, false, 3), Step::Close { at: 2.0, unwatched_s: 0.0 });
+    }
+
+    #[test]
+    fn a_hole_too_wide_to_bridge_ends_the_outage_before_it() {
+        let mut o = opened_at(0.0);
+        o.pause(Some(2.0));
+        assert_eq!(o.hole(2.0), Step::Close { at: 2.0, unwatched_s: 0.0 });
+        // And the streak starts again: one bad sweep after waking is not an
+        // outage.
+        assert_eq!(o.sweep(8000.0, true, 3), Step::Nothing);
+        assert_eq!(o.hole(8000.0), Step::Nothing, "nothing open, nothing to close");
+    }
+
+    #[test]
+    fn a_pause_with_nothing_open_changes_nothing() {
+        let mut o = Outages::default();
+        o.pause(Some(5.0));
+        assert_eq!(o.sweep(10.0, false, 3), Step::Nothing);
+    }
+
+    #[test]
+    fn a_hung_dns_lookup_is_a_failure_not_the_last_good_answer() {
+        let t0 = Instant::now();
+        let reading = DnsReading { ms: Some(4.0), error: String::new(), started: Some(t0) };
+        // Still inside the allowance: the previous answer stands.
+        assert_eq!(reading.current(t0 + Duration::from_secs(1)).0, Some(4.0));
+        // Past it: reported as a failure, with a reason.
+        let (ms, err) = reading.current(t0 + DNS_STALL + Duration::from_secs(1));
+        assert_eq!(ms, None);
+        assert!(!err.is_empty());
+        // A finished lookup reports what it found, however old.
+        let done = DnsReading { started: None, ..reading };
+        assert_eq!(done.current(t0 + Duration::from_secs(60)).0, Some(4.0));
+    }
+
+    #[test]
+    fn user_hostnames_come_from_the_cache_and_never_from_a_lookup() {
+        let s = Settings {
+            extra_targets: vec![
+                "watched.example".into(),
+                "9.9.9.9".into(),
+                "unresolved.example".into(),
+            ],
+            ..Settings::default()
+        };
+        let net = NetState { gateway: Some(Ipv4Addr::new(192, 168, 1, 1)), ..Default::default() };
+        let mut hosts = HashMap::new();
+        hosts.insert("watched.example".to_string(), Ipv4Addr::new(203, 0, 113, 7));
+
+        let resolved = resolve_targets(&s, &net, &hosts);
+        let addrs: Vec<Ipv4Addr> = resolved.iter().map(|t| t.host).collect();
+        assert!(addrs.contains(&Ipv4Addr::new(203, 0, 113, 7)), "cached hostname used");
+        assert!(addrs.contains(&Ipv4Addr::new(9, 9, 9, 9)), "a literal needs no cache");
+        // Router, 1.1.1.1 and 8.8.8.8 (no separate ISP resolver here), plus
+        // the two above. The uncached name is left out, not looked up.
+        assert_eq!(resolved.len(), 5);
+    }
+
+    #[test]
+    fn a_finished_job_does_not_unpause_under_another_or_the_user() {
+        let s = Shared::new(Settings::default());
+        s.hold(); // load test
+        s.hold(); // air scan
+        s.release();
+        assert!(s.paused(), "the load test is still running");
+        s.release();
+        assert!(!s.paused());
+
+        s.user_paused.store(true, Ordering::Relaxed);
+        s.hold();
+        s.release();
+        assert!(s.paused(), "the user's pause outlives the job's");
+
+        s.user_paused.store(false, Ordering::Relaxed);
+        s.release(); // stray
+        assert!(!s.paused(), "a stray release must not wrap into a hold");
+    }
+
     #[test]
     fn everything_up_is_ok() {
         let store = Store::open_in_memory().unwrap();
@@ -1079,8 +1475,10 @@ mod tests {
             dns_servers: vec![Ipv4Addr::new(192, 168, 50, 1)],
             ..Default::default()
         };
-        let keys: Vec<String> =
-            resolve_targets(&Settings::default(), &net).iter().map(|t| t.key.clone()).collect();
+        let keys: Vec<String> = resolve_targets(&Settings::default(), &net, &HashMap::new())
+            .iter()
+            .map(|t| t.key.clone())
+            .collect();
         assert!(keys.contains(&"gateway".to_string()));
         assert!(!keys.contains(&"dns_isp".to_string()));
     }
@@ -1092,8 +1490,10 @@ mod tests {
             dns_servers: vec![Ipv4Addr::new(192, 168, 50, 1), Ipv4Addr::new(1, 1, 1, 1)],
             ..Default::default()
         };
-        let keys: Vec<String> =
-            resolve_targets(&Settings::default(), &net).iter().map(|t| t.key.clone()).collect();
+        let keys: Vec<String> = resolve_targets(&Settings::default(), &net, &HashMap::new())
+            .iter()
+            .map(|t| t.key.clone())
+            .collect();
         assert!(keys.contains(&"dns_isp".to_string()));
     }
 

@@ -263,6 +263,9 @@ pub fn apply(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
     // Refuses rather than starting from an empty map: see `read_snapshots`.
     let mut snaps = read_snapshots()?;
     let state = tweak.read(net);
+    if !before_is_known(tweak.reversible(), &state.snapshot) {
+        return Err(anyhow!(crate::i18n::tw_before_unknown()));
+    }
 
     let msg = tweak.apply(net)?;
 
@@ -278,6 +281,17 @@ pub fn apply(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
             crate::i18n::tw_snapshot_save_failed(&e.to_string())
         )),
     }
+}
+
+/// Whether an apply would leave something to revert to.
+///
+/// A read that failed returns a `Null` snapshot, and recording that as the
+/// "before" made Revert either refuse (no key to write back to) or restore
+/// made-up defaults. A tweak that cannot be reverted anyway has nothing to
+/// record, so it is not held to this. Keyed on the snapshot rather than on
+/// `optimal`: the MTU reads a real value without judging it.
+fn before_is_known(reversible: bool, snapshot: &Value) -> bool {
+    !reversible || !snapshot.is_null()
 }
 
 pub fn revert(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
@@ -1325,6 +1339,15 @@ mod tests {
         fn revert(&self, _net: &NetState, _snapshot: &Value) -> Result<String> {
             Ok(String::new())
         }
+    }
+
+    #[test]
+    fn an_unreadable_before_blocks_a_reversible_apply() {
+        // What `read` returns when it fails: no snapshot to write back.
+        assert!(!before_is_known(true, &Value::Null));
+        assert!(before_is_known(true, &json!({ "mtu": 1500 })));
+        // An irreversible tweak records nothing, so there is nothing to lose.
+        assert!(before_is_known(false, &Value::Null));
     }
 
     fn on_adapter(guid: &str) -> NetState {

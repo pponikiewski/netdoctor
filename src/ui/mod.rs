@@ -179,9 +179,9 @@ pub struct App {
     /// Whether the scan saturates the line to look for bufferbloat. On by
     /// default: it is the check that answers the question people actually ask.
     pub deep_scan: bool,
-    /// The monitor's pause state from before a scan paused it, so finishing
-    /// the scan hands it back rather than deciding for the user.
-    pub monitor_was_paused: bool,
+    /// Whether the running scan holds the monitor paused, so finishing it
+    /// releases exactly the hold it took. See [`crate::monitor::Monitor::hold`].
+    pub scan_held: bool,
 
     pub bloat: BloatResult,
     pub bloat_running: bool,
@@ -278,7 +278,7 @@ impl App {
             scan_label: crate::i18n::diag_scan_hint().into(),
             scan_progress: 0.0,
             deep_scan: true,
-            monitor_was_paused: false,
+            scan_held: false,
             bloat: BloatResult::default(),
             bloat_running: false,
             bloat_label: String::new(),
@@ -366,10 +366,12 @@ impl App {
                     self.scanning = false;
                     self.scan_label = crate::i18n::diag_scan_done().into();
                     self.scan_progress = 1.0;
-                    // Restore whatever the monitor was doing before the scan
-                    // paused it. Unpausing unconditionally used to override a
-                    // pause the user had set themselves, silently.
-                    self.monitor.set_paused(self.monitor_was_paused);
+                    // Only the scan's own hold. Unpausing outright used to
+                    // override a pause the user had set, or one a load test
+                    // still needed.
+                    if std::mem::take(&mut self.scan_held) {
+                        self.monitor.release();
+                    }
                 }
                 Job::BloatProgress(label, frac) => {
                     self.bloat_label = label;
@@ -380,12 +382,12 @@ impl App {
                     self.bloat_running = false;
                     self.bloat_label = crate::i18n::bloat_test_done().into();
                     self.bloat_progress = 1.0;
-                    self.monitor.set_paused(false);
+                    self.monitor.release();
                 }
                 Job::AirDone(scan) => {
                     self.air = *scan;
                     self.air_scanning = false;
-                    self.monitor.set_paused(false);
+                    self.monitor.release();
                 }
                 Job::Traceroute(lines) => {
                     self.trace = lines;

@@ -430,7 +430,7 @@ fn start_air_scan(app: &mut App, ctx: egui::Context) {
     let tx = app.tx.clone();
     let net = app.net.clone();
     app.air_scanning = true;
-    app.monitor.set_paused(true);
+    app.monitor.hold();
     std::thread::spawn(move || {
         let result = crate::probe::airscan::rescan(&net);
         let _ = tx.send(crate::ui::Job::AirDone(Box::new(result)));
