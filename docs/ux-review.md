@@ -7,6 +7,17 @@ dużym (1120×760) i minimalnym (900×620), plus prawdziwy raport z tej maszyny.
 Miara: domowy użytkownik ma w kilka sekund wiedzieć, czy działa, co padło i co zrobić, a
 aplikacja nie może przy tym mówić więcej, niż wie.
 
+## Stan (2026-09-23)
+
+Pięć najważniejszych zmian z tabeli niżej jest zrobionych i sprawdzonych zrzutami: `12f9fd9`
+(znaki `\`), `c20709c` („0 min przestoju”, słaba jakość to nie przestój), `d627196` (pasek w
+Optymalizacji), `3e9791c` (skan bez testu obciążenia domyślnie), `0a43607` (pauza i nieświeży
+pomiar w nagłówku i kafelkach), `ba106f0` (kafelki straty i jittera z liczb werdyktu),
+`efdc812` (prywatne skoki za routerem). Reszta ustaleń czeka.
+
+Jedno ustalenie było błędne: sekcja „Co jeszcze jest w eterze” w Optymalizacji jest po starcie
+zwinięta; na zrzucie była rozwinięta, bo ktoś ją wcześniej otworzył. Skreślona niżej.
+
 ## 5 najważniejszych zmian
 
 | # | Zmiana | Dlaczego pierwsza | Koszt |
@@ -110,10 +121,9 @@ w obu językach. Przyczyna: `\\` zamiast kontynuacji linii w `air_dfs_move` (`i1
 Propozycja: poprawić i dodać test na `ALL_STRINGS`, który odrzuca `\` z białym znakiem po nim.
 Waga: kosmetyka, ale wygląda na zepsutą aplikację. Koszt: mały.
 
-**Skan eteru zajmuje cały ekran przed listą zmian.** Sekcja „Co jeszcze jest w eterze” jest
-rozwinięta domyślnie i spycha właściwe ustawienia poniżej krawędzi. Propozycja: zwinięta
-domyślnie, z jednolinijkowym podsumowaniem („Kanał 108 jest radarowy, lepszy: 36”). Waga: myli.
-Koszt: mały.
+~~**Skan eteru zajmuje cały ekran przed listą zmian.**~~ Błędne: sekcja jest domyślnie zwinięta
+(`51-min-opt-fixed.png`). Zostaje sama propozycja jednolinijkowego podsumowania w nagłówku
+zwiniętej sekcji („Kanał 108 jest radarowy, lepszy: 36”). Waga: kosmetyka. Koszt: mały.
 
 **Ostrzeżenie o kanale radarowym jest długie i techniczne** („wyda mu się, że usłyszał radar”,
 „DFS”). Propozycja: „Twój router jest na kanale, który musi czasem na chwilę opuścić. To może
