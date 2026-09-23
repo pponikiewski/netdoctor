@@ -18,6 +18,12 @@ use crate::settings;
 /// user would call "still running".
 pub const OBSERVATION_GAP_S: f64 = 60.0;
 
+/// How long an outage is kept, whatever the sample retention: a year, so a
+/// report to the provider can reach back further than two weeks. Past the
+/// sample retention it is kept without its lead-up, which is most of its
+/// size.
+pub const OUTAGE_KEEP_DAYS: i64 = 365;
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS samples (
     ts     REAL NOT NULL,
@@ -299,25 +305,36 @@ impl Store {
         summarise(total, &rtts)
     }
 
-    /// Applies the retention setting to both sample and event history.
+    /// Applies the retention setting.
     ///
-    /// Events used to be exempt, which sounded conservative and was not: each
-    /// one carries its `context` and `context_end` JSON — the whole lead-up
-    /// series — so on a machine that autostarts and runs all day they are the
-    /// bulk of the file, and they grew without limit no matter what the user
-    /// set. The tweak log is deliberately left alone: it is small, and it is
-    /// the record of what this app changed on the machine.
+    /// Samples go after `keep_days`. Outages stay for [`OUTAGE_KEEP_DAYS`],
+    /// because a report to the provider has to reach back further than two
+    /// weeks, but after `keep_days` they lose their lead-up: that series is
+    /// most of an outage's 33 KB, and it is what made them the bulk of the
+    /// file when they were exempt from pruning altogether. What stays is the
+    /// time, the kind, the note, the state it failed on and the path.
+    ///
+    /// The tweak log is deliberately left alone: it is small, and it is the
+    /// record of what this app changed on the machine.
     pub fn prune(&self, keep_days: i64) -> Result<()> {
-        let cutoff = now() - (keep_days.max(1) as f64) * 86400.0;
+        let keep_days = keep_days.max(1);
+        let cutoff = now() - (keep_days as f64) * 86400.0;
+        let outage_cutoff = now() - (keep_days.max(OUTAGE_KEEP_DAYS) as f64) * 86400.0;
         let conn = self.held();
         conn.execute("DELETE FROM samples WHERE ts < ?", params![cutoff])?;
         // An outage still open has no end yet and is never old enough to
-        // drop. `close_orphans` runs at startup so this only ever spares one
+        // touch. `close_orphans` runs at startup so this only ever spares one
         // that is genuinely still running, rather than every row a crash
         // left behind.
         conn.execute(
-            "DELETE FROM events WHERE ts_start < ? AND ts_end IS NOT NULL",
+            "UPDATE events SET context = json_remove(context, '$.lead_up') \
+              WHERE ts_start < ?1 AND ts_end IS NOT NULL \
+                AND json_valid(context) AND json_type(context, '$.lead_up') IS NOT NULL",
             params![cutoff],
+        )?;
+        conn.execute(
+            "DELETE FROM events WHERE ts_start < ? AND ts_end IS NOT NULL",
+            params![outage_cutoff],
         )?;
         Ok(())
     }
@@ -621,6 +638,35 @@ fn median(rtts: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outages_outlive_the_samples_but_not_their_lead_up() {
+        // An outage from three weeks ago was deleted with the samples, so a
+        // month's report to the provider could never show it.
+        let store = Store::open_in_memory().unwrap();
+        let ctx = r#"{"medium":"Wi-Fi","lead_up":[{"ts":1.0}],"path":{"hops":[]}}"#;
+        let id = store.open_event("isp_down", "isp", "old", ctx).unwrap();
+        store.close_event(id, "{}").unwrap();
+        store.reshape_events_for_test(-21.0 * 86_400.0, 60.0);
+        let old = now() - 21.0 * 86_400.0;
+        store.add_samples(&[(old, "gateway".to_string(), Some(1.0), true)]).unwrap();
+
+        store.prune(14).unwrap();
+
+        assert!(store.samples_between(old - 1.0, old + 1.0).is_empty(), "samples go");
+        let kept = store.events_since(30.0 * 86_400.0);
+        assert_eq!(kept.len(), 1, "the outage stays");
+        let context = store.event_context(id).unwrap().context;
+        let v: serde_json::Value = serde_json::from_str(&context).unwrap();
+        assert!(v.get("lead_up").is_none(), "without the bulky lead-up: {context}");
+        assert_eq!(v["medium"], "Wi-Fi", "and with everything else");
+        assert!(v.get("path").is_some());
+
+        // A year on, it goes too.
+        store.reshape_events_for_test(-(OUTAGE_KEEP_DAYS as f64) * 86_400.0, 60.0);
+        store.prune(14).unwrap();
+        assert!(store.events_since(1000.0 * 86_400.0).is_empty());
+    }
 
     #[test]
     fn only_the_time_between_close_sweeps_counts_as_watched() {
@@ -1050,7 +1096,9 @@ mod tests {
     #[test]
     fn prune_drops_closed_events_but_keeps_the_open_one() {
         let store = Store::open_in_memory().unwrap();
-        let old = now() - 40.0 * 86400.0;
+        // Past the outage retention, not merely the sample retention: see
+        // `outages_outlive_the_samples_but_not_their_lead_up`.
+        let old = now() - (OUTAGE_KEEP_DAYS + 35) as f64 * 86400.0;
 
         let closed = store.open_event("outage", "lan", "old", "{}").unwrap();
         store.close_event(closed, "{}").unwrap();

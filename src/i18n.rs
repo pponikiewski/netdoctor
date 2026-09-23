@@ -186,7 +186,7 @@ poprosisz.";
     set_fails_hint =>
         "Guards against logging a single dropped packet as an outage.",
         "Chroni przed zapisaniem pojedynczego zgubionego pakietu jako awarii.";
-    set_keep_days => "Days of history to keep", "Ile dni historii przechowywać";
+    set_keep_days => "Days of measurements to keep", "Ile dni pomiarów przechowywać";
 
     set_targets_hint =>
         "One host per line — for example the game server you play on. Names are resolved when \

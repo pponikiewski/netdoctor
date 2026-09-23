@@ -338,7 +338,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-274 tests, covering the failure-blame logic, the statistics, the registry layer,
+275 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable
@@ -374,10 +374,12 @@ cargo test a_real_outage -- --ignored --nocapture
 - `tweak_snapshots.json` — prior state for every applied change
 - `netdoctor-report.txt` — written by "Save report"
 
-Samples **and recorded outages** older than the configured retention (14 days
-by default) are pruned automatically, so an outage from three weeks ago is gone
-from the history and from any report. An outage still in progress is never
-pruned. The log of changes the app made is kept.
+Measurements older than the configured retention (14 days by default) are
+pruned automatically. Recorded outages are kept for a year, so a report can
+reach back further than the measurements do; past the retention they lose the
+sweeps that led up to them, which are most of their size, and keep the time,
+the kind, the state they failed on and the path. An outage still in progress
+is never pruned. The log of changes the app made is kept.
 
 `history.db` is the one file here that gets big. At the defaults — four targets,
 one sweep a second — a full 14 days of retention measures **367 MB**. That is
