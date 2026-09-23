@@ -1669,9 +1669,14 @@ pub fn f_icmp_filtered_detail(hosts: &str) -> String {
     }
 }
 
-/// A length of time the way a person says it: "5 min", "3 h 20 min".
+/// A length of time the way a person says it: "11 s", "5 min", "3 h 20 min".
+/// Under a minute it stays in seconds, so a short outage is never "0 min".
 pub fn span(secs: f64) -> String {
-    let mins = (secs.max(0.0) / 60.0).round() as u64;
+    let secs = secs.max(0.0);
+    if secs.round() < 60.0 {
+        return format!("{:.0} s", secs);
+    }
+    let mins = (secs / 60.0).round() as u64;
     match (mins / 60, mins % 60) {
         (0, m) => format!("{m} min"),
         (h, 0) => format!("{h} h"),
@@ -1722,11 +1727,14 @@ pub fn rep_samples_kept(days: i64) -> String {
     }
 }
 
-/// Count and downtime for one kind of outage.
-pub fn rep_total(kind: &str, count: usize, down: &str) -> String {
-    match current() {
-        Lang::En => format!("  {kind}: {count} time(s), {down} down in total"),
-        Lang::Pl => format!("  {kind}: {count} raz(y), łącznie {down} przestoju"),
+/// Count and total length of one kind of outage. `slow` for a line that was
+/// slow rather than down, which is not downtime.
+pub fn rep_total(kind: &str, count: usize, length: &str, slow: bool) -> String {
+    match (current(), slow) {
+        (Lang::En, false) => format!("  {kind}: {count} time(s), {length} down in total"),
+        (Lang::En, true) => format!("  {kind}: {count} time(s), {length} of poor quality in total"),
+        (Lang::Pl, false) => format!("  {kind}: {count} raz(y), łącznie {length} przestoju"),
+        (Lang::Pl, true) => format!("  {kind}: {count} raz(y), łącznie {length} słabej jakości"),
     }
 }
 
@@ -3945,6 +3953,17 @@ mod tests {
             // A code written by a future version must not become an empty cell.
             assert_eq!(event_kind("something_new"), "something_new");
         });
+    }
+
+    #[test]
+    fn a_short_span_is_not_rounded_to_nothing() {
+        // The report summed two provider outages of 3 s and 8 s as
+        // "0 min down in total".
+        assert_eq!(span(11.0), "11 s");
+        assert_eq!(span(0.4), "0 s");
+        assert_eq!(span(59.4), "59 s");
+        assert_eq!(span(300.0), "5 min");
+        assert_eq!(span(3.0 * 3600.0 + 20.0 * 60.0), "3 h 20 min");
     }
 
     #[test]

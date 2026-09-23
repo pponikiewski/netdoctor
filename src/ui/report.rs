@@ -275,14 +275,18 @@ fn outages_section(
         return out;
     }
 
-    let mut totals: std::collections::BTreeMap<String, (usize, f64)> = Default::default();
+    // Keyed by the stored kind, so a slow line can be told from a dead one:
+    // its minutes are poor quality, not downtime.
+    let mut totals: std::collections::BTreeMap<&str, (usize, f64)> = Default::default();
     for e in &events {
-        let t = totals.entry(i18n::event_kind(&e.kind)).or_default();
+        let t = totals.entry(e.kind.as_str()).or_default();
         t.0 += 1;
         t.1 += e.duration_s().unwrap_or(0.0);
     }
-    for (kind, (count, down)) in &totals {
-        let _ = writeln!(out, "{}", i18n::rep_total(kind, *count, &i18n::span(*down)));
+    for (kind, (count, length)) in &totals {
+        let slow = *kind == crate::monitor::Status::Degraded.key();
+        let line = i18n::rep_total(&i18n::event_kind(kind), *count, &i18n::span(*length), slow);
+        let _ = writeln!(out, "{line}");
     }
 
     let n = events.len();
@@ -534,7 +538,7 @@ mod tests {
         assert!(text.contains("100.64.7.1"), "the path as it was then: {text}");
         assert!(text.contains("20 of 30") || text.contains("20 z 30"), "the minute before: {text}");
         assert!(text.contains("-50") && text.contains("-79"), "where the signal went: {text}");
-        assert!(text.contains(&i18n::rep_total(&i18n::event_kind("isp_down"), 1, "1 min")));
+        assert!(text.contains(&i18n::rep_total(&i18n::event_kind("isp_down"), 1, "45 s", false)));
     }
 
     #[test]
