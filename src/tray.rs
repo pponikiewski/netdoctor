@@ -11,8 +11,10 @@
 //! whose window is hidden cannot be relied on to get frames, and a hidden
 //! window is exactly the situation this exists for.
 
+use std::time::Duration;
+
 use crate::i18n;
-use crate::monitor::{Notice, Status};
+use crate::monitor::{Notice, Snapshot, Status};
 
 /// What the icon shows.
 ///
@@ -37,19 +39,36 @@ enum Seen<'a> {
     Waiting,
     /// The last sweep sent nothing: see [`crate::monitor::Snapshot::blind`].
     Blind,
+    /// Sampling is on, but the newest sweep is this many seconds old: the
+    /// sweep thread has stopped or is stuck. Its verdict is history.
+    Stale(f64),
     Verdict(Status, &'a str),
 }
 
+/// How many intervals a reading may age before it stops being the latest
+/// word. A sweep can run late by its own timeout and an adapter read, so one
+/// or two missed beats is ordinary; five is not.
+const STALE_AFTER_INTERVALS: u32 = 5;
+/// And never less than this, so a short interval does not grey the icon on a
+/// single slow sweep.
+const STALE_FLOOR: Duration = Duration::from_secs(10);
+
 impl<'a> Seen<'a> {
-    fn of(status: Status, note: &'a str, blind: bool, sampling: bool, has_sample: bool) -> Self {
+    /// `now` is the wall clock the snapshot's `ts` was taken on, and
+    /// `interval` the sweep interval it should be refreshed at.
+    fn of(last: &'a Snapshot, sampling: bool, now: f64, interval: Duration) -> Self {
+        let age = now - last.ts;
+        let limit = (interval * STALE_AFTER_INTERVALS).max(STALE_FLOOR).as_secs_f64();
         if !sampling {
             Seen::Paused
-        } else if !has_sample {
+        } else if last.ts <= 0.0 {
             Seen::Waiting
-        } else if blind {
+        } else if age > limit {
+            Seen::Stale(age)
+        } else if last.blind.is_some() {
             Seen::Blind
         } else {
-            Seen::Verdict(status, note)
+            Seen::Verdict(last.status, &last.note)
         }
     }
 }
@@ -57,7 +76,7 @@ impl<'a> Seen<'a> {
 impl Level {
     fn of(seen: Seen) -> Level {
         match seen {
-            Seen::Paused | Seen::Waiting | Seen::Blind => Level::Unknown,
+            Seen::Paused | Seen::Waiting | Seen::Blind | Seen::Stale(_) => Level::Unknown,
             Seen::Verdict(Status::Ok, _) => Level::Ok,
             Seen::Verdict(Status::Degraded, _) => Level::Slow,
             Seen::Verdict(..) => Level::Down,
@@ -87,6 +106,7 @@ fn tooltip(seen: Seen) -> String {
         Seen::Paused => i18n::tray_paused().to_string(),
         Seen::Waiting => i18n::tray_waiting().to_string(),
         Seen::Blind => format!("NetDoctor: {}", i18n::mon_blind()),
+        Seen::Stale(age) => i18n::tray_stale(age),
         Seen::Verdict(status, "") => format!("NetDoctor: {}", status.headline()),
         Seen::Verdict(status, note) => format!("NetDoctor: {}\n{note}", status.headline()),
     }
@@ -322,12 +342,11 @@ mod imp {
 
         /// Reads the monitor and works out what the icon should say.
         fn read(&self) -> (Level, String) {
-            let (ts, status, note, blind) = {
-                let last = self.shared.last.lock().unwrap_or_else(|p| p.into_inner());
-                (last.ts, last.status, last.note.clone(), last.blind.is_some())
-            };
-            let sampling = !self.shared.paused();
-            let seen = Seen::of(status, &note, blind, sampling, ts > 0.0);
+            // Cloned so the monitor's lock is not held while the text is built.
+            let last = self.shared.last.lock().unwrap_or_else(|p| p.into_inner()).clone();
+            let interval =
+                self.shared.settings.lock().unwrap_or_else(|p| p.into_inner()).interval();
+            let seen = Seen::of(&last, !self.shared.paused(), crate::store::now(), interval);
             (Level::of(seen), tooltip(seen))
         }
 
@@ -831,9 +850,17 @@ impl Tray {
 mod tests {
     use super::*;
 
+    const NOW: f64 = 1_000_000.0;
+    const SECOND: Duration = Duration::from_secs(1);
+
+    /// A sweep taken `age` seconds before `NOW`.
+    fn swept(status: Status, note: &str, age: f64) -> Snapshot {
+        Snapshot { ts: NOW - age, status, note: note.into(), ..Snapshot::default() }
+    }
+
     #[test]
     fn the_icon_colour_follows_the_verdict() {
-        let level = |status| Level::of(Seen::of(status, "", false, true, true));
+        let level = |status| Level::of(Seen::of(&swept(status, "", 0.5), true, NOW, SECOND));
         assert_eq!(level(Status::Ok), Level::Ok);
         assert_eq!(level(Status::Degraded), Level::Slow);
         for down in [Status::DnsFail, Status::IspDown, Status::LanDown, Status::AdapterDown] {
@@ -845,8 +872,10 @@ mod tests {
     fn a_paused_or_unstarted_monitor_is_grey_not_green() {
         // The snapshot still says "Ok" from before the pause. Showing it
         // would claim a line nobody is measuring is healthy.
-        let paused = Seen::of(Status::Ok, "", false, false, true);
-        let waiting = Seen::of(Status::Ok, "", false, true, false);
+        let before_pause = swept(Status::Ok, "", 0.5);
+        let paused = Seen::of(&before_pause, false, NOW, SECOND);
+        let none_yet = Snapshot::default();
+        let waiting = Seen::of(&none_yet, true, NOW, SECOND);
         assert_eq!(Level::of(paused), Level::Unknown);
         assert_eq!(Level::of(waiting), Level::Unknown);
         assert_eq!(tooltip(paused), i18n::tray_paused());
@@ -856,15 +885,40 @@ mod tests {
     #[test]
     fn a_sweep_that_sent_nothing_is_grey_and_says_so() {
         // A blind snapshot carries the default status, which is "Ok".
-        let blind = Seen::of(Status::Ok, "", true, true, true);
+        let snap = Snapshot { blind: Some("no handle".into()), ..swept(Status::Ok, "", 0.5) };
+        let blind = Seen::of(&snap, true, NOW, SECOND);
         assert_eq!(Level::of(blind), Level::Unknown);
         assert!(tooltip(blind).contains(i18n::mon_blind()));
         assert!(!tooltip(blind).contains(Status::Ok.headline()));
     }
 
     #[test]
+    fn a_reading_nobody_has_refreshed_is_grey_not_the_colour_it_had() {
+        // The sweep thread stalled two minutes ago with the line healthy.
+        // The icon stayed green for as long as the process lived.
+        let stalled = swept(Status::Ok, "", 120.0);
+        let seen = Seen::of(&stalled, true, NOW, SECOND);
+        assert_eq!(Level::of(seen), Level::Unknown);
+        assert!(!tooltip(seen).contains(Status::Ok.headline()), "{}", tooltip(seen));
+        assert!(tooltip(seen).contains("120"), "the tooltip says how old: {}", tooltip(seen));
+        // In the current language only: switching it here would race the
+        // tests running beside this one.
+        let tip = tooltip(Seen::Stale(86_400.0 * 30.0));
+        assert!(tip.encode_utf16().count() < 128, "szTip holds 127 units: {tip}");
+
+        // A slow sweep is not a stalled one: a few seconds late at a one
+        // second interval is still the latest word.
+        let late = swept(Status::Ok, "", 4.0);
+        assert_eq!(Level::of(Seen::of(&late, true, NOW, SECOND)), Level::Ok);
+        // And "a few intervals" scales with the interval.
+        let slow = swept(Status::Ok, "", 40.0);
+        assert_eq!(Level::of(Seen::of(&slow, true, NOW, Duration::from_secs(10))), Level::Ok);
+    }
+
+    #[test]
     fn the_tooltip_carries_the_verdict_and_its_note() {
-        let tip = tooltip(Seen::of(Status::IspDown, "router answers", false, true, true));
+        let snap = swept(Status::IspDown, "router answers", 0.5);
+        let tip = tooltip(Seen::of(&snap, true, NOW, SECOND));
         assert!(tip.contains(Status::IspDown.headline()));
         assert!(tip.contains("router answers"));
     }

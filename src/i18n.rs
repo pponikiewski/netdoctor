@@ -1595,6 +1595,18 @@ pub fn toast_restored(secs: f64) -> String {
     }
 }
 
+/// The tray's tooltip when the newest reading is `age` seconds old.
+pub fn tray_stale(age: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "NetDoctor: no fresh reading\nThe last one is {age:.0} s old. Measuring has stopped."
+        ),
+        Lang::Pl => format!(
+            "NetDoctor: brak świeżego pomiaru\nOstatni ma {age:.0} s. Pomiar przestał działać."
+        ),
+    }
+}
+
 /// Why a sweep measured nothing: no ICMP handle could be opened.
 pub fn mon_blind_detail(err: &str) -> String {
     match current() {
