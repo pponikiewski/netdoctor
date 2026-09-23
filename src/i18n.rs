@@ -1530,11 +1530,11 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          który go poprosić.";
     air_btn_scan => "Scan the air", "Skanuj eter";
     air_scan_cost =>
-        "Costs about a second of connectivity: the card has to leave your channel to \\
-         listen to the others. The monitor is paused meanwhile, so it is not filed as \\
+        "Costs about a second of connectivity: the card has to leave your channel to \
+         listen to the others. The monitor is paused meanwhile, so it is not filed as \
          an outage.",
-        "Kosztuje około sekundy łączności: karta musi zejść z twojego kanału, żeby \\
-         posłuchać pozostałych. Monitor jest na ten czas wstrzymany, więc nie trafia to \\
+        "Kosztuje około sekundy łączności: karta musi zejść z twojego kanału, żeby \
+         posłuchać pozostałych. Monitor jest na ten czas wstrzymany, więc nie trafia to \
          do historii jako awaria.";
     air_scanning => "scanning, about four seconds…", "skanowanie, około czterech sekund…";
     air_empty => "Nothing scanned yet.", "Jeszcze nic nie zeskanowano.";
@@ -1552,10 +1552,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Na 5 GHz proponowane są tylko kanały wolne od radaru. Kanał DFS może być idealnie \
          cichy i mimo to uciąć sieć na minutę, gdy routerowi wyda się, że usłyszał radar.";
     air_dfs_move =>
-        "Move off it: pick 36, 40, 44 or 48 for range, or 149 and up for the least \\
+        "Move off it: pick 36, 40, 44 or 48 for range, or 149 and up for the least \
          crowded air. Both groups are radar-free and never go quiet on their own.",
-        "Zejdź z niego: wybierz 36, 40, 44 albo 48 dla zasięgu, albo 149 i wyżej dla \\
-         najmniej zatłoczonego eteru. Obie grupy są wolne od radaru i nigdy nie milkną \\
+        "Zejdź z niego: wybierz 36, 40, 44 albo 48 dla zasięgu, albo 149 i wyżej dla \
+         najmniej zatłoczonego eteru. Obie grupy są wolne od radaru i nigdy nie milkną \
          same z siebie.";
     // -----------------------------------------------------------------------
     // the optimise list: sections and status
@@ -1596,9 +1596,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     opt_section_all_set => "all set", "wszystko ustawione";
     opt_show_unavailable => "show unavailable", "pokaż niedostępne";
     opt_show_unavailable_hint =>
-        "Changes this machine cannot take: a Wi-Fi setting on a cable, or one the \\
+        "Changes this machine cannot take: a Wi-Fi setting on a cable, or one the \
          driver does not expose. The section counts ignore them either way.",
-        "Zmiany, których ta maszyna nie przyjmie: ustawienie Wi-Fi przy kablu albo takie, \\
+        "Zmiany, których ta maszyna nie przyjmie: ustawienie Wi-Fi przy kablu albo takie, \
          którego sterownik nie udostępnia. Liczniki sekcji i tak ich nie liczą.";
     opt_section_none => "nothing applies here", "nic tu nie dotyczy";
 
@@ -3960,6 +3960,12 @@ mod tests {
         // indent a note on purpose, and none of them does it with three.
         for (name, en, pl) in ALL_STRINGS {
             for text in [en, pl] {
+                // The other half of the same mistake: a doubled backslash is a
+                // literal one, so the newline and indent survive and a `\`
+                // shows in the middle of the sentence. It hid behind the
+                // exception below, because the indent it keeps looks exactly
+                // like laid-out block text.
+                assert!(!text.contains("\\\n"), "{name}: a literal backslash before a line break");
                 // Block text — the CLI help — is laid out on purpose and is
                 // the one place runs of spaces mean something. It gives itself
                 // away by indenting a line; prose never starts a line with a
