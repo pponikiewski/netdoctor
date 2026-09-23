@@ -307,11 +307,15 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
         out.push(Cause::new("log_resume", Confidence::Likely, i18n::ev_log_resume(&at(e))));
     }
 
+    // Likely, not certain: unlike the rules around it, this one does not rest
+    // on a documented event id. `eventlog::classify` calls an error a driver
+    // fault because its provider's name looks like a network driver's, and
+    // the confidence cannot be stronger than that match.
     if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::DriverFault) {
         out.push(
             Cause::new(
                 "log_driver_fault",
-                Confidence::Certain,
+                Confidence::Likely,
                 i18n::ev_log_driver(&e.provider, e.id, &at(e)),
             )
             .with_fix("stack_reset"),
@@ -894,6 +898,10 @@ mod tests {
         let c = causes.iter().find(|c| c.code == "log_driver_fault").unwrap();
         assert_eq!(c.fix_tweak, Some("stack_reset"));
         assert!(c.evidence.contains("Netwtw10") && c.evidence.contains("5002"));
+        // The event is classified by the provider's name looking like a
+        // network driver, not by a documented id: an error near the outage
+        // from something that is probably the adapter. Strong, not certain.
+        assert_eq!(c.confidence, Confidence::Likely);
     }
 
     #[test]
