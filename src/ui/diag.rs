@@ -50,6 +50,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new(&app.scan_label).size(T_BODY).color(FG_DIM));
     });
 
+    // The same warning the load test tab carries. The box used to be ticked
+    // from the start and the main button then pulled up to a gigabyte with
+    // nothing on this screen saying so.
+    if app.deep_scan {
+        ui.label(egui::RichText::new(i18n::bloat_cost_warning()).size(T_BODY).color(YELLOW));
+    }
     if app.scanning {
         ui.add(egui::ProgressBar::new(app.scan_progress).desired_height(6.0));
     }

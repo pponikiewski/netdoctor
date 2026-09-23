@@ -387,21 +387,24 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // -----------------------------------------------------------------------
     // diagnose tab
     // -----------------------------------------------------------------------
-    diag_scan_hint => "A full scan takes about 30 seconds.", "Pełny skan trwa około 30 sekund.";
+    diag_scan_hint =>
+        "A scan takes a few seconds; with the load test, about 30.",
+        "Skan trwa kilka sekund, z testem obciążeniowym około 30.";
     diag_scan_done => "Scan complete.", "Skan zakończony.";
     diag_scan_starting => "Starting…", "Uruchamianie…";
-    diag_btn_scan => "Run full scan", "Uruchom pełny skan";
+    diag_btn_scan => "Run scan", "Uruchom skan";
     diag_no_scan_yet =>
         "No scan yet. The scan splits the chain — this PC, the router, the provider's first hop, \
          the open internet — and measures where latency and loss are actually introduced. It \
-         then saturates the line to see whether latency survives a download, checks that real \
-         TCP traffic gets through and not just ping, and compares everything against this \
-         machine's own history rather than a generic threshold.",
+         checks that real TCP traffic gets through and not just ping, and compares everything \
+         against this machine's own history rather than a generic threshold. With the load \
+         test it also saturates the line to see whether latency survives a download.",
         "Jeszcze nie było skanu. Skan rozcina łańcuch — ten komputer, router, pierwszy węzeł \
          dostawcy, otwarty internet — i mierzy, gdzie naprawdę powstaje opóźnienie i gdzie giną \
-         pakiety. Potem obciąża łącze, żeby sprawdzić, czy opóźnienie przeżyje pobieranie, \
-         weryfikuje, czy przechodzi realny ruch TCP, a nie tylko ping, i porównuje wszystko z \
-         własną historią tego komputera zamiast ze sztywnym progiem.";
+         pakiety. Sprawdza, czy przechodzi realny ruch TCP, a nie tylko ping, i porównuje \
+         wszystko z własną historią tego komputera zamiast ze sztywnym progiem. Z testem \
+         obciążeniowym dodatkowo obciąża łącze, żeby sprawdzić, czy opóźnienie przeżyje \
+         pobieranie.";
     diag_select_finding =>
         "Select a finding to see what it means.",
         "Wybierz wynik, żeby zobaczyć, co oznacza.";

@@ -334,7 +334,7 @@ impl App {
             scanning: false,
             scan_label: crate::i18n::diag_scan_hint().into(),
             scan_progress: 0.0,
-            deep_scan: true,
+            deep_scan: false,
             scan_held: false,
             bloat: BloatResult::default(),
             bloat_running: false,
