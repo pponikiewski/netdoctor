@@ -200,7 +200,8 @@ one English label that would silently fail everywhere else.
 - **Outage history** — when, how long, whose fault, and on selecting an entry,
   why: cause, evidence, what Windows logged around it, the lead-up plotted, and
   a route to the fix.
-- **Settings** — probe cadence, thresholds, extra ping targets (your game
+- **Settings** — probe cadence (300 ms to 30 s; slower and a sleeping machine
+  could not be told from an outage), thresholds, extra ping targets (your game
   server, for instance), autostart, updates.
 
 ## Running in the background
@@ -212,7 +213,9 @@ An outage is only recorded if the monitor is running when it happens. So:
 - **Start minimised**, or `--minimised`.
 - **An icon in the notification area** shows the line's state: green when it
   works, yellow when it is slow, red when it is down, grey when nothing is
-  being measured (paused, or no reading yet). Hover for the verdict, click to
+  being measured (paused, no reading yet, the last reading is more than a few
+  intervals old, or Windows would not let the app send pings: none of these
+  is recorded as an outage). Hover for the verdict, click to
   open the window, right-click for Quit.
 - **The close button hides the window to that icon** and measuring goes on.
   Quit from the icon's menu to stop it.

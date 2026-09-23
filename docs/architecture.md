@@ -86,5 +86,7 @@ z łamania dokładnie tej zasady.
 
 - 2026-09-23 — straty i jitter oceniane od końca ostatniej twardej awarii, nie z pełnych 60 s, i dopiero przy 10 pomiarach. Pełne okno liczyło zgubione pingi samej awarii jako „wolne łącze” i przedłużało każdą awarię o ok. minutę; znalezione testem z prawdziwym odcięciem Wi-Fi.
 
+- 2026-09-23 — nieudany pomiar to osobny stan, a nie werdykt. Przebieg, w którym nie dało się wysłać ani jednego pinga, nie ma `Status`: `Snapshot.blind` niesie przyczynę, pętla traktuje go jak pauzę (bez próbki, bez kroku `Outages`, bez powiadomienia), a nagłówek i zasobnik pokazują go na szaro. Wybrane zamiast nowego wariantu `Status`, bo ten trafiałby do historii; koszt: każdy, kto pokazuje werdykt, musi najpierw sprawdzić `blind` (dziś `ui::verdict_line` i `tray::Seen`). W skanie to samo robią `Wire.blind` i `Segment::Unmeasured`. Zasobnik ocenia też wiek migawki (`Seen::Stale`). Interwał sondowania ma teraz sufit `MAX_PROBE_INTERVAL_MS`, połowę `OBSERVATION_GAP_S`, co zamyka zastrzeżenie z wpisu o ciągłości obserwacji.
+
 ## Open questions
 <!-- Track unresolved technical decisions -->
