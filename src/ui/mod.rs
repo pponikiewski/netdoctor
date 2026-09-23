@@ -172,6 +172,8 @@ pub enum Job {
     /// so a slow read landing after the user moved on is discarded, not shown
     /// under the wrong entry.
     SysLog(i64, Vec<crate::probe::eventlog::SysEvent>),
+    /// A report was written, to this path, or not, for this reason.
+    ReportSaved(Result<String, String>),
     /// A step in the update flow, from the thread carrying it out.
     UpdateState(Box<crate::update::State>),
     /// Download progress, kept apart from `UpdateState` so the release does
@@ -265,6 +267,13 @@ pub struct App {
     pub syslog: Option<(i64, Vec<crate::probe::eventlog::SysEvent>)>,
     /// The outage a read is currently running for.
     pub syslog_pending: Option<i64>,
+    /// How far back the next report reaches.
+    pub report_range: report::Range,
+    /// A report is being written on a worker thread.
+    pub report_busy: bool,
+    /// Where the last report went, or why it did not, for the next frame's
+    /// toast: the job arrives where there is no clock to time one.
+    report_done: Option<Result<String, String>>,
     pub elevated: bool,
     pub autostart_on: bool,
 
@@ -349,6 +358,9 @@ impl App {
             outage_detail: None,
             syslog: None,
             syslog_pending: None,
+            report_range: report::Range::Day,
+            report_busy: false,
+            report_done: None,
             elevated: crate::optimize::is_elevated(),
             autostart_on: crate::autostart::is_enabled(),
             update: Default::default(),
@@ -481,6 +493,10 @@ impl App {
                         self.syslog = Some((id, events));
                     }
                 }
+                Job::ReportSaved(result) => {
+                    self.report_busy = false;
+                    self.report_done = Some(result);
+                }
             }
         }
     }
@@ -536,6 +552,11 @@ impl eframe::App for App {
 
         let now = ctx.input(|i| i.time);
         self.drain_jobs();
+        match self.report_done.take() {
+            Some(Ok(path)) => self.toast(crate::i18n::live_report_saved(&path), GREEN, now),
+            Some(Err(e)) => self.toast(crate::i18n::set_save_failed(&e), RED, now),
+            None => {}
+        }
         self.drain_snapshots();
 
         // The monitor produces a sample per second; repainting on that cadence

@@ -293,10 +293,16 @@ fn lead_sample(snap: &Snapshot) -> LeadSample {
 /// The evidence written into an outage row. `lead_up` is the part that was
 /// missing: a single snapshot says what the connection looked like once it had
 /// already broken, which is rarely the thing that broke it.
+///
+/// `path` is the per-hop table as the path thread last left it. It goes in
+/// because the hop table on screen is the current one: a report written days
+/// later has to show the path as it was when the outage happened, which is
+/// the part of the evidence a provider cannot wave away.
 fn context_json(
     snap: &Snapshot,
     lead: &VecDeque<LeadSample>,
     roamed_recently: bool,
+    path: Option<&PathReading>,
 ) -> serde_json::Value {
     let net = &snap.net;
     serde_json::json!({
@@ -323,6 +329,7 @@ fn context_json(
         "dns_error": snap.dns_error,
         "roamed": roamed_recently,
         "lead_up": lead.iter().collect::<Vec<_>>(),
+        "path": path.filter(|p| !p.hops.is_empty()),
     })
 }
 
@@ -1204,7 +1211,8 @@ fn run_loop(
         let step = outages.sweep(ts, bad, settings.outage_after_fails);
         match step {
             Step::Open => {
-                let context = context_json(&snap, &lead, roamed_recently).to_string();
+                let path = held(&shared.path).clone();
+                let context = context_json(&snap, &lead, roamed_recently, Some(&path)).to_string();
                 open_event =
                     store.open_event(status.key(), status.scope(), &snap.note, &context).ok();
                 if open_event.is_none() {
@@ -1224,7 +1232,7 @@ fn run_loop(
                     // An empty lead-up: what matters at recovery is the state
                     // the connection came back into, not another copy of the
                     // history.
-                    let mut end = context_json(&snap, &VecDeque::new(), roamed_recently);
+                    let mut end = context_json(&snap, &VecDeque::new(), roamed_recently, None);
                     if unwatched_s > 0.0 {
                         end["unwatched_s"] = serde_json::json!(unwatched_s);
                     }
@@ -1744,6 +1752,35 @@ mod tests {
         assert_eq!(rec.escalate(Status::IspDown), None);
         rec.close();
         assert_eq!(rec.escalate(Status::AdapterDown), None, "nothing open, nothing to rename");
+    }
+
+    #[test]
+    fn an_outage_keeps_the_path_as_it_was_when_it_began() {
+        // The report used to print the hop table as it is now, under outages
+        // from days ago.
+        use crate::probe::path::{HopReading, Owner};
+        let path = PathReading {
+            hops: vec![HopReading {
+                ttl: 1,
+                addr: Ipv4Addr::new(192, 168, 1, 1),
+                owner: Owner::Gateway,
+                loss_pct: 0.0,
+                avg_ms: Some(2.0),
+                samples: 10,
+                silent: false,
+            }],
+            blame: None,
+        };
+        let snap = Snapshot::default();
+        let ctx = context_json(&snap, &VecDeque::new(), false, Some(&path));
+        let back: PathReading = serde_json::from_value(ctx["path"].clone()).unwrap();
+        assert_eq!(back.hops.len(), 1);
+        assert_eq!(back.hops[0].addr, Ipv4Addr::new(192, 168, 1, 1));
+
+        // A path not walked yet is not stored as an empty table, which
+        // would read as "no hops".
+        let none = context_json(&snap, &VecDeque::new(), false, Some(&PathReading::default()));
+        assert!(none["path"].is_null());
     }
 
     #[test]

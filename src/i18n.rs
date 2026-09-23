@@ -1017,7 +1017,20 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     rep_title => "NetDoctor report", "Raport NetDoctor";
     rep_sec_connection => "CONNECTION", "POŁĄCZENIE";
     rep_sec_measurements => "MEASUREMENTS (last hour)", "POMIARY (ostatnia godzina)";
-    rep_sec_outages => "OUTAGES (last 24 hours)", "AWARIE (ostatnie 24 godziny)";
+    rep_log_heading => "Windows log around it:", "Dziennik Windows wokół niej:";
+    rep_log_quiet =>
+        "Windows log around it: nothing relevant logged.",
+        "Dziennik Windows wokół niej: nic istotnego nie zapisano.";
+    rep_log_not_read =>
+        "Windows log: not read (only the 30 most recent outages are).",
+        "Dziennik Windows: nie odczytano (tylko dla 30 najnowszych awarii).";
+    rep_path_then => "Path when it began:", "Ścieżka w chwili rozpoczęcia:";
+    rep_path_unrecorded =>
+        "Path when it began: not recorded (older version of the app, or not walked yet).",
+        "Ścieżka w chwili rozpoczęcia: niezapisana (starsza wersja aplikacji albo trasa jeszcze nie zbadana).";
+    rep_ongoing => "still going", "trwa";
+    hist_report_range => "Report covers", "Raport obejmuje";
+    hist_report_saving => "Saving the report…", "Zapisuję raport…";
     rep_sec_path => "PATH, HOP BY HOP", "ŚCIEŻKA, SKOK PO SKOKU";
     rep_sec_bloat => "LATENCY UNDER LOAD (bufferbloat)", "OPÓŹNIENIE POD OBCIĄŻENIEM (bufferbloat)";
     rep_sec_diagnosis => "DIAGNOSIS", "DIAGNOZA";
@@ -1661,6 +1674,91 @@ pub fn f_hist_none_partial(watched: &str) -> String {
     match current() {
         Lang::En => format!("No outages in the {watched} watched of the last 24 hours"),
         Lang::Pl => format!("Brak awarii w {watched} obserwacji z ostatnich 24 godzin"),
+    }
+}
+
+// --- the outage section of the report --------------------------------------
+
+pub fn rep_range(days: Option<u32>) -> String {
+    match (current(), days) {
+        (Lang::En, Some(1)) => "last 24 hours".into(),
+        (Lang::Pl, Some(1)) => "ostatnie 24 godziny".into(),
+        (Lang::En, Some(d)) => format!("last {d} days"),
+        (Lang::Pl, Some(d)) => format!("ostatnie {d} dni"),
+        (Lang::En, None) => "everything on record".into(),
+        (Lang::Pl, None) => "wszystko, co zapisane".into(),
+    }
+}
+
+/// The heading of the outage section, with the span it covers.
+pub fn rep_outages_heading(range: &str, from: &str, to: &str) -> String {
+    match current() {
+        Lang::En => format!("OUTAGES, {range} ({from} to {to})"),
+        Lang::Pl => format!("AWARIE, {range} (od {from} do {to})"),
+    }
+}
+
+/// Samples are kept for fewer days than the report reaches back.
+pub fn rep_samples_kept(days: i64) -> String {
+    match current() {
+        Lang::En => format!(
+            "  Measurements are kept for {days} days, so watching before that cannot be shown; \
+             outages are kept longer."
+        ),
+        Lang::Pl => format!(
+            "  Pomiary są przechowywane {days} dni, więc obserwacji sprzed tego nie da się \
+             pokazać; awarie są przechowywane dłużej."
+        ),
+    }
+}
+
+/// Count and downtime for one kind of outage.
+pub fn rep_total(kind: &str, count: usize, down: &str) -> String {
+    match current() {
+        Lang::En => format!("  {kind}: {count} time(s), {down} down in total"),
+        Lang::Pl => format!("  {kind}: {count} raz(y), łącznie {down} przestoju"),
+    }
+}
+
+pub fn rep_unwatched(secs: f64) -> String {
+    match current() {
+        Lang::En => format!("{secs:.0} s of it were not watched (the monitor was paused)"),
+        Lang::Pl => format!("{secs:.0} s z tego nie było obserwowane (monitor był wstrzymany)"),
+    }
+}
+
+pub fn rep_cause(title: &str, confidence: &str, evidence: &str) -> String {
+    match current() {
+        Lang::En => format!("Cause: {title} ({confidence}): {evidence}"),
+        Lang::Pl => format!("Przyczyna: {title} ({confidence}): {evidence}"),
+    }
+}
+
+pub fn rep_also(title: &str, confidence: &str, evidence: &str) -> String {
+    match current() {
+        Lang::En => format!("Also:  {title} ({confidence}): {evidence}"),
+        Lang::Pl => format!("Także: {title} ({confidence}): {evidence}"),
+    }
+}
+
+/// The minute of sweeps before an outage, reduced to a line.
+pub fn rep_lead_minute(router: &str, internet: &str, answered: usize, total: usize) -> String {
+    match current() {
+        Lang::En => format!(
+            "The minute before: router {router} ms, internet {internet} ms, \
+             {answered} of {total} sweeps reached the internet"
+        ),
+        Lang::Pl => format!(
+            "Minuta przed: router {router} ms, internet {internet} ms, \
+             {answered} z {total} pomiarów dotarło do internetu"
+        ),
+    }
+}
+
+pub fn rep_lead_signal(from: i32, to: i32) -> String {
+    match current() {
+        Lang::En => format!(", signal {from} to {to} dBm"),
+        Lang::Pl => format!(", sygnał od {from} do {to} dBm"),
     }
 }
 

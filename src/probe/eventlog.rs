@@ -85,6 +85,27 @@ impl SysEvent {
     }
 }
 
+/// How much of the log around an outage is worth reading. Two minutes before
+/// covers a suspend or a driver fault that preceded the first missed ping, and
+/// a minute after catches the line that explains the recovery.
+const LOG_BEFORE_S: f64 = 120.0;
+const LOG_AFTER_S: f64 = 60.0;
+
+/// The widest slice of log worth asking `wevtutil` for, whatever the row
+/// says. An outage still marked as running — one the reconciliation at
+/// startup has not reached yet, or one genuinely in progress — would
+/// otherwise widen this query by a day for every day it stays open, and the
+/// read is a process launch that blocks on the result.
+const LOG_MAX_SPAN_S: f64 = 2.0 * 3600.0;
+
+/// The slice of log, `(from, to)`, that is about one outage. The History tab
+/// and the report read the same slice, so they cannot disagree about it.
+pub fn span_around(event: &crate::store::Event) -> (f64, f64) {
+    let ended = event.ts_end.unwrap_or_else(crate::store::now);
+    let to = ended.min(event.ts_start + LOG_MAX_SPAN_S) + LOG_AFTER_S;
+    (event.ts_start - LOG_BEFORE_S, to)
+}
+
 /// Everything both channels recorded between two unix timestamps, oldest
 /// first.
 ///

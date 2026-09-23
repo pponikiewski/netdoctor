@@ -1,22 +1,94 @@
 //! Plain-text report: everything the app knows, in a form you can paste into
 //! a support ticket.
+//!
+//! Two halves. What the connection looks like now (the adapter, the last
+//! hour's measurements, the path, the scan) is read on the UI thread, which
+//! owns it. The outages over the chosen range, each with its cause, the
+//! evidence for it, the Windows log around it and the path as it was when it
+//! began, are put together on a worker thread: the log is a `wevtutil` launch
+//! per outage, and a month of them is too long to hold a frame for.
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use anyhow::Result;
 
-use super::App;
+use super::{App, Job};
 use crate::bandwidth::Grade;
+use crate::cause::{self, Evidence};
 use crate::diagnose::format_datetime;
 use crate::i18n;
+use crate::monitor::LeadSample;
+use crate::probe::eventlog::{self, SysEvent};
 use crate::probe::netstate::{Medium, NetState};
-use crate::store::Stats;
+use crate::probe::path::PathReading;
+use crate::store::{self, Event, Stats, Store};
 
-pub fn build(app: &App) -> String {
+/// How far back a report reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Range {
+    Day,
+    Week,
+    Month,
+    All,
+}
+
+impl Range {
+    pub const ALL: [Range; 4] = [Range::Day, Range::Week, Range::Month, Range::All];
+
+    fn days(self) -> Option<u32> {
+        match self {
+            Range::Day => Some(1),
+            Range::Week => Some(7),
+            Range::Month => Some(30),
+            Range::All => None,
+        }
+    }
+
+    pub fn label(self) -> String {
+        i18n::rep_range(self.days())
+    }
+}
+
+/// Outages whose Windows log is read, newest first. Each read launches
+/// `wevtutil` twice; the rest say theirs was not read rather than pretend the
+/// log was quiet.
+const LOG_READ_LIMIT: usize = 30;
+
+/// Log lines printed per outage. The ones that explain it come first in the
+/// cause line anyway; these are the evidence behind it.
+const LOG_LINES: usize = 8;
+
+/// Starts writing the report on a worker thread. The result arrives as
+/// [`Job::ReportSaved`].
+pub fn save_in_background(app: &mut App, range: Range) {
+    if app.report_busy {
+        return;
+    }
+    app.report_busy = true;
+    let head = head(app);
+    let tail = tail(app);
+    let store = Arc::clone(&app.store);
+    let keep_days = app.settings.keep_days;
+    let tx = app.tx.clone();
+    std::thread::spawn(move || {
+        let to = store::now();
+        let from = range.days().map_or(0.0, |d| to - f64::from(d) * 86_400.0);
+        let outages = outages_section(&store, from, to, &range.label(), keep_days, |e| {
+            let (a, b) = eventlog::span_around(e);
+            eventlog::window(a, b)
+        });
+        let result = write(&format!("{head}{outages}{tail}")).map_err(|e| e.to_string());
+        let _ = tx.send(Job::ReportSaved(result));
+    });
+}
+
+/// The title, the connection, the last hour's measurements and the path now.
+fn head(app: &App) -> String {
     let mut out = String::new();
     let n = &app.net;
 
-    let _ = writeln!(out, "{}, {}", i18n::rep_title(), format_datetime(crate::store::now()));
+    let _ = writeln!(out, "{}, {}", i18n::rep_title(), format_datetime(store::now()));
     let _ = writeln!(out, "{}", "=".repeat(72));
     let _ = writeln!(out);
 
@@ -66,60 +138,14 @@ pub fn build(app: &App) -> String {
     if !path.hops.is_empty() {
         let _ = writeln!(out);
         let _ = writeln!(out, "{}", i18n::rep_sec_path());
-        for h in &path.hops {
-            // A silent hop is reported as silent. Printing "100% loss" next
-            // to a router that simply does not answer echoes would be the
-            // most alarming line in a document meant to be trusted.
-            let measured = if h.silent {
-                i18n::path_no_answer().to_string()
-            } else {
-                format!(
-                    "{:>5.0}% loss  {}",
-                    h.loss_pct,
-                    h.avg_ms.map(|v| format!("{v:.0} ms")).unwrap_or_else(|| "-".into())
-                )
-            };
-            let _ = writeln!(
-                out,
-                "  {:>2}  {:<16} {:<20} {}",
-                h.ttl,
-                h.addr,
-                i18n::path_owner(h.owner),
-                measured
-            );
-        }
-        if let Some(b) = &path.blame {
-            let owner = i18n::path_owner(b.owner);
-            let line = match b.added_ms {
-                Some(added) => i18n::path_blame_delay(b.ttl, &b.addr.to_string(), added, owner),
-                None => i18n::path_blame_loss(b.ttl, &b.addr.to_string(), b.loss_pct, owner),
-            };
-            let _ = writeln!(out, "  -> {line}");
-        }
+        path_lines(&mut out, &path, "  ");
     }
+    out
+}
 
-    let _ = writeln!(out);
-    let _ = writeln!(out, "{}", i18n::rep_sec_outages());
-    let window = 24.0 * 3600.0;
-    let now = crate::store::now();
-    let watched = app.store.observed_seconds(now - window, now, crate::store::OBSERVATION_GAP_S);
-    let _ = writeln!(out, "{}", i18n::rep_watched(&i18n::span(watched), &i18n::span(window)));
-    let events = app.store.events_since(window);
-    if events.is_empty() {
-        let _ = writeln!(out, "  {}", i18n::rep_none());
-    }
-    for e in &events {
-        let _ = writeln!(
-            out,
-            "  {}  {:<9} {:<9} {}",
-            format_datetime(e.ts_start),
-            e.duration_s()
-                .map(|d| format!("{d:.0}s"))
-                .unwrap_or_else(|| i18n::hist_ongoing().into()),
-            i18n::event_kind(&e.kind),
-            e.detail
-        );
-    }
+/// The load test, the scan and the log of changes.
+fn tail(app: &App) -> String {
+    let mut out = String::new();
 
     if app.bloat.grade_or_unknown() != Grade::Unknown {
         let b = &app.bloat;
@@ -204,8 +230,203 @@ pub fn build(app: &App) -> String {
             row.result
         );
     }
-
     out
+}
+
+/// Every outage in `[from, to]`, oldest first, with what was watched around
+/// them, and for each one: its cause and the evidence for it, the Windows
+/// log around it, the path when it began, and the minute before it.
+///
+/// `read_log` fetches the Windows log for one outage; a test passes a stub.
+/// `keep_days` is how long measurements are kept, which bounds what can be
+/// said about watching.
+fn outages_section(
+    store: &Store,
+    from: f64,
+    to: f64,
+    range: &str,
+    keep_days: i64,
+    mut read_log: impl FnMut(&Event) -> Vec<SysEvent>,
+) -> String {
+    let mut out = String::new();
+    let mut events: Vec<Event> = store
+        .events_since(to - from)
+        .into_iter()
+        .filter(|e| e.ts_start >= from && e.ts_start <= to)
+        .collect();
+    events.reverse();
+
+    let shown_from = if from > 0.0 { from } else { events.first().map_or(to, |e| e.ts_start) };
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "{}",
+        i18n::rep_outages_heading(range, &format_datetime(shown_from), &format_datetime(to))
+    );
+    let watched = store.observed_seconds(shown_from, to, store::OBSERVATION_GAP_S);
+    let _ =
+        writeln!(out, "{}", i18n::rep_watched(&i18n::span(watched), &i18n::span(to - shown_from)));
+    if to - shown_from > keep_days.max(1) as f64 * 86_400.0 {
+        let _ = writeln!(out, "{}", i18n::rep_samples_kept(keep_days));
+    }
+
+    if events.is_empty() {
+        let _ = writeln!(out, "  {}", i18n::rep_none());
+        return out;
+    }
+
+    let mut totals: std::collections::BTreeMap<String, (usize, f64)> = Default::default();
+    for e in &events {
+        let t = totals.entry(i18n::event_kind(&e.kind)).or_default();
+        t.0 += 1;
+        t.1 += e.duration_s().unwrap_or(0.0);
+    }
+    for (kind, (count, down)) in &totals {
+        let _ = writeln!(out, "{}", i18n::rep_total(kind, *count, &i18n::span(*down)));
+    }
+
+    let n = events.len();
+    for (i, e) in events.iter().enumerate() {
+        let _ = writeln!(out);
+        let length = e
+            .duration_s()
+            .map(|d| format!("{d:.0} s"))
+            .unwrap_or_else(|| i18n::rep_ongoing().into());
+        let _ = writeln!(
+            out,
+            "  #{}  {}  {}  {}",
+            i + 1,
+            format_datetime(e.ts_start),
+            length,
+            i18n::event_kind(&e.kind)
+        );
+        const IN: &str = "      ";
+        if !e.detail.is_empty() {
+            let _ = writeln!(out, "{IN}{}", e.detail);
+        }
+
+        let ctx = store.event_context(e.id);
+        let unwatched = ctx
+            .as_ref()
+            .and_then(|c| c.context_end_json())
+            .and_then(|v| v["unwatched_s"].as_f64())
+            .filter(|s| *s > 0.0);
+        if let Some(secs) = unwatched {
+            let _ = writeln!(out, "{IN}{}", i18n::rep_unwatched(secs));
+        }
+
+        let evidence = ctx.as_ref().and_then(Evidence::from_context);
+        let log = (n - i <= LOG_READ_LIMIT).then(|| read_log(e));
+        let tweaks = store.tweaks_between(e.ts_start - 3600.0, e.ts_start);
+        let causes =
+            cause::analyse(e, evidence.as_ref(), &events, &tweaks, log.as_deref().unwrap_or(&[]));
+        for (k, c) in causes.iter().take(3).enumerate() {
+            let title = i18n::cause_title(c.code);
+            let line = if k == 0 {
+                i18n::rep_cause(&title, c.confidence.label(), &c.evidence)
+            } else {
+                i18n::rep_also(&title, c.confidence.label(), &c.evidence)
+            };
+            let _ = writeln!(out, "{IN}{line}");
+        }
+
+        match &log {
+            None => {
+                let _ = writeln!(out, "{IN}{}", i18n::rep_log_not_read());
+            }
+            Some(lines) if lines.is_empty() => {
+                let _ = writeln!(out, "{IN}{}", i18n::rep_log_quiet());
+            }
+            Some(lines) => {
+                let _ = writeln!(out, "{IN}{}", i18n::rep_log_heading());
+                for l in lines.iter().take(LOG_LINES) {
+                    let _ = writeln!(
+                        out,
+                        "{IN}  {}  {} {}  {}",
+                        i18n::clock_offset(l.offset_from(e.ts_start)),
+                        l.provider,
+                        l.id,
+                        l.detail
+                    );
+                }
+            }
+        }
+
+        match evidence.as_ref().and_then(|ev| ev.path.as_ref()) {
+            Some(path) => {
+                let _ = writeln!(out, "{IN}{}", i18n::rep_path_then());
+                path_lines(&mut out, path, "        ");
+            }
+            None => {
+                let _ = writeln!(out, "{IN}{}", i18n::rep_path_unrecorded());
+            }
+        }
+
+        if let Some(line) = evidence.as_ref().and_then(|ev| lead_minute(&ev.lead, e.ts_start)) {
+            let _ = writeln!(out, "{IN}{line}");
+        }
+    }
+    out
+}
+
+/// The minute of sweeps before `t0`, as one line: the average round trip to
+/// the router and to the internet, how many sweeps reached the internet, and
+/// where the signal went. `None` when the row carries no lead-up.
+fn lead_minute(lead: &[LeadSample], t0: f64) -> Option<String> {
+    let minute: Vec<&LeadSample> =
+        lead.iter().filter(|s| s.ts >= t0 - 60.0 && s.ts <= t0).collect();
+    if minute.is_empty() {
+        return None;
+    }
+    let mean = |v: Vec<f64>| (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64);
+    let router = mean(minute.iter().filter_map(|s| s.gateway_ms).collect());
+    let internet = mean(minute.iter().filter_map(|s| s.internet_ms).collect());
+    let reached = minute.iter().filter(|s| s.internet_ok).count();
+    let mut line = i18n::rep_lead_minute(
+        &i18n::figure_or_dash(router, 0, 1),
+        &i18n::figure_or_dash(internet, 0, 1),
+        reached,
+        minute.len(),
+    );
+    let rssi: Vec<i32> = minute.iter().filter_map(|s| s.rssi_dbm).collect();
+    if let (Some(first), Some(last)) = (rssi.first(), rssi.last()) {
+        line.push_str(&i18n::rep_lead_signal(*first, *last));
+    }
+    Some(line)
+}
+
+/// The hop table, one line per hop, and the hop the trouble starts at.
+fn path_lines(out: &mut String, path: &PathReading, indent: &str) {
+    for h in &path.hops {
+        // A silent hop is reported as silent. Printing "100% loss" next to a
+        // router that simply does not answer echoes would be the most
+        // alarming line in a document meant to be trusted.
+        let measured = if h.silent {
+            i18n::path_no_answer().to_string()
+        } else {
+            format!(
+                "{:>5.0}% loss  {}",
+                h.loss_pct,
+                h.avg_ms.map(|v| format!("{v:.0} ms")).unwrap_or_else(|| "-".into())
+            )
+        };
+        let _ = writeln!(
+            out,
+            "{indent}{:>2}  {:<16} {:<20} {}",
+            h.ttl,
+            h.addr,
+            i18n::path_owner(h.owner),
+            measured
+        );
+    }
+    if let Some(b) = &path.blame {
+        let owner = i18n::path_owner(b.owner);
+        let line = match b.added_ms {
+            Some(added) => i18n::path_blame_delay(b.ttl, &b.addr.to_string(), added, owner),
+            None => i18n::path_blame_loss(b.ttl, &b.addr.to_string(), b.loss_pct, owner),
+        };
+        let _ = writeln!(out, "{indent}-> {line}");
+    }
 }
 
 /// One target's line in the measurements section.
@@ -228,17 +449,20 @@ fn signal_text(n: &NetState) -> String {
 }
 
 /// Writes the report next to the database and returns the path.
-pub fn save(app: &App) -> Result<String> {
+fn write(text: &str) -> Result<String> {
     let dir = crate::settings::data_dir();
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("netdoctor-report.txt");
-    std::fs::write(&path, build(app))?;
+    std::fs::write(&path, text)?;
     Ok(path.display().to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::probe::eventlog::Kind;
+    use crate::probe::path::{HopReading, Owner};
+    use std::net::Ipv4Addr;
 
     #[test]
     fn a_reading_that_never_came_is_printed_as_missing_not_as_zero() {
@@ -256,5 +480,86 @@ mod tests {
         // A Wi-Fi link whose signal could not be read is not at 0%.
         let n = NetState { medium: Medium::Wifi, ..Default::default() };
         assert!(!signal_text(&n).starts_with("0%"), "{}", signal_text(&n));
+    }
+
+    fn a_path() -> PathReading {
+        PathReading {
+            hops: vec![HopReading {
+                ttl: 2,
+                addr: Ipv4Addr::new(100, 64, 7, 1),
+                owner: Owner::Edge,
+                loss_pct: 40.0,
+                avg_ms: Some(18.0),
+                samples: 30,
+                silent: false,
+            }],
+            blame: None,
+        }
+    }
+
+    #[test]
+    fn each_outage_comes_with_its_cause_its_log_and_the_path_it_broke_on() {
+        let store = Store::open_in_memory().unwrap();
+        let lead: Vec<LeadSample> = (0..30)
+            .map(|i| LeadSample {
+                ts: store::now() - 30.0 + i as f64,
+                gateway_ms: Some(2.0),
+                internet_ms: Some(14.0),
+                internet_ok: i < 20,
+                rssi_dbm: Some(-50 - i),
+                ..Default::default()
+            })
+            .collect();
+        let ctx = serde_json::json!({ "medium": "Wi-Fi", "lead_up": lead, "path": a_path() });
+        let id = store.open_event("isp_down", "isp", "router answers", &ctx.to_string()).unwrap();
+        store.close_event_at(id, store::now() + 45.0, r#"{"unwatched_s": 12}"#).unwrap();
+
+        let log = |_: &Event| {
+            vec![SysEvent {
+                ts: store::now() - 5.0,
+                provider: "Microsoft-Windows-NetworkProfile".into(),
+                id: 10001,
+                kind: Kind::LinkDown,
+                reason: None,
+                detail: "Name=WiFi".into(),
+            }]
+        };
+        let now = store::now();
+        let text = outages_section(&store, now - 86_400.0, now + 60.0, "range", 14, log);
+
+        assert!(text.contains("router answers"), "{text}");
+        assert!(text.contains(&i18n::rep_unwatched(12.0)), "the unwatched seconds: {text}");
+        assert!(text.contains(&i18n::cause_title("isp_brief")), "the cause: {text}");
+        assert!(text.contains("10001") && text.contains("Name=WiFi"), "the log line: {text}");
+        assert!(text.contains("100.64.7.1"), "the path as it was then: {text}");
+        assert!(text.contains("20 of 30") || text.contains("20 z 30"), "the minute before: {text}");
+        assert!(text.contains("-50") && text.contains("-79"), "where the signal went: {text}");
+        assert!(text.contains(&i18n::rep_total(&i18n::event_kind("isp_down"), 1, "1 min")));
+    }
+
+    #[test]
+    fn a_report_keeps_to_its_range_and_says_what_it_did_not_read() {
+        let store = Store::open_in_memory().unwrap();
+        // Forty days ago, then 31 more today; one has no stored path.
+        store.open_event("lan_down", "lan", "old one", "{}").unwrap();
+        store.reshape_events_for_test(-40.0 * 86_400.0, 10.0);
+        let today: Vec<i64> = (0..31)
+            .map(|i| store.open_event("lan_down", "lan", &format!("n{i}"), "{}").unwrap())
+            .collect();
+        for id in &today {
+            store.close_event_at(*id, store::now() + 5.0, "").unwrap();
+        }
+
+        let mut reads = 0;
+        let now = store::now();
+        let text = outages_section(&store, now - 30.0 * 86_400.0, now + 60.0, "30", 14, |_| {
+            reads += 1;
+            Vec::new()
+        });
+        assert!(!text.contains("old one"), "forty days ago is outside thirty");
+        assert_eq!(reads, LOG_READ_LIMIT, "only the newest outages have their log read");
+        assert!(text.contains(i18n::rep_log_not_read()), "and the rest say so");
+        assert!(text.contains(i18n::rep_path_unrecorded()), "a row with no path says so");
+        assert!(text.contains(&i18n::rep_samples_kept(14)), "thirty days reach past fourteen");
     }
 }

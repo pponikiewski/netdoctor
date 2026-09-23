@@ -79,6 +79,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     ui.add_space(S_XS);
     ui.label(egui::RichText::new(i18n::hist_blurb()).size(T_BODY).color(FG_DIM));
+    ui.add_space(S_SM);
+    report_row(app, ui);
     ui.add_space(S_MD);
 
     let events = app.store.recent_events(300);
@@ -263,18 +265,27 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
     app.outage_detail = cached;
 }
 
-/// How much of the log around an outage is worth reading. Two minutes before
-/// covers a suspend or a driver fault that preceded the first missed ping, and
-/// a minute after catches the line that explains the recovery.
-const LOG_BEFORE_S: f64 = 120.0;
-const LOG_AFTER_S: f64 = 60.0;
-
-/// The widest slice of log worth asking `wevtutil` for, whatever the row
-/// says. An outage still marked as running — one the reconciliation at
-/// startup has not reached yet, or one genuinely in progress — would
-/// otherwise widen this query by a day for every day it stays open, and the
-/// read is a process launch that blocks on the result.
-const LOG_MAX_SPAN_S: f64 = 2.0 * 3600.0;
+/// The range picker and the button that writes the report for it: every
+/// outage in the range with its cause, its evidence and the path it broke on.
+fn report_row(app: &mut App, ui: &mut egui::Ui) {
+    use super::report::Range;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(i18n::hist_report_range()).size(T_BODY).color(FG_DIM));
+        egui::ComboBox::from_id_salt("report_range")
+            .selected_text(app.report_range.label())
+            .show_ui(ui, |ui| {
+                for r in Range::ALL {
+                    ui.selectable_value(&mut app.report_range, r, r.label());
+                }
+            });
+        let label =
+            if app.report_busy { i18n::hist_report_saving() } else { i18n::live_btn_report() };
+        if ui.add_enabled(!app.report_busy, egui::Button::new(label)).clicked() {
+            let range = app.report_range;
+            super::report::save_in_background(app, range);
+        }
+    });
+}
 
 /// Starts the event log read for a newly selected outage, at most once.
 ///
@@ -289,9 +300,7 @@ fn request_log(app: &mut App, event: &Event) {
 
     app.syslog_pending = Some(event.id);
     let id = event.id;
-    let from = event.ts_start - LOG_BEFORE_S;
-    let ended = event.ts_end.unwrap_or_else(crate::store::now);
-    let to = ended.min(event.ts_start + LOG_MAX_SPAN_S) + LOG_AFTER_S;
+    let (from, to) = crate::probe::eventlog::span_around(event);
     let tx = app.tx.clone();
     std::thread::spawn(move || {
         let _ = tx.send(super::Job::SysLog(id, crate::probe::eventlog::window(from, to)));

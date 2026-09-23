@@ -211,6 +211,12 @@ one English label that would silently fail everywhere else.
   the thresholds in Settings) for three readings in a row is recorded here too,
   as "unstable"; it does not trigger a notification. An outage that starts slow
   and then goes down is recorded as the worst state it reached.
+  **Save report** here writes a text file for a support ticket over the range
+  you pick (24 hours, 7 or 30 days, or everything kept): how much of it was
+  actually watched, totals per kind of outage, and for each outage its cause
+  and the evidence behind it, the Windows log around it, the path hop by hop
+  as it was when it began, and the minute before it. Outages recorded before
+  the app started storing the path with them have none, and say so.
 - **Settings** — probe cadence (300 ms to 30 s; slower and a sleeping machine
   could not be told from an outage), thresholds, extra ping targets (your game
   server, for instance), autostart, updates.
@@ -332,7 +338,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-271 tests, covering the failure-blame logic, the statistics, the registry layer,
+274 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

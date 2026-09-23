@@ -1280,17 +1280,11 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // An export. It should be findable and not much more — it is not
             // what anyone opened the live tab to do.
-            if button(ui, i18n::live_btn_report(), Emphasis::Ghost).clicked() {
-                match super::report::save(app) {
-                    Ok(path) => {
-                        let now = ui.input(|i| i.time);
-                        app.toast(i18n::live_report_saved(&path), GREEN, now);
-                    }
-                    Err(e) => {
-                        let now = ui.input(|i| i.time);
-                        app.toast(i18n::set_save_failed(&e.to_string()), RED, now);
-                    }
-                }
+            // The last day, as it always was; the History tab picks a range.
+            let label =
+                if app.report_busy { i18n::hist_report_saving() } else { i18n::live_btn_report() };
+            if button(ui, label, Emphasis::Ghost).clicked() {
+                super::report::save_in_background(app, super::report::Range::Day);
             }
         });
     });

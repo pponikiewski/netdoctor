@@ -81,6 +81,9 @@ pub struct Evidence {
     pub dns_error: String,
     pub up: bool,
     pub rssi_at_recovery: Option<i32>,
+    /// The per-hop picture when the outage opened. `None` on rows written
+    /// before it was stored.
+    pub path: Option<crate::probe::path::PathReading>,
 }
 
 impl Evidence {
@@ -106,6 +109,7 @@ impl Evidence {
                 .context_end_json()
                 .and_then(|e| e["rssi_dbm"].as_i64())
                 .map(|n| n as i32),
+            path: v.get("path").and_then(|p| serde_json::from_value(p.clone()).ok()),
         })
     }
 

@@ -29,7 +29,7 @@ use crate::probe::icmp::{self, Pinger};
 
 /// Who a hop most likely belongs to. The distinction is the difference
 /// between a complaint worth making and one that will be dismissed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Owner {
     /// The router this machine is configured to use.
     Gateway,
@@ -179,7 +179,7 @@ impl HopStats {
 }
 
 /// One row of the path table: a hop and how it is currently behaving.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HopReading {
     pub ttl: u32,
     pub addr: Ipv4Addr,
@@ -194,14 +194,15 @@ pub struct HopReading {
 }
 
 /// The whole path, probed and summarised.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct PathReading {
     pub hops: Vec<HopReading>,
     pub blame: Option<Blame>,
 }
 
 /// The hop the trouble starts at.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Blame {
     pub ttl: u32,
     pub addr: Ipv4Addr,
