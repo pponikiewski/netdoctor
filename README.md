@@ -144,6 +144,12 @@ command-line run finishes and its output lands after the prompt. Use
 `start /wait netdoctor.exe --scan` to wait for it and get its exit code in
 `%ERRORLEVEL%`, or redirect it (`netdoctor.exe --scan > scan.txt`).
 
+| Exit code | Meaning |
+| --- | --- |
+| 0 | the line is sound, or only a setting on this PC is worth changing |
+| 1 | a fault was found now, or outages were recorded in the last 24 hours |
+| 2 | nothing could be decided: pings could not be sent, an unknown flag, or the database would not open |
+
 Diagnostics need no elevation. Applying changes does; the app offers to relaunch
 itself when you ask it to apply one.
 
@@ -338,7 +344,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-275 tests, covering the failure-blame logic, the statistics, the registry layer,
+276 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

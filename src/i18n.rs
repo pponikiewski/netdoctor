@@ -140,6 +140,11 @@ OPTIONS:
     --version      print the version and exit
     --help         print this help
 
+EXIT CODES (--scan):
+    0  the line is sound, or only a setting on this PC is worth changing
+    1  a fault was found now, or outages were recorded in the last 24 hours
+    2  nothing could be decided (pings could not be sent, bad flag, no database)
+
 Diagnostics work without elevation. Applying changes needs administrator
 rights; the app offers to relaunch itself when you ask it to apply one.",
 "UŻYCIE:
@@ -151,6 +156,11 @@ OPCJE:
     --minimised    uruchom z oknem zminimalizowanym (używane przy autostarcie)
     --version      wypisz wersję i zakończ
     --help         wypisz tę pomoc
+
+KODY WYJŚCIA (--scan):
+    0  łącze sprawne albo warto zmienić tylko ustawienie na tym komputerze
+    1  znaleziono usterkę teraz albo w ostatnich 24 godzinach zapisano awarie
+    2  nic nie ustalono (nie dało się wysłać pingów, zła flaga, brak bazy)
 
 Diagnostyka działa bez podniesionych uprawnień. Zastosowanie zmian wymaga praw
 administratora; aplikacja sama zaproponuje ponowne uruchomienie, gdy o to

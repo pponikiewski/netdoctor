@@ -49,6 +49,14 @@ const FLAGS: [&str; 8] = [
 /// path thread can be most of a traceroute into its walk.
 const AFTER_UPDATE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Exit codes of a command-line run. `--scan` ends with one of the first
+/// three, so a script can tell a sound line from a fault from a scan that
+/// could not decide; a run that never got to scan (a mistyped flag, a
+/// database that would not open) ends with `EXIT_UNKNOWN` too.
+const EXIT_SOUND: i32 = 0;
+const EXIT_FAULT: i32 = 1;
+const EXIT_UNKNOWN: i32 = 2;
+
 fn main() -> eframe::Result<()> {
     install_panic_hook();
     // Clears what the previous update left behind. It can only happen here:
@@ -79,7 +87,7 @@ fn main() -> eframe::Result<()> {
     if let Some(bad) = args.iter().find(|a| !FLAGS.contains(&a.as_str())) {
         eprintln!("{}", i18n::cli_unknown_flag(bad));
         print_help();
-        std::process::exit(2);
+        std::process::exit(EXIT_UNKNOWN);
     }
 
     let store = match store::Store::open_default() {
@@ -88,7 +96,7 @@ fn main() -> eframe::Result<()> {
             // A scripted `--scan` has to be able to tell this apart from a
             // clean run, so it cannot exit 0.
             eprintln!("{} {e}", i18n::err_open_db());
-            std::process::exit(1);
+            std::process::exit(EXIT_UNKNOWN);
         }
     };
 
@@ -119,7 +127,7 @@ fn main() -> eframe::Result<()> {
                 println!("           -> {}", f.advice);
             }
         }
-        return Ok(());
+        std::process::exit(scan_exit_code(&scan));
     }
 
     // Only the windowed run takes the guard. `--scan` writes nothing to the
@@ -195,6 +203,26 @@ fn attach_parent_console() {
 #[cfg(not(windows))]
 fn attach_parent_console() {}
 
+/// The exit code of `--scan`, for a script to act on.
+///
+/// Recorded outages count as a fault found, whatever segment the verdict
+/// lands on: outages of the adapter are filed under this machine's settings
+/// (`hist_adapter` is `Segment::Config`), and a scan that reported them used
+/// to exit as if the line were sound.
+fn scan_exit_code(scan: &diagnose::Scan) -> i32 {
+    use diagnose::Segment;
+    let recorded = scan.findings.iter().any(|f| f.key.starts_with("hist_"));
+    match scan.verdict.segment {
+        _ if recorded && scan.verdict.segment != Segment::Unmeasured => EXIT_FAULT,
+        // A setting worth changing is not a fault on the line.
+        Segment::Healthy | Segment::Config => EXIT_SOUND,
+        Segment::Unmeasured => EXIT_UNKNOWN,
+        Segment::Lan | Segment::Uplink | Segment::Isp | Segment::Internet | Segment::Dns => {
+            EXIT_FAULT
+        }
+    }
+}
+
 fn print_help() {
     println!("netdoctor {VERSION} · {}\n\n{}", i18n::app_tagline(), i18n::cli_help());
 }
@@ -259,6 +287,37 @@ fn show_crash_notice(path: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_scan_exits_with_what_it_found() {
+        // The README promised `%ERRORLEVEL%` to a script, and the scan always
+        // exited 0: a dead line and a healthy one looked the same.
+        use crate::diagnose::{Finding, Scan, Segment, Severity, Verdict};
+        let scan = |segment, findings: Vec<Finding>| Scan {
+            findings,
+            verdict: Verdict { segment, ..Verdict::default() },
+        };
+        let code = |segment| super::scan_exit_code(&scan(segment, Vec::new()));
+        assert_eq!(code(Segment::Healthy), super::EXIT_SOUND);
+        assert_eq!(code(Segment::Config), super::EXIT_SOUND, "settings, not a fault on the line");
+        for fault in [Segment::Lan, Segment::Uplink, Segment::Isp, Segment::Internet, Segment::Dns]
+        {
+            assert_eq!(code(fault), super::EXIT_FAULT, "{fault:?}");
+        }
+        assert_eq!(code(Segment::Unmeasured), super::EXIT_UNKNOWN);
+
+        // Found live on this machine: adapter outages in the last day, filed
+        // under Config by the verdict, and the scan exited 0.
+        let hist = Finding::new_for_test("hist_adapter", Severity::Warn);
+        assert_eq!(super::scan_exit_code(&scan(Segment::Config, vec![hist])), super::EXIT_FAULT);
+        let degraded = Finding::new_for_test("hist_other", Severity::Warn);
+        assert_eq!(
+            super::scan_exit_code(&scan(Segment::Healthy, vec![degraded])),
+            super::EXIT_FAULT
+        );
+        assert_ne!(super::EXIT_SOUND, super::EXIT_FAULT);
+        assert_ne!(super::EXIT_FAULT, super::EXIT_UNKNOWN);
+    }
+
     /// The README quotes a test count, and a quoted number rots the moment
     /// someone adds a test. It sat at "43" while the suite grew to 213, which
     /// is worse than no number at all: a reader who checks it once and finds

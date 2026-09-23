@@ -96,6 +96,13 @@ impl Finding {
         }
     }
 
+    /// A finding with only a key and a severity, for tests outside this
+    /// module that need one.
+    #[cfg(test)]
+    pub fn new_for_test(key: &str, severity: Severity) -> Self {
+        Finding::new(key, key, severity, "")
+    }
+
     fn advise(mut self, advice: impl Into<String>) -> Self {
         self.advice = advice.into();
         self
