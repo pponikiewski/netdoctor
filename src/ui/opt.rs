@@ -72,6 +72,23 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // on that reading are held back rather than acting on a stale one.
     let loading = app.tweaks_loading();
 
+    // The state notes get their own line. On the toolbar's line the Polish
+    // read-only note ran into the right-aligned tally at the minimum window
+    // width, and the two were painted over each other.
+    if loading || !app.elevated {
+        ui.horizontal_wrapped(|ui| {
+            if loading {
+                ui.label(
+                    egui::RichText::new(i18n::opt_reading()).size(T_META).color(super::ACCENT),
+                );
+            }
+            if !app.elevated {
+                ui.label(egui::RichText::new(i18n::opt_read_only()).size(T_META).color(YELLOW));
+            }
+        });
+        ui.add_space(S_XS);
+    }
+
     ui.horizontal(|ui| {
         if ui.add_enabled(!loading, egui::Button::new(i18n::btn_refresh())).clicked() {
             app.refresh_tweaks();
@@ -89,12 +106,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             .clicked()
         {
             apply_all_safe(app, ui);
-        }
-        if loading {
-            ui.label(egui::RichText::new(i18n::opt_reading()).size(T_META).color(super::ACCENT));
-        }
-        if !app.elevated {
-            ui.label(egui::RichText::new(i18n::opt_read_only()).size(T_META).color(YELLOW));
         }
 
         // The tally sits on the same line, right-aligned: it answers "is
