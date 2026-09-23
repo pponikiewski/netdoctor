@@ -30,18 +30,18 @@ use crate::cause::Confidence;
 use crate::i18n;
 use crate::monitor;
 use crate::probe::icmp;
-use crate::probe::netstate::{Medium, NetState};
+use crate::probe::netstate::{self, LinkCounters, Medium, NetState};
 use crate::settings::Settings;
 use crate::store::{self, Stats, Store};
 
 /// Where the scan aims everything that has to leave the building.
-const ANCHOR: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
+pub(crate) const ANCHOR: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 /// The monitor's key for `ANCHOR`, which is how the baseline is looked up.
 const ANCHOR_KEY: &str = "cloudflare";
 /// A second anchor on another operator's network. One address can be
 /// filtered by a network in between, and a verdict that the internet is gone
 /// should not rest on one address answering.
-const ANCHOR_ALT: Ipv4Addr = Ipv4Addr::new(8, 8, 8, 8);
+pub(crate) const ANCHOR_ALT: Ipv4Addr = Ipv4Addr::new(8, 8, 8, 8);
 /// The monitor's key for `ANCHOR_ALT`.
 const ANCHOR_ALT_KEY: &str = "google";
 /// A seven-day window is long enough to average out one bad evening and short
@@ -296,7 +296,13 @@ pub fn scan(
     // whose whole complaint is that it changes, compares numbers that were
     // never true at the same moment.
     say(i18n::step_path(), 0.14);
+    // The wire probes are a few hundred frames of known traffic, so the
+    // adapter's error counters read around them say whether the cable is
+    // corrupting frames right now, not only at some point since boot.
+    let counters_before = netstate::link_counters(net.if_index);
     let wire = measure_wire(net, settings);
+    let counters_after = netstate::link_counters(net.if_index);
+    out.extend(check_link(net, counters_before, counters_after));
 
     out.extend(report_dns(net, &wire, &mut m));
     out.extend(report_wire(net, store, settings, &wire, &mut m));
@@ -619,6 +625,78 @@ pub fn summarise(findings: &[Finding]) -> String {
 pub fn is_apipa(ip: Ipv4Addr) -> bool {
     let o = ip.octets();
     o[0] == 169 && o[1] == 254
+}
+
+/// Frames the cable corrupted, and a link that negotiated a fraction of
+/// what gigabit hardware would.
+///
+/// Ethernet only. Wi-Fi drivers count errors by their own rules (some count
+/// every retransmission, some nothing at all), so a figure from them would
+/// look like evidence and mean nothing.
+// ponytail: Wi-Fi retry rates would need the driver's own statistics (WLAN
+// `wlan_intf_opcode_statistics`), not the generic interface row.
+fn check_link(
+    net: &NetState,
+    before: Option<LinkCounters>,
+    after: Option<LinkCounters>,
+) -> Vec<Finding> {
+    if net.medium != Medium::Ethernet {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+
+    let during = before.zip(after).and_then(|(b, a)| a.since(&b));
+    let finding = match (during, after) {
+        (Some(d), _) if corrupting(&d) => Some((i18n::f_link_errors_now(), Severity::Warn, d)),
+        // Nothing during the scan: say what the totals show, but as history.
+        (_, Some(total)) if corrupting(&total) => {
+            Some((i18n::f_link_errors_before(), Severity::Info, total))
+        }
+        _ => None,
+    };
+    if let Some((title, severity, c)) = finding {
+        out.push(
+            Finding::new(
+                "link_errors",
+                title,
+                severity,
+                i18n::f_link_errors_detail(c.errors, c.packets, error_pct(&c)),
+            )
+            .advise(i18n::f_link_errors_advice()),
+        );
+    }
+
+    // Zero is "not reported", not a speed.
+    if (1..=100).contains(&net.link_speed_mbps) {
+        out.push(
+            Finding::new(
+                "link_slow",
+                i18n::f_link_slow(),
+                Severity::Info,
+                i18n::f_link_slow_detail(&net.adapter_name, net.link_speed_mbps),
+            )
+            .advise(i18n::f_link_slow_advice()),
+        );
+    }
+    out
+}
+
+/// Fewest frames a share of errors is read from: two bad frames out of ten
+/// is noise, not a rate.
+const LINK_MIN_PACKETS: u64 = 200;
+/// A healthy cable corrupts essentially nothing; one frame in a thousand is
+/// already a cable worth replacing.
+const LINK_ERROR_PCT: f64 = 0.1;
+
+fn error_pct(c: &LinkCounters) -> f64 {
+    if c.packets == 0 {
+        return 0.0;
+    }
+    c.errors as f64 * 100.0 / c.packets as f64
+}
+
+fn corrupting(c: &LinkCounters) -> bool {
+    c.packets >= LINK_MIN_PACKETS && c.errors > 0 && error_pct(c) >= LINK_ERROR_PCT
 }
 
 fn check_medium(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
@@ -1200,7 +1278,7 @@ fn report_internet(
 ///
 /// The probe goes to a literal address so that a broken resolver cannot be
 /// mistaken for a broken transport — DNS is checked separately, on purpose.
-fn tcp_probe(anchor: Ipv4Addr, cfg: &Settings) -> Result<f64, String> {
+pub(crate) fn tcp_probe(anchor: Ipv4Addr, cfg: &Settings) -> Result<f64, String> {
     let addr = SocketAddr::from((anchor, 443));
     let timeout = Duration::from_millis((cfg.ping_timeout_ms as u64 * 3).max(2000));
     let started = Instant::now();
@@ -1491,6 +1569,49 @@ pub fn civil_from_days(z: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wired(mbps: u64) -> NetState {
+        NetState { medium: Medium::Ethernet, link_speed_mbps: mbps, ..Default::default() }
+    }
+
+    fn counters(packets: u64, errors: u64) -> Option<LinkCounters> {
+        Some(LinkCounters { packets, errors })
+    }
+
+    #[test]
+    fn a_cable_corrupting_frames_during_the_scan_is_a_warning() {
+        let f = check_link(&wired(1000), counters(10_000, 0), counters(10_500, 3));
+        assert_eq!(f.len(), 1);
+        assert_eq!((f[0].key.as_str(), f[0].severity), ("link_errors", Severity::Warn));
+    }
+
+    #[test]
+    fn old_errors_are_history_and_a_clean_cable_says_nothing() {
+        // Errors in the totals, none while the scan watched: history, not now.
+        let f = check_link(&wired(1000), counters(10_000, 50), counters(10_500, 50));
+        assert_eq!((f[0].key.as_str(), f[0].severity), ("link_errors", Severity::Info));
+        // A handful of errors over millions of frames is a healthy cable.
+        assert!(check_link(&wired(1000), counters(5_000_000, 2), counters(5_000_500, 2)).is_empty());
+        // Too few frames to read a rate from.
+        assert!(check_link(&wired(1000), counters(0, 0), counters(20, 1)).is_empty());
+    }
+
+    #[test]
+    fn a_reset_adapter_or_unreadable_counters_claim_nothing_about_now() {
+        // Counters went backwards: the adapter restarted mid-scan.
+        let f = check_link(&wired(1000), counters(10_000, 90), counters(300, 0));
+        assert!(f.is_empty());
+        assert!(check_link(&wired(1000), None, None).is_empty());
+    }
+
+    #[test]
+    fn wifi_counters_are_not_read_and_a_slow_cable_is_named() {
+        let wifi = NetState { medium: Medium::Wifi, link_speed_mbps: 54, ..Default::default() };
+        assert!(check_link(&wifi, counters(0, 0), counters(10_000, 500)).is_empty());
+        let f = check_link(&wired(100), None, None);
+        assert_eq!(f[0].key, "link_slow");
+        assert!(check_link(&wired(0), None, None).is_empty(), "0 is unknown, not slow");
+    }
 
     #[test]
     fn findings_come_back_worst_first() {

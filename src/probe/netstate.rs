@@ -12,8 +12,8 @@ use std::ptr;
 use windows::core::GUID;
 use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS, HANDLE};
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetAdaptersAddresses, GetBestInterface, GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST,
-    GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
+    GetAdaptersAddresses, GetBestInterface, GetIfEntry2, GAA_FLAG_INCLUDE_GATEWAYS,
+    GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH, MIB_IF_ROW2,
 };
 use windows::Win32::NetworkManagement::Ndis::IF_OPER_STATUS;
 use windows::Win32::NetworkManagement::WiFi::{
@@ -57,6 +57,8 @@ pub struct NetState {
     pub adapter_name: String,
     pub adapter_desc: String,
     pub adapter_guid: String,
+    /// The IPv4 interface index, for reading the adapter's counters.
+    pub if_index: u32,
     pub medium: Medium,
     pub link_speed_mbps: u64,
     pub local_ip: Option<Ipv4Addr>,
@@ -212,6 +214,7 @@ fn read_adapters() -> NetState {
                     IF_TYPE_ETHERNET_CSMACD => Medium::Ethernet,
                     _ => Medium::Unknown,
                 },
+                if_index: a.Anonymous1.Anonymous.IfIndex,
                 link_speed_mbps: a.TransmitLinkSpeed / 1_000_000,
                 up: a.OperStatus == IF_OPER_STATUS(1),
                 ..Default::default()
@@ -501,6 +504,47 @@ pub fn dns_lookup_ms(host: &str) -> (Option<f64>, String) {
 /// How long one resolver gets to answer a direct query.
 const DNS_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Frames the adapter counted, and the ones it counted as broken. Running
+/// totals since the adapter came up.
+///
+/// Discards are left out on purpose: a card discards frames for a protocol
+/// nobody here speaks, which is housekeeping, not damage. Errors are frames
+/// that arrived or left corrupted — the CRC failures of a bad cable or port.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LinkCounters {
+    pub packets: u64,
+    pub errors: u64,
+}
+
+impl LinkCounters {
+    /// What happened between `self` and a later reading. `None` when the
+    /// counters went backwards: the adapter was reset in between, and the
+    /// difference would be meaningless.
+    pub fn since(&self, earlier: &LinkCounters) -> Option<LinkCounters> {
+        Some(LinkCounters {
+            packets: self.packets.checked_sub(earlier.packets)?,
+            errors: self.errors.checked_sub(earlier.errors)?,
+        })
+    }
+}
+
+/// Reads the counters of interface `if_index`. `None` when there is no such
+/// interface any more, or the call failed.
+pub fn link_counters(if_index: u32) -> Option<LinkCounters> {
+    if if_index == 0 {
+        return None;
+    }
+    let mut row = MIB_IF_ROW2 { InterfaceIndex: if_index, ..Default::default() };
+    let rc = unsafe { GetIfEntry2(&mut row) };
+    if rc != ERROR_SUCCESS {
+        return None;
+    }
+    Some(LinkCounters {
+        packets: row.InUcastPkts + row.InNUcastPkts + row.OutUcastPkts + row.OutNUcastPkts,
+        errors: row.InErrors + row.OutErrors,
+    })
+}
+
 /// Asks every resolver in `servers` for `host` directly, all at once, and
 /// times the fastest answer. The error names each one that failed.
 ///
@@ -741,6 +785,15 @@ mod tests {
 
     /// What the routing table answers on this machine, next to what `read()`
     /// picked. Ignored: it describes the live machine.
+    #[test]
+    #[ignore = "watches the live machine"]
+    fn show_link_counters() {
+        let st = read();
+        println!("adapter={} if_index={} {:?}", st.adapter_name, st.if_index, st.medium);
+        println!("counters {:?}", link_counters(st.if_index));
+        println!("no such interface {:?}", link_counters(u32::MAX));
+    }
+
     #[test]
     #[ignore = "watches the live machine"]
     fn show_best_route_interface() {

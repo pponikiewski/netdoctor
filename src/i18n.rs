@@ -776,6 +776,24 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     f_wired_advice =>
         "The best possible starting point for latency.",
         "Najlepszy możliwy punkt wyjścia dla opóźnień.";
+    f_link_errors_now => "The cable link is corrupting frames", "Łącze kablowe psuje ramki";
+    f_link_errors_before =>
+        "The cable link has corrupted frames since it came up",
+        "Łącze kablowe psuło ramki od chwili podłączenia";
+    f_link_errors_advice =>
+        "Corrupted frames on a cable are almost always physical: a damaged or kinked cable, a \
+         loose plug, a worn port. Try another cable first, then another port on the router.",
+        "Uszkodzone ramki na kablu to prawie zawsze sprawa fizyczna: uszkodzony lub zagięty \
+         kabel, luźna wtyczka, zużyty port. Najpierw spróbuj innego kabla, potem innego portu \
+         w routerze.";
+    f_link_slow => "The cable link runs at 100 Mbps or less", "Łącze kablowe działa z prędkością 100 Mbps lub niższą";
+    f_link_slow_advice =>
+        "If the router and this computer both have gigabit ports, a link this slow usually \
+         means a cable with a broken pair or an old category 5 cable. If either side is a \
+         100 Mbps port, this is simply its limit.",
+        "Jeśli router i ten komputer mają porty gigabitowe, tak wolne łącze zwykle oznacza \
+         kabel z uszkodzoną parą żył albo stary kabel kategorii 5. Jeśli któraś strona ma \
+         port 100 Mbps, to po prostu jej limit.";
     f_wifi => "Connected over Wi-Fi", "Połączenie przez Wi-Fi";
     f_wifi_advice =>
         "Wi-Fi always has higher jitter than a cable and is vulnerable to interference. If the \
@@ -948,9 +966,129 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     mon_nothing_responded =>
         "Neither the router nor the internet responded.",
         "Nie odpowiedział ani router, ani internet.";
+    mon_icmp_filtered =>
+        "The internet is reachable, but this network blocks pings to it, so latency and loss \
+         cannot be measured here.",
+        "Internet jest osiągalny, ale ta sieć blokuje do niego pingi, więc opóźnień i strat \
+         nie da się tu zmierzyć.";
     mon_no_gateway =>
         "No default gateway. This machine has no route to the network.",
         "Brak bramy domyślnej. Ten komputer nie ma trasy do sieci.";
+    // The plain-language summary at the top of the Live tab.
+    sum_ok => "Your internet is working normally.", "Internet działa normalnie.";
+    sum_ok_todo =>
+        "Nothing to do. NetDoctor keeps watching in the background and records every break, \
+         with the evidence of where it happened.",
+        "Nic nie musisz robić. NetDoctor pilnuje połączenia w tle i zapisze każdą przerwę, \
+         razem z dowodem, gdzie do niej doszło.";
+    sum_slow =>
+        "Your internet works, but it is unstable right now.",
+        "Internet działa, ale teraz jest niestabilny.";
+    sum_slow_todo =>
+        "Pages may load slowly and calls or games may stutter. Your router answers quickly, so \
+         the trouble is past it: at your provider or further out on the internet. If it \
+         lasts, run a check to see more.",
+        "Strony mogą ładować się wolno, a rozmowy i gry mogą się zacinać. Router odpowiada \
+         szybko, więc kłopot jest za nim: u dostawcy albo dalej w internecie. Jeśli to \
+         potrwa, uruchom sprawdzenie, żeby zobaczyć więcej.";
+    sum_slow_local_todo =>
+        "Pages may load slowly and calls or games may stutter. Even your router is answering \
+         slowly, so the trouble is in your home: often another device downloading a lot, or \
+         the router being overloaded. Restarting the router often helps.",
+        "Strony mogą ładować się wolno, a rozmowy i gry mogą się zacinać. Nawet router \
+         odpowiada wolno, więc kłopot jest w domu: często inne urządzenie dużo pobiera albo \
+         router jest przeciążony. Ponowne uruchomienie routera często pomaga.";
+    sum_slow_weak_todo =>
+        "The Wi-Fi signal here is weak. Move closer to the router or remove what stands \
+         between you (walls, a microwave, a fish tank), or connect with a cable.",
+        "Sygnał Wi-Fi jest tu słaby. Podejdź bliżej routera, usuń to, co stoi między wami \
+         (ściany, mikrofalówka, akwarium), albo podłącz się kablem.";
+    sum_dns =>
+        "You are connected, but websites cannot be found by name.",
+        "Połączenie jest, ale strony nie dają się znaleźć po nazwie.";
+    sum_dns_todo =>
+        "The service that turns names like google.com into addresses (DNS) is not answering. \
+         Restarting the router often fixes it. The check shows which server is failing.",
+        "Usługa, która zamienia nazwy takie jak google.pl na adresy (DNS), nie odpowiada. \
+         Często pomaga ponowne uruchomienie routera. Sprawdzenie pokaże, który serwer zawodzi.";
+    sum_isp =>
+        "No internet: your router works, but it has no connection to your provider.",
+        "Brak internetu: router działa, ale nie ma połączenia z dostawcą.";
+    sum_isp_todo =>
+        "Restarting this computer will not help. Look at the router's Internet or WAN light, \
+         then check your provider's outage page or call them. NetDoctor is recording this \
+         break: save a report and you have the evidence to show them.",
+        "Ponowne uruchomienie komputera nie pomoże. Spójrz na lampkę Internet lub WAN na \
+         routerze, potem sprawdź stronę awarii dostawcy albo zadzwoń do niego. NetDoctor \
+         zapisuje tę przerwę: zapisz raport i masz dowód, który możesz mu pokazać.";
+    sum_lan =>
+        "No internet: this computer cannot reach your router.",
+        "Brak internetu: ten komputer nie może połączyć się z routerem.";
+    sum_lan_wifi_todo =>
+        "Check that the router is switched on and its lights are lit. Move closer to it, or \
+         turn Wi-Fi off and on again on this computer. If other devices have no internet \
+         either, restart the router.",
+        "Sprawdź, czy router jest włączony i świecą się jego lampki. Podejdź bliżej albo \
+         wyłącz i włącz Wi-Fi w tym komputerze. Jeśli inne urządzenia też nie mają internetu, \
+         uruchom router ponownie.";
+    sum_lan_cable_todo =>
+        "Check that the cable is firmly plugged in at both ends and that the router is \
+         switched on. If other devices have no internet either, restart the router.",
+        "Sprawdź, czy kabel jest dobrze wpięty z obu stron i czy router jest włączony. Jeśli \
+         inne urządzenia też nie mają internetu, uruchom router ponownie.";
+    sum_adapter =>
+        "No internet: this computer is not connected to any network.",
+        "Brak internetu: ten komputer nie jest połączony z żadną siecią.";
+    sum_adapter_wifi_todo =>
+        "Click the network icon in the corner of the screen and connect to your Wi-Fi again. \
+         If it keeps dropping, the check can tell why.",
+        "Kliknij ikonę sieci w rogu ekranu i połącz się ponownie ze swoim Wi-Fi. Jeśli \
+         połączenie wciąż się zrywa, sprawdzenie może powiedzieć dlaczego.";
+    sum_adapter_cable_todo =>
+        "Check that the network cable is plugged in at both ends. A cable that clicks into \
+         place and a light next to the socket mean it is in.",
+        "Sprawdź, czy kabel sieciowy jest wpięty z obu stron. Kabel, który wskoczył na \
+         miejsce z kliknięciem, i lampka przy gnieździe oznaczają, że jest wpięty.";
+    sum_paused => "Watching is paused.", "Pilnowanie połączenia jest wstrzymane.";
+    sum_paused_todo =>
+        "While paused, NetDoctor records nothing, so a break now would go unnoticed.",
+        "Podczas wstrzymania NetDoctor niczego nie zapisuje, więc przerwa w tym czasie \
+         przejdzie niezauważona.";
+    sum_waiting => "Checking your connection…", "Sprawdzam połączenie…";
+    sum_waiting_todo =>
+        "The first reading takes a moment.",
+        "Pierwszy pomiar potrwa chwilę.";
+    sum_blind =>
+        "NetDoctor cannot measure right now.",
+        "NetDoctor nie może teraz mierzyć.";
+    sum_blind_todo =>
+        "Windows did not let it send its test messages. This is not a verdict about your \
+         internet. It usually passes; if it does not, restart NetDoctor.",
+        "Windows nie pozwolił wysłać wiadomości testowych. To nie jest ocena Twojego \
+         internetu. Zwykle mija samo, a jeśli nie, uruchom NetDoctora ponownie.";
+    sum_stale =>
+        "Measuring has stopped.",
+        "Pomiar się zatrzymał.";
+    sum_stale_todo =>
+        "The last reading is too old to say anything about now. Restart NetDoctor.",
+        "Ostatni pomiar jest zbyt stary, żeby mówić o tym, co dzieje się teraz. Uruchom \
+         NetDoctora ponownie.";
+    sum_node_pc => "This computer", "Ten komputer";
+    sum_node_router => "Router", "Router";
+    sum_node_internet => "Internet", "Internet";
+    sum_link_wifi => "Wi-Fi", "Wi-Fi";
+    sum_link_cable => "Cable", "Kabel";
+    sum_link_provider => "Provider", "Dostawca";
+    sum_link_good => "working", "działa";
+    sum_link_slow => "slow", "wolno";
+    sum_link_broken => "broken", "przerwane";
+    sum_link_unknown => "unknown", "nie wiadomo";
+    sum_btn_diagnose => "Run a check", "Uruchom sprawdzenie";
+    sum_btn_report => "Save a report for my provider", "Zapisz raport dla dostawcy";
+    live_details => "Technical details: the route hop by hop", "Szczegóły techniczne: trasa krok po kroku";
+    word_signal_good => "good", "dobry";
+    word_signal_fair => "fair", "średni";
+    word_signal_weak => "weak", "słaby";
     mon_paused => "Measuring paused", "Pomiar wstrzymany";
     mon_waiting => "Waiting for the first reading", "Czekam na pierwszy pomiar";
     mon_stale =>
@@ -2372,6 +2510,20 @@ pub fn f_apipa_detail(adapter: &str, ip: &str) -> String {
 
 pub fn f_wired_detail(adapter: &str, mbps: u64) -> String {
     format!("{adapter}, {mbps} Mbps")
+}
+
+pub fn f_link_errors_detail(errors: u64, packets: u64, pct: f64) -> String {
+    match current() {
+        Lang::En => format!("{errors} corrupted of {packets} frames ({pct:.2}%)"),
+        Lang::Pl => format!("{errors} uszkodzonych z {packets} ramek ({pct:.2}%)"),
+    }
+}
+
+pub fn f_link_slow_detail(adapter: &str, mbps: u64) -> String {
+    match current() {
+        Lang::En => format!("{adapter}: negotiated {mbps} Mbps"),
+        Lang::Pl => format!("{adapter}: wynegocjowano {mbps} Mbps"),
+    }
 }
 
 pub fn f_wifi_detail(adapter: &str, ssid: &str, mbps: u64) -> String {

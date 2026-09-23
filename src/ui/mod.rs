@@ -10,6 +10,7 @@ mod live;
 mod opt;
 mod report;
 mod settings_tab;
+mod summary;
 mod update_ui;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -831,17 +832,16 @@ impl App {
                     // Signal is the only fact on this line with thresholds, so
                     // it is the only one that gets a colour. Colouring more
                     // than one would mean none of them stood out.
-                    let value = match n.rssi_dbm {
-                        Some(r) => format!("{pct}% · {r} dBm"),
-                        None => format!("{pct}%"),
-                    };
-                    let colour = if pct >= 67 {
-                        GREEN
+                    // In words first: "78%" means nothing until you know
+                    // what a good one is. The dBm figure is in Diagnose.
+                    let (word, colour) = if pct >= 67 {
+                        (crate::i18n::word_signal_good(), GREEN)
                     } else if pct >= 34 {
-                        YELLOW
+                        (crate::i18n::word_signal_fair(), YELLOW)
                     } else {
-                        RED
+                        (crate::i18n::word_signal_weak(), RED)
                     };
+                    let value = format!("{word} · {pct}%");
                     facts.push(Fact::new(crate::i18n::word_signal(), value, colour));
                 }
 

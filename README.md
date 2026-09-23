@@ -22,11 +22,14 @@ reads the blame off the *pattern* of failures:
 | adapter disconnected | — | driver, power saving, or signal strength |
 | yes | yes, but names do not resolve | DNS failure |
 | no | yes | working: the router ignores pings to itself (a setting, not a fault) |
+| no pings answered, but a TCP connection gets through | — | working: this network blocks pings, so latency and loss cannot be measured |
 
 "Internet answers" means a public address answered: a Pi-hole, a NAS or a
 provider's CGNAT box answering proves nothing past the provider. A verdict
 that something is down needs its readings to agree, so one filtered address
-or one lost DNS reply is not an outage. DNS is tested by asking the adapter's
+or one lost DNS reply is not an outage. When no public address answers a ping,
+the app tries a TCP connection to port 443 every two seconds, and only calls it
+an outage if that fails too. DNS is tested by asking the adapter's
 resolvers directly, past the Windows DNS cache, which would otherwise answer
 for a resolver that is gone.
 
@@ -175,7 +178,13 @@ one English label that would silently fail everywhere else.
 
 ## Tabs
 
-- **Live** — latency plot over a window you pick, from a minute to an hour,
+- **Live** — opens with the answer in plain words: whether the internet
+  works, a picture of the chain *this computer → router → internet* with each
+  link marked working, slow, broken or unknown, what to do about it, and one
+  button for the next step (run a check, or save a report for the provider
+  when the break is on their side). A link that was not measured is drawn as
+  unknown, never as fine. Under it the headline figures, then the latency plot
+  over a window you pick, from a minute to an hour,
   read from the database rather than from memory so it covers more than this
   run. Pointing at it reads out every probe at that instant, with no delay
   before the figures appear. Clicking a name in the legend takes that line
@@ -188,12 +197,13 @@ one English label that would silently fail everywhere else.
   know what it means: each legend entry carries its target's current reading
   and explains which stretch of the path it measures, the threshold lines are
   labelled with their values, and the key under the plot keeps its prose
-  behind a single question mark instead of running along the row. Below it:
-  headline figures (latency, jitter, loss, DNS, time since the last outage),
-  each saying on hover what it is and what a bad value there points at, the
-  path hop by hop with a verdict on which one the trouble starts at,
-  traceroute, report export.
-- **Diagnose** — nine checks: adapter and medium, Wi-Fi quality and band,
+  behind a single question mark instead of running along the row. The
+  headline figures (latency, jitter, loss, DNS, time since the last outage)
+  each say on hover what they are and what a bad value there points at.
+  Folded away under *Technical details*: the path hop by hop with a verdict on
+  which one the trouble starts at, and traceroute.
+- **Diagnose** — nine checks: adapter and medium (on a cable, also whether
+  it is corrupting frames and what speed it negotiated), Wi-Fi quality and band,
   adapter power management, DNS, the link to the router, internet latency and
   loss, MTU, TCP settings, and the recorded outage history. Each finding
   explains itself, and some link straight to the fix.
@@ -216,7 +226,9 @@ one English label that would silently fail everywhere else.
   a route to the fix. A line that stays *slow* (loss, jitter or latency past
   the thresholds in Settings) for three readings in a row is recorded here too,
   as "unstable"; it does not trigger a notification. An outage that starts slow
-  and then goes down is recorded as the worst state it reached.
+  and then goes down is recorded as the worst state it reached, once that
+  state held for as many readings as opening an outage takes: a router that
+  misses one ping to itself does not turn the provider's outage into yours.
   **Save report** here writes a text file for a support ticket over the range
   you pick (24 hours, 7 or 30 days, or everything kept): how much of it was
   actually watched, totals per kind of outage, and for each outage its cause
@@ -344,7 +356,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-282 tests, covering the failure-blame logic, the statistics, the registry layer,
+294 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

@@ -24,50 +24,76 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn body(app: &mut App, ui: &mut egui::Ui) {
-    plot(app, ui);
+    refresh_cards(app);
+    let now = crate::store::now();
+    let seen = crate::monitor::Seen::of(
+        &app.last,
+        !app.monitor.shared.paused(),
+        now,
+        app.settings.interval(),
+    );
+    // The answer first, in words, for whoever opened the window to find out
+    // whether the internet works. Everything under it is the evidence, in the
+    // order someone who wants more would read it: the figures, their history,
+    // and the route for whoever is already debugging.
+    // Cloned: `summary::show` needs `app` mutably, so the cache cannot stay
+    // borrowed. It is a handful of numbers.
+    let router = app.card_cache.as_ref().map(|c| c.router.clone()).unwrap_or_default();
+    let summary = super::summary::read(
+        seen,
+        app.net.medium == crate::probe::netstate::Medium::Wifi,
+        app.net.signal_pct,
+        &router,
+        ROUTER_OK_MS,
+    );
+    let note = monitor_note(app);
+    super::summary::show(app, ui, &summary, &note);
     ui.add_space(S_MD);
     cards(app, ui);
     ui.add_space(S_MD);
-    // The controls stay above the hop table: they are the only things here a
-    // person clicks, and a row of buttons that moves down the page whenever
-    // the route grows a hop is a row of buttons nobody can find twice.
+    plot(app, ui);
+    ui.add_space(S_MD);
     controls(app, ui);
     ui.add_space(S_MD);
-    // The hop table is five narrow columns and leaves the right half of the
-    // window empty, which is exactly where a route dump wants to be: the two
-    // answer the same question at different resolutions, and reading them
-    // against each other is the point.
-    if is_narrow(ui) {
-        // Two columns in half a window is two unreadable columns. Stacked,
-        // each one gets the width it needs and the page gets longer, which
-        // is what scrolling is for.
-        path_table(app, ui);
-        ui.add_space(S_MD);
-        trace_panel(app, ui);
-    } else {
-        ui.columns(2, |cols| {
-            path_table(app, &mut cols[0]);
-            trace_panel(app, &mut cols[1]);
-        });
-    }
 
-    if !app.last.note.is_empty() || app.last.roamed || app.last.blind.is_some() {
-        ui.add_space(S_SM);
-        let mut note = app.last.blind.clone().unwrap_or_else(|| app.last.note.clone());
-        if app.last.roamed {
-            if !note.is_empty() {
-                note.push(' ');
+    // The route is the part that needs a network engineer to read, so it is
+    // folded away until someone asks for it.
+    egui::CollapsingHeader::new(egui::RichText::new(i18n::live_details()).size(T_BODY).color(FG))
+        .id_salt("live_details")
+        .default_open(false)
+        .show(ui, |ui| {
+            trace_button(app, ui);
+            ui.add_space(S_SM);
+            // The hop table is five narrow columns and leaves the right half
+            // of the window empty, which is exactly where a route dump wants
+            // to be: the two answer the same question at different
+            // resolutions, and reading them against each other is the point.
+            if is_narrow(ui) {
+                // Two columns in half a window is two unreadable columns.
+                // Stacked, each one gets the width it needs.
+                path_table(app, ui);
+                ui.add_space(S_MD);
+                trace_panel(app, ui);
+            } else {
+                ui.columns(2, |cols| {
+                    path_table(app, &mut cols[0]);
+                    trace_panel(app, &mut cols[1]);
+                });
             }
-            note.push_str(i18n::live_roamed());
+        });
+}
+
+/// The monitor's own explanation of the current reading, and a roam if one
+/// just happened. Empty when there is nothing to add to the summary.
+fn monitor_note(app: &App) -> String {
+    let mut note = app.last.blind.clone().unwrap_or_else(|| app.last.note.clone());
+    if app.last.roamed {
+        if !note.is_empty() {
+            note.push(' ');
         }
-        egui::Frame::none()
-            .fill(super::BG2)
-            .rounding(6.0)
-            .inner_margin(egui::Margin::same(S_MD))
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new(note).size(T_BODY).color(FG_DIM));
-            });
+        note.push_str(i18n::live_roamed());
     }
+    note
 }
 
 /// The legend's colour key, drawn to match the line it stands for.
@@ -876,6 +902,8 @@ fn readout(
 pub struct CardCache {
     built_at: f64,
     stats: Vec<Stat>,
+    /// The last minute of pings to the router, for the summary.
+    router: crate::store::Stats,
 }
 
 /// How long a set of cards is allowed to stand before it is read again.
@@ -902,7 +930,7 @@ pub struct Stat {
 /// that has reached 20 ms is already the thing ruining every other figure on
 /// the page. These are the numbers that scale belongs on.
 const ROUTER_GOOD_MS: f64 = 5.0;
-const ROUTER_OK_MS: f64 = 20.0;
+pub(super) const ROUTER_OK_MS: f64 = 20.0;
 
 /// A name lookup is paid once per site rather than per packet, so it is
 /// tolerable at a latency that would be unusable for traffic. Hence its own
@@ -952,15 +980,23 @@ fn band(v: f64, good: f64, ok: f64) -> egui::Color32 {
     }
 }
 
-fn cards(app: &mut App, ui: &mut egui::Ui) {
+fn refresh_cards(app: &mut App) {
     let now = crate::store::now();
     let stale = match &app.card_cache {
         Some(c) => now - c.built_at >= CARD_MAX_AGE_S,
         None => true,
     };
     if stale {
-        app.card_cache = Some(CardCache { built_at: now, stats: collect_stats(app) });
+        app.card_cache = Some(CardCache {
+            built_at: now,
+            stats: collect_stats(app),
+            router: app.store.stats("gateway", 60.0),
+        });
     }
+}
+
+fn cards(app: &mut App, ui: &mut egui::Ui) {
+    let now = crate::store::now();
     let Some(cache) = app.card_cache.as_ref() else {
         return;
     };
@@ -1271,6 +1307,40 @@ fn path_table(app: &mut App, ui: &mut egui::Ui) {
     ui.label(egui::RichText::new(i18n::live_path_note()).size(T_META).italics().color(FG_DIM));
 }
 
+fn trace_button(app: &mut App, ui: &mut egui::Ui) {
+    // Traceroute is the only control here that goes and finds out
+    // something the page is not already showing, so it carries the row.
+    // While it runs it says so on its own face rather than greying out
+    // with the same label and leaving the user to guess whether the click
+    // registered.
+    let trace_label = if app.tracing { i18n::live_tracing() } else { i18n::live_btn_trace() };
+    let trace_w = btn_width(ui, i18n::live_btn_trace()).max(btn_width(ui, i18n::live_tracing()));
+    if button_ex(ui, trace_label, Emphasis::Primary, !app.tracing, trace_w).clicked() {
+        app.tracing = true;
+        app.trace = vec![i18n::live_tracing().into()];
+        let tx = app.tx.clone();
+        std::thread::spawn(move || {
+            let hops = icmp::traceroute(std::net::Ipv4Addr::new(1, 1, 1, 1), 20, 1000);
+            let mut lines: Vec<String> = hops
+                .iter()
+                .map(|h| match h.addr {
+                    Some(a) => format!(
+                        "{:>2}  {:<16} {}",
+                        h.hop,
+                        a,
+                        h.rtt_ms.map(|v| format!("{v:.1} ms")).unwrap_or_else(|| "*".into())
+                    ),
+                    None => format!("{:>2}  {:<16} *", h.hop, "*"),
+                })
+                .collect();
+            lines.push(String::new());
+            lines.push(i18n::live_trace_note_1().into());
+            lines.push(i18n::live_trace_note_2().into());
+            let _ = tx.send(Job::Traceroute(lines));
+        });
+    }
+}
+
 fn controls(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         // A toggle whose two labels are different lengths resizes itself on
@@ -1282,39 +1352,6 @@ fn controls(app: &mut App, ui: &mut egui::Ui) {
             btn_width(ui, i18n::live_btn_pause()).max(btn_width(ui, i18n::live_btn_resume()));
         if button_ex(ui, toggle_label, Emphasis::Secondary, true, toggle_w).clicked() {
             app.monitor.set_paused(!paused);
-        }
-
-        // Traceroute is the only control here that goes and finds out
-        // something the page is not already showing, so it carries the row.
-        // While it runs it says so on its own face rather than greying out
-        // with the same label and leaving the user to guess whether the click
-        // registered.
-        let trace_label = if app.tracing { i18n::live_tracing() } else { i18n::live_btn_trace() };
-        let trace_w =
-            btn_width(ui, i18n::live_btn_trace()).max(btn_width(ui, i18n::live_tracing()));
-        if button_ex(ui, trace_label, Emphasis::Primary, !app.tracing, trace_w).clicked() {
-            app.tracing = true;
-            app.trace = vec![i18n::live_tracing().into()];
-            let tx = app.tx.clone();
-            std::thread::spawn(move || {
-                let hops = icmp::traceroute(std::net::Ipv4Addr::new(1, 1, 1, 1), 20, 1000);
-                let mut lines: Vec<String> = hops
-                    .iter()
-                    .map(|h| match h.addr {
-                        Some(a) => format!(
-                            "{:>2}  {:<16} {}",
-                            h.hop,
-                            a,
-                            h.rtt_ms.map(|v| format!("{v:.1} ms")).unwrap_or_else(|| "*".into())
-                        ),
-                        None => format!("{:>2}  {:<16} *", h.hop, "*"),
-                    })
-                    .collect();
-                lines.push(String::new());
-                lines.push(i18n::live_trace_note_1().into());
-                lines.push(i18n::live_trace_note_2().into());
-                let _ = tx.send(Job::Traceroute(lines));
-            });
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

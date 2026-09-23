@@ -417,6 +417,11 @@ pub struct Shared {
     dns_servers: Mutex<Vec<Ipv4Addr>>,
     /// The user's extra targets that are hostnames, resolved by `run_hosts`.
     hosts: Mutex<HashMap<String, Ipv4Addr>>,
+    /// Since when no public address has answered a ping, published by the
+    /// sweep. `run_tcp` only works while this is set.
+    icmp_dark_since: Mutex<Option<Instant>>,
+    /// The latest connection attempt `run_tcp` made.
+    tcp: Mutex<Option<TcpAttempt>>,
 }
 
 /// How long a DNS test may run before the sweep calls it a failure. A healthy
@@ -435,6 +440,33 @@ const DNS_FAILS_TO_REPORT: u32 = 2;
 const HOSTS_EVERY: Duration = Duration::from_secs(300);
 /// And when one of them did not.
 const HOSTS_RETRY: Duration = Duration::from_secs(30);
+
+/// How often `run_tcp` tries while pings are unanswered.
+const TCP_EVERY: Duration = Duration::from_secs(2);
+/// How old a successful connection may be and still vouch for the internet.
+/// A little over two attempts: one slow handshake must not flip the verdict,
+/// and an outage on a network that filters pings must still show within
+/// seconds.
+const TCP_FRESH: Duration = Duration::from_secs(6);
+
+/// One connection attempt to a public anchor on port 443.
+#[derive(Debug, Clone, Copy)]
+struct TcpAttempt {
+    /// When the attempt started.
+    at: Instant,
+    ok: bool,
+}
+
+impl TcpAttempt {
+    /// Whether this attempt shows the internet reachable although no public
+    /// address answers pings: it succeeded, it began after the pings stopped
+    /// answering, and it is recent. A success from before the silence says
+    /// nothing about the silence.
+    fn vouches(&self, dark_since: Option<Instant>, now: Instant) -> bool {
+        let Some(dark) = dark_since else { return false };
+        self.ok && self.at >= dark && now.saturating_duration_since(self.at) <= TCP_FRESH
+    }
+}
 
 /// The DNS tests, as `run_dns` last left them.
 ///
@@ -524,7 +556,7 @@ impl Monitor {
                 .expect("spawn monitor thread")
         };
 
-        // Three more threads, none of them joined on drop. They touch nothing
+        // Four more threads, none of them joined on drop. They touch nothing
         // but `Shared`, so there is nothing for them to finish, and waiting
         // for them could take long enough to matter: the process has to be
         // gone before an update's new copy can start (see
@@ -542,6 +574,7 @@ impl Monitor {
             ("netdoctor-path", run_path as fn(Arc<Shared>, Arc<AtomicBool>)),
             ("netdoctor-dns", run_dns),
             ("netdoctor-hosts", run_hosts),
+            ("netdoctor-tcp", run_tcp),
         ] {
             let shared = Arc::clone(&shared);
             let stop = Arc::clone(&stop);
@@ -598,6 +631,8 @@ impl Shared {
             dns: Mutex::new(DnsReading::default()),
             dns_servers: Mutex::new(Vec::new()),
             hosts: Mutex::new(HashMap::new()),
+            icmp_dark_since: Mutex::new(None),
+            tcp: Mutex::new(None),
         }
     }
 
@@ -652,6 +687,34 @@ fn run_dns(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
             let mut reading = held(&shared.dns);
             reading.finish(ms, error);
             wait = reading.next_check();
+        }
+        if !nap(&stop, wait) {
+            return;
+        }
+    }
+}
+
+/// Tries a TCP connection to the public anchors while no public address
+/// answers pings, and does nothing otherwise.
+///
+/// Pings are all the sweep sends, and a network that filters them outbound
+/// (hotels, some offices and mobile operators) looked like the provider being
+/// down for as long as the app ran: a recorded outage, a notification. A
+/// handshake on 443 is traffic nobody filters without breaking the web, so
+/// when it gets through the internet is there, whatever the pings say. It is
+/// only tried while pings are unanswered: an idle line costs nothing.
+fn run_tcp(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
+    while !stop.load(Ordering::Relaxed) {
+        let dark = held(&shared.icmp_dark_since).is_some();
+        let mut wait = Duration::from_secs(1);
+        if dark && !shared.paused() {
+            let settings = held(&shared.settings).clone();
+            let at = Instant::now();
+            let ok = [crate::diagnose::ANCHOR, crate::diagnose::ANCHOR_ALT]
+                .iter()
+                .any(|a| crate::diagnose::tcp_probe(*a, &settings).is_ok());
+            *held(&shared.tcp) = Some(TcpAttempt { at, ok });
+            wait = TCP_EVERY;
         }
         if !nap(&stop, wait) {
             return;
@@ -969,29 +1032,45 @@ impl Outages {
 /// The row used to keep the state it opened with, so an outage that began as
 /// "slow" and became the provider going down stayed "degraded" in the history
 /// and was never counted towards the provider's pattern.
+///
+/// A graver state has to hold for as many sweeps as opening an outage takes.
+/// It used to take one: a router that dropped a single ping to itself during
+/// a two-hour provider outage relabelled the whole outage "lan", took it out
+/// of the provider's pattern and put the household's kit in the report.
 #[derive(Debug, Default)]
 struct Recorded {
     status: Option<Status>,
+    /// Graver-than-recorded sweeps in a row.
+    graver_streak: u32,
 }
 
 impl Recorded {
     fn open(&mut self, status: Status) {
         self.status = Some(status);
+        self.graver_streak = 0;
     }
 
-    /// The state to write over the open outage's, when `status` is graver
-    /// than what it is recorded as. Never a milder one.
-    fn escalate(&mut self, status: Status) -> Option<Status> {
+    /// The state to write over the open outage's, once `status` and the
+    /// sweeps before it have been graver than what it is recorded as for
+    /// `needed` sweeps in a row. Never a milder one.
+    fn escalate(&mut self, status: Status, needed: u32) -> Option<Status> {
         let recorded = self.status?;
         if scope_rank(status.scope()) <= scope_rank(recorded.scope()) {
+            self.graver_streak = 0;
             return None;
         }
+        self.graver_streak += 1;
+        if self.graver_streak < needed {
+            return None;
+        }
+        self.graver_streak = 0;
         self.status = Some(status);
         Some(status)
     }
 
     fn close(&mut self) {
         self.status = None;
+        self.graver_streak = 0;
     }
 }
 
@@ -1223,8 +1302,24 @@ fn run_loop(
         // minute long, and "restored" arrived a minute late.
         let quality_window =
             last_hard.map_or(QUALITY_WINDOW_S, |h| (ts - h - 0.5).clamp(0.0, QUALITY_WINDOW_S));
-        let (status, note) =
-            classify(&results, &targets, &net, &dns_error, &settings, &store, quality_window);
+        // Whether pings to the public anchors are all going unanswered, and
+        // since when: `run_tcp` works only while they are.
+        let heard = answered_publicly(&results, &targets);
+        let dark_since = {
+            let mut dark = held(&shared.icmp_dark_since);
+            if heard {
+                *dark = None;
+            } else if dark.is_none() {
+                *dark = Some(Instant::now());
+            }
+            *dark
+        };
+        let tcp = *held(&shared.tcp);
+        let tcp_vouches = !heard && tcp.is_some_and(|t| t.vouches(dark_since, Instant::now()));
+        let (status, note) = past_filtered_pings(
+            classify(&results, &targets, &net, &dns_error, &settings, &store, quality_window),
+            tcp_vouches,
+        );
         if !matches!(status, Status::Ok | Status::Degraded) {
             last_hard = Some(ts);
         }
@@ -1274,7 +1369,9 @@ fn run_loop(
                 }
             }
             Step::Nothing => {
-                if let (Some(graver), Some(id)) = (recorded.escalate(status), open_event) {
+                if let (Some(graver), Some(id)) =
+                    (recorded.escalate(status, settings.outage_after_fails), open_event)
+                {
                     let _ = store.set_event_kind(id, graver.key(), graver.scope(), &snap.note);
                 }
             }
@@ -1359,11 +1456,7 @@ fn classify(
     // [`crate::diagnose::is_public`]. A resolver the user runs at home, or a
     // host they added on their own network, used to answer for it and hide
     // an outage at the provider.
-    let internet_ok = targets
-        .iter()
-        .filter(|t| matches!(t.scope, Scope::Internet | Scope::Isp))
-        .filter(|t| crate::diagnose::is_public(t.host))
-        .any(|t| results.get(&t.key).map(|s| s.ok).unwrap_or(false));
+    let internet_ok = answered_publicly(results, targets);
 
     let gw = results.get("gateway").map(|s| s.ok);
 
@@ -1390,6 +1483,28 @@ fn classify(
             }
         }
         None => (Status::AdapterDown, i18n::mon_no_gateway().into()),
+    }
+}
+
+/// Whether any public internet or provider target answered this sweep.
+fn answered_publicly(results: &HashMap<String, Sample>, targets: &[Resolved]) -> bool {
+    targets
+        .iter()
+        .filter(|t| matches!(t.scope, Scope::Internet | Scope::Isp))
+        .filter(|t| crate::diagnose::is_public(t.host))
+        .any(|t| results.get(&t.key).map(|s| s.ok).unwrap_or(false))
+}
+
+/// A verdict of "nothing out there answers" that a TCP connection just
+/// contradicted: the pings are filtered, the internet is not down. Reported
+/// as working, with a note that says why the latency figures are missing,
+/// rather than as an outage nobody had.
+fn past_filtered_pings(verdict: (Status, String), tcp_vouches: bool) -> (Status, String) {
+    match verdict.0 {
+        Status::IspDown | Status::LanDown | Status::AdapterDown if tcp_vouches => {
+            (Status::Ok, i18n::mon_icmp_filtered().into())
+        }
+        _ => verdict,
     }
 }
 
@@ -1799,6 +1914,8 @@ mod tests {
             (3.0, Status::IspDown),
             (4.0, Status::Degraded),
             (5.0, Status::IspDown),
+            (6.0, Status::IspDown),
+            (7.0, Status::IspDown),
         ];
         for (ts, status) in seq {
             match o.sweep(ts, true, 3) {
@@ -1807,7 +1924,7 @@ mod tests {
                     rec.open(status);
                 }
                 _ => {
-                    if let (Some(graver), Some(id)) = (rec.escalate(status), id) {
+                    if let (Some(graver), Some(id)) = (rec.escalate(status, 3), id) {
                         store.set_event_kind(id, graver.key(), graver.scope(), "n").unwrap();
                     }
                 }
@@ -1818,11 +1935,49 @@ mod tests {
         assert_eq!((events[0].kind.as_str(), events[0].scope.as_str()), ("isp_down", "isp"));
 
         // Never downgraded: a better sweep inside the outage changes nothing.
-        assert_eq!(rec.escalate(Status::DnsFail), None);
-        assert_eq!(rec.escalate(Status::LanDown), Some(Status::LanDown));
-        assert_eq!(rec.escalate(Status::IspDown), None);
+        assert_eq!(rec.escalate(Status::DnsFail, 1), None);
+        assert_eq!(rec.escalate(Status::LanDown, 1), Some(Status::LanDown));
+        assert_eq!(rec.escalate(Status::IspDown, 1), None);
         rec.close();
-        assert_eq!(rec.escalate(Status::AdapterDown), None, "nothing open, nothing to rename");
+        assert_eq!(rec.escalate(Status::AdapterDown, 1), None, "nothing open, nothing to rename");
+    }
+
+    #[test]
+    fn a_tcp_connection_after_the_pings_went_quiet_overrules_an_outage() {
+        let dark = Instant::now();
+        let later = dark + Duration::from_secs(1);
+        let ok = TcpAttempt { at: later, ok: true };
+        assert!(ok.vouches(Some(dark), later));
+        // Stale: the network may have gone down since.
+        assert!(!ok.vouches(Some(dark), later + TCP_FRESH + Duration::from_secs(1)));
+        // From before the silence: says nothing about it.
+        let before = TcpAttempt { at: dark, ok: true };
+        assert!(!before.vouches(Some(later), later));
+        // Failed, or pings answering and nothing to vouch for.
+        assert!(!TcpAttempt { at: later, ok: false }.vouches(Some(dark), later));
+        assert!(!ok.vouches(None, later));
+
+        let isp = (Status::IspDown, "n".to_string());
+        assert_eq!(past_filtered_pings(isp.clone(), true).0, Status::Ok);
+        assert_eq!(past_filtered_pings(isp, false).0, Status::IspDown);
+        // A verdict reached with pings answering is not the TCP probe's to change.
+        let dns = (Status::DnsFail, "n".to_string());
+        assert_eq!(past_filtered_pings(dns, true).0, Status::DnsFail);
+    }
+
+    #[test]
+    fn one_lost_router_ping_does_not_relabel_a_provider_outage() {
+        let mut rec = Recorded::default();
+        rec.open(Status::IspDown);
+        // The router misses one ping, twice, with the provider still down in
+        // between: noise, and the outage stays the provider's.
+        for status in [Status::LanDown, Status::IspDown, Status::LanDown, Status::IspDown] {
+            assert_eq!(rec.escalate(status, 3), None);
+        }
+        // Held for three sweeps, it is the household's link after all.
+        assert_eq!(rec.escalate(Status::LanDown, 3), None);
+        assert_eq!(rec.escalate(Status::AdapterDown, 3), None);
+        assert_eq!(rec.escalate(Status::LanDown, 3), Some(Status::LanDown));
     }
 
     #[test]

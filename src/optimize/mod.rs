@@ -675,7 +675,16 @@ impl Tweak for FastDns {
             text.push_str(crate::i18n::tw_dns_router_only_note());
         }
         let optimal = current.iter().any(|d| good.contains(&d.as_str()));
-        State::new(text, Some(optimal), json!({ "servers": current }))
+        // The servers alone do not say where they came from: Windows lists
+        // DHCP-assigned and typed-in resolvers alike. Restoring a DHCP list
+        // as static pins the router's address, and every other network the
+        // laptop joins then fails to resolve. Unknown origin, no snapshot:
+        // `apply` refuses rather than guess.
+        let snapshot = match dns_set_by_hand(net) {
+            Some(by_hand) => json!({ "servers": current, "dhcp": !by_hand }),
+            None => Value::Null,
+        };
+        State::new(text, Some(optimal), snapshot)
     }
 
     fn apply(&self, net: &NetState) -> Result<String> {
@@ -718,7 +727,7 @@ impl Tweak for FastDns {
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
 
-        if servers.is_empty() {
+        if restore_dhcp(snapshot, &servers, &dhcp_offered(net)) {
             run(
                 "netsh",
                 &["interface", "ipv4", "set", "dnsservers", &format!("name={name}"), "source=dhcp"],
@@ -757,6 +766,42 @@ impl Tweak for FastDns {
         }
         let _ = run("ipconfig", &["/flushdns"]);
         Ok(crate::i18n::tw_dns_reverted().into())
+    }
+}
+
+/// Splits a resolver list as Tcpip stores it: comma- or space-separated.
+fn split_servers(raw: &str) -> Vec<String> {
+    raw.split([',', ' ']).filter(|s| !s.is_empty()).map(String::from).collect()
+}
+
+/// Whether the adapter's resolvers were typed in (`NameServer` set) rather
+/// than handed out by DHCP. `None` when the key cannot be read.
+fn dns_set_by_hand(net: &NetState) -> Option<bool> {
+    let key = NagleOff::key(net)?;
+    let raw = winreg::read_string(Root::LocalMachine, &key, "NameServer").ok()?;
+    Some(raw.is_some_and(|r| !split_servers(&r).is_empty()))
+}
+
+/// What DHCP offers this adapter right now, kept by Windows even while a
+/// static list overrides it.
+fn dhcp_offered(net: &NetState) -> Vec<String> {
+    NagleOff::key(net)
+        .and_then(|key| winreg::read_string(Root::LocalMachine, &key, "DhcpNameServer").ok())
+        .flatten()
+        .map(|r| split_servers(&r))
+        .unwrap_or_default()
+}
+
+/// Whether Revert should hand DNS back to DHCP instead of pinning `servers`.
+///
+/// Snapshots written before the origin was recorded carry only the list. For
+/// those, a list identical to what DHCP offers now is read as DHCP: pinning
+/// it would be the very fault, and a hand-typed copy of the DHCP answer loses
+/// nothing by going back to DHCP while on this network.
+fn restore_dhcp(snapshot: &Value, servers: &[String], dhcp_now: &[String]) -> bool {
+    match snapshot["dhcp"].as_bool() {
+        Some(dhcp) => dhcp,
+        None => servers.is_empty() || servers == dhcp_now,
     }
 }
 
@@ -1145,6 +1190,29 @@ pub fn all() -> Vec<Box<dyn Tweak>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dns_from_dhcp_goes_back_to_dhcp_not_pinned() {
+        let router = vec!["192.168.1.1".to_string()];
+        // The case that used to pin the router: a DHCP list, recorded as such.
+        let snap = json!({ "servers": router, "dhcp": true });
+        assert!(restore_dhcp(&snap, &router, &[]));
+        // Typed in by hand, even when it matches what DHCP offers.
+        let snap = json!({ "servers": router, "dhcp": false });
+        assert!(!restore_dhcp(&snap, &router, &router));
+        // Snapshots from before the origin was recorded: judged by DHCP now.
+        let legacy = json!({ "servers": router });
+        assert!(restore_dhcp(&legacy, &router, &router));
+        assert!(!restore_dhcp(&legacy, &["9.9.9.9".to_string()], &router));
+        assert!(restore_dhcp(&json!({ "servers": [] }), &[], &router));
+    }
+
+    #[test]
+    fn tcpip_resolver_lists_split_on_commas_and_spaces() {
+        assert_eq!(split_servers("1.1.1.1,8.8.8.8"), ["1.1.1.1", "8.8.8.8"]);
+        assert_eq!(split_servers("192.168.1.1 192.168.1.2"), ["192.168.1.1", "192.168.1.2"]);
+        assert!(split_servers("").is_empty());
+    }
 
     #[test]
     fn every_tweak_has_copy_and_a_unique_id() {

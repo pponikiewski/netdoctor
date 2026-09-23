@@ -55,3 +55,18 @@ Jeden wątek `netdoctor-tray` z message-only oknem (`HWND_MESSAGE` nie dostaje `
 
 ## 5. Open questions
 1. (rozstrzygnięte: tak, w zakresie) „Uruchom ponownie jako administrator” kończy przez `process::exit(0)`: ma ten sam wyścig o mutex co naprawiony restart aktualizacji, a z ikoną zostawi też „ducha” w zasobniku (brak `NIM_DELETE`). Włączyć poprawkę (flaga `--after-update` + normalne wyjście) w zakres?
+
+## Następne (z audytu 2026-09-23, `prompts/audyt-wynik-2026-09-23.md`)
+
+Zrobione w tej sesji: cofanie DNS wraca do DHCP, awaria przepisywana dopiero po serii odczytów, test TCP gdy pingi milkną, liczniki błędów kabla w Diagnozie.
+
+- [ ] Nieudane zastosowanie zmiany zapisywać jako `apply_failed`; `after_tweak` bierze tylko udane (audyt #4)
+- [ ] Jeden zestaw progów jakości dla Live i Diagnozy (audyt #5)
+- [ ] "Szybki DNS" nie jest "do zmiany" przy własnym prywatnym resolverze (Pi-hole) (audyt #6)
+- [ ] Pomiar skutku zmiany: ping/jitter/straty 24 h przed i po, w wierszu zmiany (audyt #7)
+- [ ] Bufferbloat przy wysyłaniu + ostrzeżenie, gdy test nie nasycił łącza (audyt #8)
+- [ ] Błąd zapisu próbek do bazy jako "nie mierzę", nie zielony werdykt (audyt #9)
+- [ ] UPnP IGD: czas działania routera, stan WAN, publiczny IP w kontekście awarii (restart routera vs rozłączenie przez dostawcę)
+- [ ] IPv6: czy jest adres i trasa, czy połączenie przez v6 dochodzi (wolne pierwsze ładowanie)
+- [ ] BSS Load z beaconów: zajętość kanału i liczba stacji wg punktu dostępowego
+- [ ] Sprawdzić na żywo: VPN bez bramy daje `AdapterDown` (audyt #10)
