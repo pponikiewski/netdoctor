@@ -33,8 +33,11 @@ use crate::probe::icmp::{self, Pinger};
 pub enum Owner {
     /// The router this machine is configured to use.
     Gateway,
-    /// A private address past the gateway: a second router, an ISP box left
-    /// in router mode, a mesh node. Still this household's equipment.
+    /// A private address past the gateway. It can be the household's own
+    /// second router, mesh node or ISP box in router mode, or the provider's
+    /// access network, which is often numbered privately; the address alone
+    /// does not say which. (Named `Local` because it is stored in outage
+    /// contexts under that name.)
     Local,
     /// Carrier-grade NAT, or the first public address. The provider's access
     /// network.
@@ -45,9 +48,14 @@ pub enum Owner {
 }
 
 impl Owner {
-    /// Whether a fault here is the user's own to fix.
-    pub fn is_mine(&self) -> bool {
-        matches!(self, Owner::Gateway | Owner::Local)
+    /// Whether a fault here is the user's own to fix, or `None` when the
+    /// address cannot tell: see [`Owner::Local`].
+    pub fn is_mine(&self) -> Option<bool> {
+        match self {
+            Owner::Gateway => Some(true),
+            Owner::Local => None,
+            Owner::Edge | Owner::Internet => Some(false),
+        }
     }
 }
 
@@ -560,9 +568,24 @@ mod tests {
     }
 
     #[test]
+    fn a_private_hop_past_the_router_is_not_claimed_for_the_user() {
+        // A real path from this machine: the router, then 192.168.222.1,
+        // 172.20.2.1, 10.30.64.1 and 10.8.105.1 at 4 to 9 ms, then the
+        // provider's first public address. Four more routers in one house is
+        // unlikely; a provider numbering its own access network privately is
+        // common. The report called all four "your network", which in a
+        // complaint to that provider argues its side.
+        let label = crate::i18n::path_owner(Owner::Local);
+        assert!(label.contains("provider") || label.contains("dostawcy"), "names both: {label}");
+        assert_ne!(label, "your network");
+        assert_ne!(label, "twoja sieć");
+    }
+
+    #[test]
     fn ownership_splits_a_double_nat_from_the_provider() {
-        assert!(Owner::Local.is_mine(), "a second router indoors is still the user's problem");
-        assert!(!Owner::Edge.is_mine());
+        assert_eq!(Owner::Gateway.is_mine(), Some(true));
+        assert_eq!(Owner::Local.is_mine(), None, "a second router, or the provider's network");
+        assert_eq!(Owner::Edge.is_mine(), Some(false));
         assert!(is_cgnat(Ipv4Addr::new(100, 70, 1, 1)));
         assert!(!is_cgnat(Ipv4Addr::new(100, 200, 1, 1)), "100.200/8 is ordinary public space");
     }

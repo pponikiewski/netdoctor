@@ -590,7 +590,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // Common, harmless, and nothing like the same thing as losing packets.
     path_no_answer => "does not answer", "nie odpowiada";
     path_owner_gateway => "your router", "twój router";
-    path_owner_local => "your network", "twoja sieć";
+    path_owner_local => "private (yours or the provider's)", "prywatny (twój albo dostawcy)";
     path_owner_edge => "provider edge", "brzeg dostawcy";
     path_owner_internet => "beyond the provider", "za dostawcą";
 
@@ -3247,22 +3247,34 @@ pub fn path_blame_delay(ttl: u32, addr: &str, added: f64, owner: &str) -> String
 }
 
 /// What to do about it, which depends entirely on whose equipment it is.
-pub fn path_blame_advice(mine: bool) -> &'static str {
+pub fn path_blame_advice(mine: Option<bool>) -> &'static str {
     match (current(), mine) {
-        (Lang::En, true) => {
+        (Lang::En, None) => {
+            "That hop has a private address behind your router. It is either a second router of \
+             yours (a mesh node, a provider box in router mode) or the provider's own network, \
+             which is often numbered privately. If you have no second router, it is the \
+             provider's: quote the hop number, the address and this loss figure to them."
+        }
+        (Lang::Pl, None) => {
+            "Ten skok ma prywatny adres za twoim routerem. To albo twój drugi router (węzeł mesh, \
+             modem dostawcy w trybie routera), albo sieć samego dostawcy, która często ma \
+             prywatne adresy. Jeśli nie masz drugiego routera, to sieć dostawcy: podaj mu numer \
+             skoku, adres i tę wartość straty."
+        }
+        (Lang::En, Some(true)) => {
             "That hop is your own equipment, so this one is fixable here: the router, a second \
              router behind it, or the link between them."
         }
-        (Lang::Pl, true) => {
+        (Lang::Pl, Some(true)) => {
             "Ten skok to twój własny sprzęt, więc da się to naprawić u siebie: router, drugi \
              router za nim albo łącze między nimi."
         }
-        (Lang::En, false) => {
+        (Lang::En, Some(false)) => {
             "That hop is past your equipment. Quote the hop number, the address and this loss \
              figure to the provider — it is the one form of evidence a support line cannot \
              answer with \"restart the router\"."
         }
-        (Lang::Pl, false) => {
+        (Lang::Pl, Some(false)) => {
             "Ten skok jest za twoim sprzętem. Podaj dostawcy numer skoku, adres i tę wartość \
              straty — to jedyny rodzaj dowodu, na który infolinia nie odpowie „zrestartuj \
              router”."

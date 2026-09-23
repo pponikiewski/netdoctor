@@ -416,7 +416,7 @@ fn path_lines(out: &mut String, path: &PathReading, indent: &str) {
         };
         let _ = writeln!(
             out,
-            "{indent}{:>2}  {:<16} {:<20} {}",
+            "{indent}{:>2}  {:<16} {:<30} {}",
             h.ttl,
             h.addr,
             i18n::path_owner(h.owner),
