@@ -860,6 +860,38 @@ impl Outages {
     }
 }
 
+/// What the open outage is recorded as: the gravest state it has reached, by
+/// [`scope_rank`].
+///
+/// The row used to keep the state it opened with, so an outage that began as
+/// "slow" and became the provider going down stayed "degraded" in the history
+/// and was never counted towards the provider's pattern.
+#[derive(Debug, Default)]
+struct Recorded {
+    status: Option<Status>,
+}
+
+impl Recorded {
+    fn open(&mut self, status: Status) {
+        self.status = Some(status);
+    }
+
+    /// The state to write over the open outage's, when `status` is graver
+    /// than what it is recorded as. Never a milder one.
+    fn escalate(&mut self, status: Status) -> Option<Status> {
+        let recorded = self.status?;
+        if scope_rank(status.scope()) <= scope_rank(recorded.scope()) {
+            return None;
+        }
+        self.status = Some(status);
+        Some(status)
+    }
+
+    fn close(&mut self) {
+        self.status = None;
+    }
+}
+
 /// What the tray tells the user through Windows. Only outages that reach the
 /// history, and only hard ones: the user asked to hear "it is down" and "it is
 /// back", and "it is slow" is what the icon's colour is for.
@@ -937,6 +969,7 @@ fn run_loop(
 
     let mut outages = Outages::default();
     let mut announcer = Announcer::default();
+    let mut recorded = Recorded::default();
     // The last sweep that was a hard failure. See the quality window below.
     let mut last_hard: Option<f64> = None;
     let mut open_event: Option<i64> = None;
@@ -973,6 +1006,7 @@ fn run_loop(
             if store::now() - prev > store::OBSERVATION_GAP_S {
                 // Nobody saw it come back, so there is no "restored" to say.
                 announcer.hole();
+                recorded.close();
                 if let (Step::Close { at, .. }, Some(id)) = (outages.hole(prev), open_event.take())
                 {
                     let _ = store.close_event_at(id, at, r#"{"closed_by":"gap"}"#);
@@ -1127,9 +1161,17 @@ fn run_loop(
                     store.open_event(status.key(), status.scope(), &snap.note, &context).ok();
                 if open_event.is_none() {
                     outages.abandon();
+                } else {
+                    recorded.open(status);
+                }
+            }
+            Step::Nothing => {
+                if let (Some(graver), Some(id)) = (recorded.escalate(status), open_event) {
+                    let _ = store.set_event_kind(id, graver.key(), graver.scope(), &snap.note);
                 }
             }
             Step::Close { at, unwatched_s, .. } => {
+                recorded.close();
                 if let Some(id) = open_event.take() {
                     // An empty lead-up: what matters at recovery is the state
                     // the connection came back into, not another copy of the
@@ -1141,7 +1183,6 @@ fn run_loop(
                     let _ = store.close_event_at(id, at, &end.to_string());
                 }
             }
-            Step::Nothing => {}
         }
         let heard = announcer.after_sweep(
             step,
@@ -1615,6 +1656,46 @@ mod tests {
         let _ = o.hole(2.0);
         let step = o.sweep(9000.0, false, 3);
         assert_eq!(a.after_sweep(step, o.open, Status::Ok, "", 9000.0, true), None);
+    }
+
+    #[test]
+    fn an_outage_is_recorded_as_the_worst_it_became() {
+        // Opened as "slow", turned into the provider going down. The history
+        // kept "degraded", and `isp_pattern` never counted it.
+        let store = Store::open_in_memory().unwrap();
+        let (mut o, mut rec) = (Outages::default(), Recorded::default());
+        let mut id = None;
+        let seq = [
+            (0.0, Status::Degraded),
+            (1.0, Status::Degraded),
+            (2.0, Status::Degraded),
+            (3.0, Status::IspDown),
+            (4.0, Status::Degraded),
+            (5.0, Status::IspDown),
+        ];
+        for (ts, status) in seq {
+            match o.sweep(ts, true, 3) {
+                Step::Open => {
+                    id = store.open_event(status.key(), status.scope(), "n", "{}").ok();
+                    rec.open(status);
+                }
+                _ => {
+                    if let (Some(graver), Some(id)) = (rec.escalate(status), id) {
+                        store.set_event_kind(id, graver.key(), graver.scope(), "n").unwrap();
+                    }
+                }
+            }
+        }
+        let events = store.events_since(3600.0);
+        assert_eq!(events.len(), 1);
+        assert_eq!((events[0].kind.as_str(), events[0].scope.as_str()), ("isp_down", "isp"));
+
+        // Never downgraded: a better sweep inside the outage changes nothing.
+        assert_eq!(rec.escalate(Status::DnsFail), None);
+        assert_eq!(rec.escalate(Status::LanDown), Some(Status::LanDown));
+        assert_eq!(rec.escalate(Status::IspDown), None);
+        rec.close();
+        assert_eq!(rec.escalate(Status::AdapterDown), None, "nothing open, nothing to rename");
     }
 
     #[test]

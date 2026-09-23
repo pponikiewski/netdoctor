@@ -331,6 +331,17 @@ impl Store {
         Ok(conn.last_insert_rowid())
     }
 
+    /// Renames an open outage to a graver state it reached after it opened.
+    /// The context stays: it is the evidence from the moment it started.
+    pub fn set_event_kind(&self, id: i64, kind: &str, scope: &str, detail: &str) -> Result<()> {
+        let conn = self.held();
+        conn.execute(
+            "UPDATE events SET kind = ?1, scope = ?2, detail = ?3 WHERE id = ?4",
+            params![kind, scope, detail, id],
+        )?;
+        Ok(())
+    }
+
     /// Closes an outage, recording the state it recovered *into*. The pair of
     /// contexts is what separates "the signal came back" from "the adapter was
     /// reset" — the recovery is as diagnostic as the failure.
@@ -588,6 +599,22 @@ fn median(rtts: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renaming_an_outage_keeps_the_evidence_it_opened_with() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store.open_event("degraded", "internet", "slow", r#"{"lead_up":[1]}"#).unwrap();
+        let other = store.open_event("lan_down", "lan", "x", "{}").unwrap();
+        store.set_event_kind(id, "isp_down", "isp", "router answers").unwrap();
+
+        let events = store.events_since(3600.0);
+        let renamed = events.iter().find(|e| e.id == id).unwrap();
+        assert_eq!((renamed.kind.as_str(), renamed.scope.as_str()), ("isp_down", "isp"));
+        assert_eq!(renamed.detail, "router answers");
+        assert_eq!(store.event_context(id).unwrap().context, r#"{"lead_up":[1]}"#);
+        let untouched = events.iter().find(|e| e.id == other).unwrap();
+        assert_eq!(untouched.kind, "lan_down", "only the row asked for");
+    }
 
     #[test]
     fn jitter_is_mean_consecutive_deviation() {
