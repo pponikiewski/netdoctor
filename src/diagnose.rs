@@ -38,6 +38,12 @@ use crate::store::{self, Stats, Store};
 const ANCHOR: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 /// The monitor's key for `ANCHOR`, which is how the baseline is looked up.
 const ANCHOR_KEY: &str = "cloudflare";
+/// A second anchor on another operator's network. One address can be
+/// filtered by a network in between, and a verdict that the internet is gone
+/// should not rest on one address answering.
+const ANCHOR_ALT: Ipv4Addr = Ipv4Addr::new(8, 8, 8, 8);
+/// The monitor's key for `ANCHOR_ALT`.
+const ANCHOR_ALT_KEY: &str = "google";
 /// A seven-day window is long enough to average out one bad evening and short
 /// enough that a line which genuinely changed does not stay judged by its past.
 const BASELINE_WINDOW_S: f64 = 7.0 * 86400.0;
@@ -499,7 +505,9 @@ pub fn judge(findings: &[Finding], m: &Measurements, cfg: &Settings) -> Verdict 
     }
 
     v.segment = Segment::Healthy;
-    v.confidence = Confidence::Certain;
+    // Clean is only certain when the far end was measured. With the pings
+    // filtered, a working connection is known, its loss and latency are not.
+    v.confidence = if m.internet.is_some() { Confidence::Certain } else { Confidence::Likely };
     v.cost = i18n::cost_none().into();
     v
 }
@@ -802,7 +810,12 @@ struct Wire {
     gateway: Option<Stats>,
     edge: Option<Edge>,
     internet: Option<Stats>,
+    /// The same, to [`ANCHOR_ALT`].
+    internet_alt: Option<Stats>,
+    /// A connection to port 443 of either anchor: `Ok` when one accepted.
     tcp: Option<Result<f64, String>>,
+    /// Which anchor accepted it.
+    tcp_via: Option<Ipv4Addr>,
     dns: (Option<f64>, String),
     /// Why a ping series could not be sent at all, when one could not. The
     /// three latencies are then not readings, and nothing may be read off
@@ -881,7 +894,9 @@ fn measure_wire(net: &NetState, cfg: &Settings) -> Wire {
     std::thread::scope(|s| {
         let gateway = net.gateway.map(|gw| s.spawn(move || measure(gw, 10, cfg)));
         let internet = s.spawn(|| measure(ANCHOR, 15, cfg));
-        let tcp = s.spawn(|| tcp_probe(cfg));
+        let internet_alt = s.spawn(|| measure(ANCHOR_ALT, 15, cfg));
+        let tcp = s.spawn(|| tcp_probe(ANCHOR, cfg));
+        let tcp_alt = s.spawn(|| tcp_probe(ANCHOR_ALT, cfg));
         let dns = s.spawn(|| dns_lookup_ms(DNS_TEST_HOST));
         // The traceroute has to finish before its result can be pinged, so the
         // whole two-step sequence lives on one thread rather than blocking the
@@ -898,7 +913,14 @@ fn measure_wire(net: &NetState, cfg: &Settings) -> Wire {
 
         wire.gateway = gateway.and_then(|h| h.join().ok()).and_then(&mut taken);
         wire.internet = internet.join().ok().and_then(&mut taken);
-        wire.tcp = tcp.join().ok();
+        wire.internet_alt = internet_alt.join().ok().and_then(&mut taken);
+        // Either anchor accepting a connection is a working transport; only
+        // both refusing is a block.
+        (wire.tcp, wire.tcp_via) = match (tcp.join().ok(), tcp_alt.join().ok()) {
+            (Some(Ok(ms)), _) => (Some(Ok(ms)), Some(ANCHOR)),
+            (_, Some(Ok(ms))) => (Some(Ok(ms)), Some(ANCHOR_ALT)),
+            (first, second) => (first.or(second), None),
+        };
         wire.dns = dns.join().unwrap_or((None, String::new()));
         wire.edge = edge
             .and_then(|h| h.join().ok())
@@ -908,6 +930,13 @@ fn measure_wire(net: &NetState, cfg: &Settings) -> Wire {
     });
 
     wire
+}
+
+/// Whether anything past the router answered: either anchor to a ping, or
+/// either to a TCP connection.
+fn internet_answered(wire: &Wire) -> bool {
+    let echoed = |s: &Option<Stats>| s.as_ref().is_some_and(|s| s.avg.is_some());
+    echoed(&wire.internet) || echoed(&wire.internet_alt) || matches!(wire.tcp, Some(Ok(_)))
 }
 
 /// The findings read off the pings and the TCP probe.
@@ -957,6 +986,18 @@ fn report_link(net: &NetState, wire: &Wire, m: &mut Measurements) -> Vec<Finding
 
     let stats = match &wire.gateway {
         Some(s) if s.avg.is_some() => s.clone(),
+        // Plenty of routers drop pings addressed to themselves and forward
+        // everything else. With traffic getting through, a silent router is
+        // a setting on it, not a dead link: calling that "LAN, clear" sent
+        // people to reboot a router that was working.
+        _ if internet_answered(wire) => {
+            return vec![Finding::new(
+                "gateway_mute",
+                i18n::f_router_mute(),
+                Severity::Info,
+                i18n::f_router_mute_detail(&gw.to_string()),
+            )]
+        }
         _ => {
             return vec![Finding::new(
                 "gateway_silent",
@@ -1049,9 +1090,27 @@ fn report_internet(
     wire: &Wire,
     m: &mut Measurements,
 ) -> Vec<Finding> {
-    let stats = wire.internet.clone().unwrap_or_default();
-
-    let Some(avg) = stats.avg else {
+    // Of the anchors that answered, the one that lost less. Loss introduced
+    // on the shared path shows on both; loss on one alone is that responder,
+    // or a filter in front of it.
+    let answered = |s: &Option<Stats>| s.clone().filter(|s| s.avg.is_some());
+    let (primary, alt) = (answered(&wire.internet), answered(&wire.internet_alt));
+    let on_primary = match (&primary, &alt) {
+        (Some(p), Some(a)) => p.loss_pct <= a.loss_pct,
+        (p, _) => p.is_some(),
+    };
+    let Some(stats) = (if on_primary { primary } else { alt }) else {
+        // Neither anchor echoed. A connection that still got through means
+        // the pings were filtered, not that the internet is gone: only all
+        // three agreeing is an outage.
+        if matches!(wire.tcp, Some(Ok(_))) {
+            return vec![Finding::new(
+                "icmp_filtered",
+                i18n::f_icmp_filtered(),
+                Severity::Warn,
+                i18n::f_icmp_filtered_detail(&format!("{ANCHOR}, {ANCHOR_ALT}")),
+            )];
+        }
         return vec![Finding::new(
             "internet_silent",
             i18n::f_net_silent(),
@@ -1060,6 +1119,7 @@ fn report_internet(
         )
         .advise(i18n::f_net_silent_advice())];
     };
+    let Some(avg) = stats.avg else { return Vec::new() };
 
     let jitter = stats.jitter.unwrap_or(0.0);
     let spread = stats.max.unwrap_or(0.0) - stats.min.unwrap_or(0.0);
@@ -1070,7 +1130,8 @@ fn report_internet(
     // This machine's own history, where there is enough of it. A threshold
     // from a settings file describes a hypothetical line; this describes the
     // one in front of the user, and only it can say "worse than usual".
-    let history = store.stats(ANCHOR_KEY, BASELINE_WINDOW_S);
+    let key = if on_primary { ANCHOR_KEY } else { ANCHOR_ALT_KEY };
+    let history = store.stats(key, BASELINE_WINDOW_S);
     if history.count >= BASELINE_MIN_SAMPLES {
         // The median, not the mean. A week that contained one bad evening has
         // a mean pulled up by it, and a baseline that has absorbed the fault
@@ -1128,8 +1189,8 @@ fn report_internet(
 ///
 /// The probe goes to a literal address so that a broken resolver cannot be
 /// mistaken for a broken transport — DNS is checked separately, on purpose.
-fn tcp_probe(cfg: &Settings) -> Result<f64, String> {
-    let addr = SocketAddr::from((ANCHOR, 443));
+fn tcp_probe(anchor: Ipv4Addr, cfg: &Settings) -> Result<f64, String> {
+    let addr = SocketAddr::from((anchor, 443));
     let timeout = Duration::from_millis((cfg.ping_timeout_ms as u64 * 3).max(2000));
     let started = Instant::now();
     match TcpStream::connect_timeout(&addr, timeout) {
@@ -1139,7 +1200,10 @@ fn tcp_probe(cfg: &Settings) -> Result<f64, String> {
 }
 
 fn report_reachability(wire: &Wire, m: &mut Measurements) -> Vec<Finding> {
-    let host = ANCHOR.to_string();
+    let host = match (&wire.tcp, wire.tcp_via) {
+        (Some(Ok(_)), Some(via)) => via.to_string(),
+        _ => format!("{ANCHOR}, {ANCHOR_ALT}"),
+    };
     let Some(result) = &wire.tcp else {
         return Vec::new();
     };
@@ -1752,6 +1816,74 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let findings = check_medium(&net, &store, &Settings::default());
         assert_ne!(findings[0].title, i18n::f_apipa());
+    }
+
+    /// Runs the wire findings and the verdict, the way `scan` does.
+    fn verdict_of(wire: &Wire) -> (Vec<Finding>, Verdict) {
+        let net = NetState {
+            adapter_name: "WiFi".into(),
+            gateway: Some(Ipv4Addr::new(192, 168, 1, 1)),
+            ..Default::default()
+        };
+        let store = Store::open_in_memory().unwrap();
+        let mut m = Measurements::default();
+        let findings = report_wire(&net, &store, &Settings::default(), wire, &mut m);
+        let v = judge(&findings, &m, &Settings::default());
+        (findings, v)
+    }
+
+    fn silent(n: usize) -> Stats {
+        store::summarise(n, &[])
+    }
+
+    #[test]
+    fn a_router_that_ignores_pings_on_a_working_line_is_not_a_dead_lan() {
+        // Many routers drop ICMP addressed to themselves. The internet
+        // answered in 12 ms and TCP connected, and the verdict was "LAN,
+        // clear", because a silent gateway outranked everything.
+        let wire = Wire {
+            gateway: Some(silent(10)),
+            internet: Some(stats(12.0, 0.0)),
+            tcp: Some(Ok(14.0)),
+            dns: (Some(9.0), String::new()),
+            ..Default::default()
+        };
+        let (findings, v) = verdict_of(&wire);
+        assert_ne!(v.segment, Segment::Lan, "{findings:?}");
+        assert!(
+            !findings.iter().any(|f| f.severity == Severity::Critical),
+            "a working line has no critical finding: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn one_silent_anchor_is_not_a_dead_provider() {
+        // 1.1.1.1 filtered by the network, 8.8.8.8 answering, TCP fine.
+        let wire = Wire {
+            gateway: Some(stats(2.0, 0.0)),
+            internet: Some(silent(15)),
+            internet_alt: Some(stats(14.0, 0.0)),
+            tcp: Some(Ok(15.0)),
+            dns: (Some(9.0), String::new()),
+            ..Default::default()
+        };
+        let (findings, v) = verdict_of(&wire);
+        assert!(!matches!(v.segment, Segment::Isp | Segment::Internet), "{v:?} {findings:?}");
+        assert!(
+            findings.iter().any(|f| f.key == "internet" && f.detail.contains("14")),
+            "the anchor that answered is the one measured: {findings:?}"
+        );
+
+        // Both anchors silent to ICMP, but TCP gets through: the internet
+        // works and something filters pings. Not a certain outage.
+        let wire = Wire { internet_alt: Some(silent(15)), ..wire };
+        let (_, v) = verdict_of(&wire);
+        assert_ne!(v.confidence, Confidence::Certain, "{v:?}");
+
+        // All three agree: that is an outage past the router.
+        let wire = Wire { tcp: Some(Err("timed out".into())), ..wire };
+        let (_, v) = verdict_of(&wire);
+        assert_eq!((v.segment, v.confidence), (Segment::Isp, Confidence::Certain));
     }
 
     #[test]

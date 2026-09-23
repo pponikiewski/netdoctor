@@ -640,6 +640,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     f_icmp_blind =>
         "Pings could not be sent",
         "Nie dało się wysłać pingów";
+    f_router_mute =>
+        "The router does not answer pings, but traffic passes",
+        "Router nie odpowiada na pingi, ale ruch przechodzi";
+    f_icmp_filtered =>
+        "Pings are filtered, but the internet is reachable",
+        "Pingi są filtrowane, ale internet jest osiągalny";
     f_icmp_blind_advice =>
         "Something on this PC is blocking ICMP for the app (security software, policy). Run the \
          scan again; if it repeats, check what is blocking it.",
@@ -1605,6 +1611,37 @@ pub fn set_err_interval_max(max_s: u64) -> String {
         Lang::Pl => format!(
             "Odstęp powyżej {max_s} s wyłączyłby zapisywanie awarii: tak rzadkie pomiary \
              wyglądają jak uśpiony komputer."
+        ),
+    }
+}
+
+/// A router that ignores pings addressed to itself while traffic passes.
+pub fn f_router_mute_detail(gw: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "{gw} did not answer pings, but the internet did. Many routers ignore pings \
+             addressed to themselves; that is a setting, not a fault. The latency of this \
+             stretch cannot be measured separately."
+        ),
+        Lang::Pl => format!(
+            "{gw} nie odpowiedział na pingi, ale internet tak. Wiele routerów ignoruje pingi \
+             skierowane do siebie; to ustawienie, a nie usterka. Opóźnienia tego odcinka nie da \
+             się zmierzyć osobno."
+        ),
+    }
+}
+
+/// Neither anchor answered pings, but a connection to one of them worked.
+pub fn f_icmp_filtered_detail(hosts: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "No ping to {hosts} came back, but a connection to port 443 went through. The \
+             internet works; something on the way filters pings, so loss and latency could not \
+             be measured."
+        ),
+        Lang::Pl => format!(
+            "Żaden ping do {hosts} nie wrócił, ale połączenie na port 443 przeszło. Internet \
+             działa; coś po drodze filtruje pingi, więc strat i opóźnienia nie dało się zmierzyć."
         ),
     }
 }

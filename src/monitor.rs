@@ -1222,7 +1222,7 @@ fn classify(
         if !dns_error.is_empty() {
             return (Status::DnsFail, i18n::mon_dns_detail(dns_error));
         }
-        return quality_verdict(results, settings, store, quality_window_s);
+        return quality_verdict(results, targets, settings, store, quality_window_s);
     }
 
     // Nothing on the internet answered. Who is still there?
@@ -1245,31 +1245,44 @@ fn classify(
 }
 
 /// The link is up; decide whether it is actually usable.
+///
+/// Every public internet target is read, and each measure is taken from the
+/// target that shows the least of it. Loss, jitter and delay on the line
+/// itself show on all of them; on one alone they belong to that responder,
+/// or to a filter in front of it. Reading 1.1.1.1 only turned a network that
+/// drops pings to it into a permanent "degraded".
 fn quality_verdict(
     results: &HashMap<String, Sample>,
+    targets: &[Resolved],
     settings: &Settings,
     store: &Store,
     window_s: f64,
 ) -> (Status, String) {
-    let worst = results
+    let public: Vec<&Resolved> = targets
         .iter()
-        .filter(|(k, _)| k.as_str() == "cloudflare" || k.as_str() == "google")
-        .filter_map(|(_, s)| s.rtt_ms)
-        .fold(f64::NAN, f64::max);
+        .filter(|t| t.scope == Scope::Internet && crate::diagnose::is_public(t.host))
+        .collect();
 
-    let stats = store.stats("cloudflare", window_s);
-    if stats.count >= MIN_QUALITY_SAMPLES {
-        if stats.loss_pct > settings.loss_ok_pct {
-            return (Status::Degraded, i18n::mon_loss_detail(stats.loss_pct));
-        }
-        if let Some(j) = stats.jitter {
-            if j > settings.jitter_ok_ms * 2.0 {
-                return (Status::Degraded, i18n::mon_jitter_detail(j));
-            }
-        }
+    let fastest = public
+        .iter()
+        .filter_map(|t| results.get(&t.key).and_then(|s| s.rtt_ms))
+        .fold(f64::NAN, f64::min);
+
+    let judged: Vec<store::Stats> = public
+        .iter()
+        .map(|t| store.stats(&t.key, window_s))
+        .filter(|s| s.count >= MIN_QUALITY_SAMPLES)
+        .collect();
+    let loss = judged.iter().map(|s| s.loss_pct).fold(f64::NAN, f64::min);
+    if loss > settings.loss_ok_pct {
+        return (Status::Degraded, i18n::mon_loss_detail(loss));
     }
-    if worst.is_finite() && worst > settings.ping_bad_ms {
-        return (Status::Degraded, i18n::mon_ping_detail(worst));
+    let jitter = judged.iter().filter_map(|s| s.jitter).fold(f64::NAN, f64::min);
+    if jitter > settings.jitter_ok_ms * 2.0 {
+        return (Status::Degraded, i18n::mon_jitter_detail(jitter));
+    }
+    if fastest > settings.ping_bad_ms {
+        return (Status::Degraded, i18n::mon_ping_detail(fastest));
     }
     (Status::Ok, String::new())
 }
@@ -1850,6 +1863,57 @@ mod tests {
         assert_eq!(across, Status::Degraded, "the old window reads the outage as loss");
         let after = classify(&line_up(), &targets(), &wifi_state(), "", &s, &store, 16.0).0;
         assert_eq!(after, Status::Ok, "from the outage's end on, nothing was lost");
+    }
+
+    #[test]
+    fn one_filtered_target_is_not_a_lossy_line() {
+        // A network that drops pings to 1.1.1.1 while 8.8.8.8 answers: loss
+        // was read off 1.1.1.1 alone, and the line stayed "degraded" for as
+        // long as the filter did.
+        let store = Store::open_in_memory().unwrap();
+        let t = store::now();
+        let mut rows = Vec::new();
+        for i in 1..=30 {
+            rows.push((t - i as f64, "cloudflare".to_string(), None, false));
+            rows.push((t - i as f64, "google".to_string(), Some(14.0), true));
+        }
+        store.add_samples(&rows).unwrap();
+
+        let targets = vec![
+            targets().remove(0),
+            Resolved {
+                key: "cloudflare".into(),
+                host: Ipv4Addr::new(1, 1, 1, 1),
+                scope: Scope::Internet,
+            },
+            Resolved {
+                key: "google".into(),
+                host: Ipv4Addr::new(8, 8, 8, 8),
+                scope: Scope::Internet,
+            },
+        ];
+        let mut r = HashMap::new();
+        r.insert("gateway".into(), sample(true, Some(2.0)));
+        r.insert("cloudflare".into(), sample(false, None));
+        r.insert("google".into(), sample(true, Some(14.0)));
+        let s = Settings::default();
+        let (status, note) =
+            classify(&r, &targets, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
+        assert_eq!(status, Status::Ok, "{note}");
+
+        // Loss on every public target is loss on the line.
+        let mut lossy = Vec::new();
+        for i in 1..=30 {
+            let ok = i % 3 != 0;
+            lossy.push((t - i as f64 - 0.5, "google".to_string(), ok.then_some(14.0), ok));
+        }
+        let store2 = Store::open_in_memory().unwrap();
+        store2
+            .add_samples(&rows.iter().filter(|r| r.1 == "cloudflare").cloned().collect::<Vec<_>>())
+            .unwrap();
+        store2.add_samples(&lossy).unwrap();
+        let (status, _) = classify(&r, &targets, &wifi_state(), "", &s, &store2, QUALITY_WINDOW_S);
+        assert_eq!(status, Status::Degraded);
     }
 
     #[test]
