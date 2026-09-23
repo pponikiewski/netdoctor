@@ -258,6 +258,43 @@ An outage is only recorded if the monitor is running when it happens. So:
   (three failed readings in a row, and not merely slow), and again when the
   line comes back, with how long it was down. Turn it off in Settings.
 
+## Game mode
+
+NetDoctor notices League of Legends, Counter-Strike 2 or VALORANT running (by
+process name, every few seconds) and then:
+
+- **measures twice as often**, so a spike is caught while it happens;
+- **shows an overlay** in the top-left corner: the router's and the
+  internet's reply time, and whose side a spike is on: *your side* (Wi-Fi or
+  router) when the router spiked with the internet, *past your router*
+  (provider or game server) when only the internet did. A spike is at least
+  50 ms over the last ten seconds' median, held for two of the last three
+  readings. Those numbers were chosen on a real recorded week: a first guess
+  of +30 ms on any single reading would have warned 27 times an hour on a
+  line that was sound 97% of the time; these warn about 3.5 times an hour. When no spike is
+  happening but this PC is moving more than 2 Mbit/s, it says so: a match
+  needs far less, so something else is downloading. Which program, it cannot
+  tell. The overlay is a separate click-through window, nothing is injected
+  into the game, so anti-cheat has nothing to object to. It shows over
+  borderless windowed; over exclusive fullscreen Windows may hide it. It can
+  be turned off in Settings.
+
+It does not show the game server's ping: these games talk over UDP, CS2
+through Valve's relays, and a ping measured from outside the game would be a
+different number. The game shows its own.
+
+**Prepare the connection** (tray menu, while a game runs, as administrator)
+stops Windows Update, BITS and Delivery Optimization if they are running and
+turns Wi-Fi power saving off if it is on. Only what it changed is written to
+`game_session.json`, and exactly that is undone once neither the game nor
+its client (the League client, the Riot client) has been running for 90
+seconds, so the lobby between matches does not end it; from the tray menu;
+or on the next start if the app was killed mid-game. While the session lasts,
+a service Windows starts again on its own is stopped again. It can
+only clear this computer's own traffic: a television streaming in the next
+room is the router's to manage, and the load test tells you whether it needs
+to.
+
 ## Changes it can make
 
 Each one records the previous value to
@@ -271,7 +308,7 @@ it matters, since several of these only take effect after one.
 | Wi-Fi power plan | low | a second, independent radio throttle |
 | Fast DNS (1.1.1.1) | medium | removes the router as a single point of failure |
 | TCP auto-tuning = normal | low | undoes the damage done by "ping boost" guides |
-| Disable Nagle | medium | a few ms off twitch games; needs a restart |
+| Disable Nagle | medium | a few ms off games that talk over TCP; League of Legends, CS2 and VALORANT use UDP and gain nothing; needs a restart |
 | Multimedia packet throttle | medium | Windows caps traffic during media playback |
 | MTU correction | medium | oversized MTU means pages that never finish loading |
 | Network stack reset | medium | rescue action when the link died; **not undoable** |
@@ -356,7 +393,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-294 tests, covering the failure-blame logic, the statistics, the registry layer,
+306 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

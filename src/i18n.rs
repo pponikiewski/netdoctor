@@ -83,6 +83,44 @@ strings! {
     // are not a verdict.
     tray_open => "Open NetDoctor", "Otwórz NetDoctor";
     tray_quit => "Quit", "Zakończ";
+    tray_game_no_game =>
+        "Prepare the connection for a game (start a game first)",
+        "Przygotuj łącze do gry (najpierw uruchom grę)";
+    tray_game_no_admin =>
+        "Prepare the connection for a game (needs administrator)",
+        "Przygotuj łącze do gry (wymaga administratora)";
+    tray_game_end => "End game mode and undo its changes", "Zakończ tryb gry i cofnij zmiany";
+    tray_game_title => "NetDoctor game mode", "NetDoctor: tryb gry";
+    game_needs_admin =>
+        "Game mode changes need administrator rights. Restart NetDoctor as administrator.",
+        "Zmiany trybu gry wymagają uprawnień administratora. Uruchom NetDoctora ponownie jako \
+         administrator.";
+    game_already =>
+        "Game mode is already on. End it first.",
+        "Tryb gry jest już włączony. Najpierw go zakończ.";
+    game_restored =>
+        "Game mode ended: everything it changed is back as it was.",
+        "Tryb gry zakończony: wszystko, co zmienił, wróciło do poprzedniego stanu.";
+    game_restore_partial =>
+        "Game mode could not undo everything. NetDoctor will try again when it next starts.",
+        "Tryb gry nie cofnął wszystkiego. NetDoctor spróbuje ponownie przy następnym \
+         uruchomieniu.";
+    game_nothing_to_do =>
+        "Nothing to change: updates are not downloading and Wi-Fi power saving is already off.",
+        "Nie ma nic do zmiany: aktualizacje nie są pobierane, a oszczędzanie energii Wi-Fi jest \
+         już wyłączone.";
+    ov_not_measuring => "NetDoctor: not measuring", "NetDoctor: nie mierzę";
+    ov_clean => "Stable", "Stabilnie";
+    ov_unknown => "Collecting readings…", "Zbieram pomiary…";
+    ov_local =>
+        "Spike on your side: Wi-Fi or router",
+        "Skok po Twojej stronie: Wi-Fi lub router";
+    ov_beyond =>
+        "Spike past your router: provider or server",
+        "Skok za routerem: dostawca lub serwer";
+    set_game_overlay =>
+        "Show the ping overlay while a game runs",
+        "Pokazuj nakładkę z pingiem podczas gry";
     tray_paused => "NetDoctor: measuring paused", "NetDoctor: pomiar wstrzymany";
     tray_waiting => "NetDoctor: waiting for the first reading", "NetDoctor: czekam na pierwszy pomiar";
 
@@ -1334,10 +1372,14 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Writes TcpAckFrequency=1 and TCPNoDelay=1 for the active interface.",
         "Zapisuje TcpAckFrequency=1 i TCPNoDelay=1 dla aktywnego interfejsu.";
     tw_nagle_why =>
-        "Windows buffers small packets and delays acknowledgements. In twitch games that is a \
-         few to a dozen extra milliseconds. It makes no difference to downloads.",
-        "Windows buforuje małe pakiety i opóźnia potwierdzenia. W dynamicznych grach to kilka do \
-         kilkunastu dodatkowych milisekund. Na pobieranie nie ma wpływu.";
+        "Windows buffers small TCP packets and delays acknowledgements, which can add a few \
+         milliseconds to a game that talks over TCP. League of Legends, Counter-Strike 2 and \
+         VALORANT use UDP, which this does not touch, so it gains them nothing. It makes no \
+         difference to downloads.",
+        "Windows buforuje małe pakiety TCP i opóźnia potwierdzenia, co może dodać kilka \
+         milisekund grze, która komunikuje się przez TCP. League of Legends, Counter-Strike 2 \
+         i VALORANT używają UDP, którego to nie dotyczy, więc nic im nie daje. Na pobieranie \
+         nie ma wpływu.";
     tw_nagle_no_guid => "adapter GUID unknown", "nieznany GUID karty";
     tw_no_adapter_key => "adapter key not found", "nie znaleziono klucza karty";
     tw_snapshot_no_key => "snapshot has no key", "zrzut nie zawiera klucza";
@@ -2510,6 +2552,38 @@ pub fn f_apipa_detail(adapter: &str, ip: &str) -> String {
 
 pub fn f_wired_detail(adapter: &str, mbps: u64) -> String {
     format!("{adapter}, {mbps} Mbps")
+}
+
+pub fn tray_game_prepare(game: &str) -> String {
+    match current() {
+        Lang::En => format!("Prepare the connection for {game}"),
+        Lang::Pl => format!("Przygotuj łącze do gry: {game}"),
+    }
+}
+
+pub fn game_prepared(changes: usize) -> String {
+    match current() {
+        Lang::En => format!(
+            "Connection prepared: {changes} change(s) made. They are undone when the game closes."
+        ),
+        Lang::Pl => format!(
+            "Łącze przygotowane, liczba zmian: {changes}. Zostaną cofnięte po zamknięciu gry."
+        ),
+    }
+}
+
+pub fn ov_ping(router: &str, internet: &str) -> String {
+    match current() {
+        Lang::En => format!("Router {router}   Internet {internet}"),
+        Lang::Pl => format!("Router {router}   Internet {internet}"),
+    }
+}
+
+pub fn ov_busy(mbps: f64) -> String {
+    match current() {
+        Lang::En => format!("Something on this PC is using {mbps:.0} Mbit/s"),
+        Lang::Pl => format!("Coś na tym komputerze zajmuje {mbps:.0} Mbit/s"),
+    }
 }
 
 pub fn f_link_errors_detail(errors: u64, packets: u64, pct: f64) -> String {

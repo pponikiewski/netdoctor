@@ -98,6 +98,7 @@ fn language_thresholds_behaviour(app: &mut App, ui: &mut egui::Ui) {
     section(ui, i18n::set_sec_behaviour(), |ui| {
         ui.checkbox(&mut app.draft.notify_on_outage, i18n::set_notify());
         ui.checkbox(&mut app.draft.start_minimised, i18n::set_start_min());
+        ui.checkbox(&mut app.draft.game_overlay, i18n::set_game_overlay());
 
         let mut autostart = app.autostart_on;
         if ui.checkbox(&mut autostart, i18n::set_autostart()).changed() {

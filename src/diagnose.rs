@@ -1575,7 +1575,7 @@ mod tests {
     }
 
     fn counters(packets: u64, errors: u64) -> Option<LinkCounters> {
-        Some(LinkCounters { packets, errors })
+        Some(LinkCounters { packets, errors, bytes: 0 })
     }
 
     #[test]

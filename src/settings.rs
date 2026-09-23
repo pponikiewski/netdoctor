@@ -63,6 +63,9 @@ pub struct Settings {
     /// hand in the settings tab.
     pub check_updates: bool,
 
+    /// Show the ping overlay while a game is running.
+    pub game_overlay: bool,
+
     /// `None` until the user picks one, which lets the first run follow the
     /// Windows UI language without freezing that choice in the file.
     pub lang: Option<Lang>,
@@ -89,6 +92,8 @@ impl Default for Settings {
             keep_days: 14,
 
             check_updates: true,
+
+            game_overlay: true,
 
             lang: None,
         }

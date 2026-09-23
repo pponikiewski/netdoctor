@@ -310,6 +310,8 @@ pub struct App {
     /// then the close button closes, since nothing could bring a hidden
     /// window back. Dropped with the app, which removes the icon.
     tray: Option<crate::tray::Tray>,
+    /// The ping overlay shown over a game. Dropped with the app.
+    _overlay: Option<crate::overlay::Overlay>,
     /// Hide the window on the first frame: `--minimised`, or the setting.
     /// See `update`.
     start_hidden: bool,
@@ -331,6 +333,8 @@ impl App {
             monitor.notices.clone(),
             Arc::clone(&quit),
         );
+        crate::game::start_watcher(Arc::clone(&monitor.shared), Arc::clone(&store));
+        let overlay = crate::overlay::Overlay::start(Arc::clone(&monitor.shared));
 
         let mut app = App {
             store,
@@ -383,6 +387,7 @@ impl App {
             rx,
             quit,
             tray,
+            _overlay: overlay,
             start_hidden,
         };
         app.refresh_tweaks();

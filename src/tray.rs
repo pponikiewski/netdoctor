@@ -146,10 +146,10 @@ mod imp {
         DestroyMenu, DestroyWindow, DispatchMessageW, EnumWindows, GetCursorPos, GetMessageW,
         GetSystemMetrics, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, PostQuitMessage,
         RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetTimer, ShowWindow,
-        TrackPopupMenu, TranslateMessage, HICON, MF_SEPARATOR, MF_STRING, MSG, SM_CXSMICON,
-        SW_RESTORE, SW_SHOWMINNOACTIVE, TPM_BOTTOMALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WM_APP,
-        WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
-        WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
+        TrackPopupMenu, TranslateMessage, HICON, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG,
+        SM_CXSMICON, SW_RESTORE, SW_SHOWMINNOACTIVE, TPM_BOTTOMALIGN, TPM_RIGHTBUTTON,
+        WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP,
+        WM_NULL, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
     };
 
     use super::{balloon_text, circle_bits, fill, tooltip, Level, Seen};
@@ -164,6 +164,8 @@ mod imp {
     /// Menu commands. Also what a test sends as `WM_COMMAND`.
     const CMD_OPEN: usize = 1;
     const CMD_QUIT: usize = 2;
+    const CMD_GAME_PREP: usize = 3;
+    const CMD_GAME_END: usize = 4;
 
     /// `TaskbarCreated`, which Explorer broadcasts when it restarts and has
     /// forgotten every icon. Registered once, read by the window procedure.
@@ -336,6 +338,22 @@ mod imp {
             }
             while let Ok(notice) = self.notices.try_recv() {
                 self.balloon(&notice);
+            }
+            let game_msg = self.shared.game_msg.lock().unwrap_or_else(|p| p.into_inner()).take();
+            if let Some(body) = game_msg {
+                self.info(crate::i18n::tray_game_title(), &body);
+            }
+        }
+
+        /// A plain notification, for what game mode did.
+        fn info(&self, title: &str, body: &str) {
+            let mut d = self.data();
+            d.uFlags = NIF_INFO;
+            d.dwInfoFlags = NIIF_INFO;
+            fill(&mut d.szInfoTitle, title);
+            fill(&mut d.szInfo, if body.is_empty() { title } else { body });
+            unsafe {
+                let _ = Shell_NotifyIconW(NIM_MODIFY, &d);
             }
         }
 
@@ -527,6 +545,23 @@ mod imp {
             let quit = wide(crate::i18n::tray_quit());
             let _ = AppendMenuW(menu, MF_STRING, CMD_OPEN, PCWSTR(open.as_ptr()));
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+            // Game mode. Always listed, so it can be found; greyed out, with
+            // the reason in its label, when it cannot be used now.
+            let mut game = None;
+            with_state(|s| game = *s.shared.game.lock().unwrap_or_else(|p| p.into_inner()));
+            let (label, cmd, enabled) = if crate::game::session_active() {
+                (crate::i18n::tray_game_end().to_string(), CMD_GAME_END, true)
+            } else if !crate::optimize::is_elevated() {
+                (crate::i18n::tray_game_no_admin().to_string(), CMD_GAME_PREP, false)
+            } else if let Some(name) = game {
+                (crate::i18n::tray_game_prepare(name), CMD_GAME_PREP, true)
+            } else {
+                (crate::i18n::tray_game_no_game().to_string(), CMD_GAME_PREP, false)
+            };
+            let label = wide(&label);
+            let flags = if enabled { MF_STRING } else { MF_STRING | MF_GRAYED };
+            let _ = AppendMenuW(menu, flags, cmd, PCWSTR(label.as_ptr()));
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT, PCWSTR(quit.as_ptr()));
             let mut at = POINT::default();
             let _ = GetCursorPos(&mut at);
@@ -561,6 +596,12 @@ mod imp {
             WM_COMMAND => match wparam.0 & 0xffff {
                 CMD_OPEN => open_window(),
                 CMD_QUIT => quit(),
+                CMD_GAME_PREP => {
+                    with_state(|s| crate::game::prepare_in_background(Arc::clone(&s.shared)))
+                }
+                CMD_GAME_END => {
+                    with_state(|s| crate::game::restore_in_background(Arc::clone(&s.shared)))
+                }
                 _ => {}
             },
             WM_CLOSE => {

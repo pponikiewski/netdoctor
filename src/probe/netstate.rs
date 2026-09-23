@@ -514,6 +514,8 @@ const DNS_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2)
 pub struct LinkCounters {
     pub packets: u64,
     pub errors: u64,
+    /// Bytes received and sent.
+    pub bytes: u64,
 }
 
 impl LinkCounters {
@@ -524,7 +526,18 @@ impl LinkCounters {
         Some(LinkCounters {
             packets: self.packets.checked_sub(earlier.packets)?,
             errors: self.errors.checked_sub(earlier.errors)?,
+            bytes: self.bytes.checked_sub(earlier.bytes)?,
         })
+    }
+
+    /// Traffic through the adapter between `earlier` and `self`, `secs`
+    /// apart, in Mbit/s both ways together. `None` across a reset.
+    pub fn mbps_since(&self, earlier: &LinkCounters, secs: f64) -> Option<f64> {
+        if secs <= 0.0 {
+            return None;
+        }
+        let d = self.since(earlier)?;
+        Some(d.bytes as f64 * 8.0 / secs / 1_000_000.0)
     }
 }
 
@@ -542,6 +555,7 @@ pub fn link_counters(if_index: u32) -> Option<LinkCounters> {
     Some(LinkCounters {
         packets: row.InUcastPkts + row.InNUcastPkts + row.OutUcastPkts + row.OutNUcastPkts,
         errors: row.InErrors + row.OutErrors,
+        bytes: row.InOctets + row.OutOctets,
     })
 }
 
@@ -785,6 +799,15 @@ mod tests {
 
     /// What the routing table answers on this machine, next to what `read()`
     /// picked. Ignored: it describes the live machine.
+    #[test]
+    fn traffic_is_read_off_the_byte_counters_and_not_across_a_reset() {
+        let at = |bytes| LinkCounters { bytes, ..Default::default() };
+        let mbps = at(3_000_000).mbps_since(&at(0), 10.0).unwrap_or(-1.0);
+        assert!((mbps - 2.4).abs() < 1e-9, "{mbps}");
+        assert_eq!(at(5).mbps_since(&at(10), 10.0), None, "counters went backwards");
+        assert_eq!(at(10).mbps_since(&at(0), 0.0), None);
+    }
+
     #[test]
     #[ignore = "watches the live machine"]
     fn show_link_counters() {

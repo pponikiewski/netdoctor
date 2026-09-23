@@ -422,6 +422,14 @@ pub struct Shared {
     icmp_dark_since: Mutex<Option<Instant>>,
     /// The latest connection attempt `run_tcp` made.
     tcp: Mutex<Option<TcpAttempt>>,
+    /// A game from [`crate::game::GAMES`] is running. Kept by the game
+    /// watcher; the sweep reads it to tighten its cadence.
+    pub gaming: AtomicBool,
+    /// Which game, for the tray menu.
+    pub game: Mutex<Option<&'static str>>,
+    /// The outcome of the last game-mode prepare or restore, waiting for the
+    /// tray to show it.
+    pub game_msg: Mutex<Option<String>>,
 }
 
 /// How long a DNS test may run before the sweep calls it a failure. A healthy
@@ -633,6 +641,9 @@ impl Shared {
             hosts: Mutex::new(HashMap::new()),
             icmp_dark_since: Mutex::new(None),
             tcp: Mutex::new(None),
+            gaming: AtomicBool::new(false),
+            game: Mutex::new(None),
+            game_msg: Mutex::new(None),
         }
     }
 
@@ -1168,6 +1179,7 @@ fn run_loop(
     while !stop.load(Ordering::Relaxed) {
         let started = Instant::now();
         let settings = held(&shared.settings).clone();
+        let interval = sweep_interval(&settings, shared.gaming.load(Ordering::Relaxed));
 
         if shared.paused() {
             // Nobody is watching from here on. What that means for an open
@@ -1249,7 +1261,7 @@ fn run_loop(
                 };
                 *held(&shared.last) = snap.clone();
                 let _ = tx.try_send(snap);
-                pace(started, settings.interval(), &stop);
+                pace(started, interval, &stop);
                 continue;
             }
         };
@@ -1412,7 +1424,7 @@ fn run_loop(
             let _ = store.prune(settings.keep_days);
         }
 
-        pace(started, settings.interval(), &stop);
+        pace(started, interval, &stop);
     }
 
     // Shutting down while an outage is open: close it at the last sweep that
@@ -1421,6 +1433,22 @@ fn run_loop(
     if let Some(id) = open_event {
         let at = prev_sweep_ts.unwrap_or_else(store::now);
         let _ = store.close_event_at(id, at, "");
+    }
+}
+
+/// How often a sweep runs while a game is being played. A spike has to be
+/// caught while it is happening, and a second between readings is long
+/// enough to miss the one that cost the round.
+const GAME_INTERVAL: Duration = Duration::from_millis(500);
+
+/// The sweep interval: the user's, or [`GAME_INTERVAL`] while a game runs
+/// if the user's is slower.
+fn sweep_interval(settings: &Settings, gaming: bool) -> Duration {
+    let interval = settings.interval();
+    if gaming {
+        interval.min(GAME_INTERVAL)
+    } else {
+        interval
     }
 }
 
@@ -1963,6 +1991,15 @@ mod tests {
         // A verdict reached with pings answering is not the TCP probe's to change.
         let dns = (Status::DnsFail, "n".to_string());
         assert_eq!(past_filtered_pings(dns, true).0, Status::DnsFail);
+    }
+
+    #[test]
+    fn a_game_tightens_the_cadence_and_never_slows_it() {
+        let every = |ms| Settings { probe_interval_ms: ms, ..Settings::default() };
+        assert_eq!(sweep_interval(&every(1000), true), GAME_INTERVAL);
+        assert_eq!(sweep_interval(&every(1000), false), Duration::from_millis(1000));
+        // Already faster than the game cadence: left alone.
+        assert_eq!(sweep_interval(&every(300), true), Duration::from_millis(300));
     }
 
     #[test]
