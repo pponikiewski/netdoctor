@@ -1350,13 +1350,31 @@ fn check_tcp(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
 /// critical on its own. Five minutes off the network is a lost meeting.
 const HIST_CRITICAL_DOWN_S: f64 = 300.0;
 
+/// The span the history check reads.
+const HIST_WINDOW_S: f64 = 24.0 * 3600.0;
+/// How much of it has to have been watched for "no outages" to count as a
+/// clean day. Short of it, the finding says how much was.
+const HIST_WATCHED_ENOUGH: f64 = 0.95;
+
 fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding> {
     let events = store.events_since(24.0 * 3600.0);
     if events.is_empty() {
+        // An empty history is only good news for the part of the day that
+        // was watched. Minutes after a first start it is no news at all.
+        let now = store::now();
+        let watched = store.observed_seconds(now - HIST_WINDOW_S, now, store::OBSERVATION_GAP_S);
+        if watched >= HIST_WINDOW_S * HIST_WATCHED_ENOUGH {
+            return vec![Finding::new(
+                "history",
+                i18n::f_hist_none(),
+                Severity::Good,
+                i18n::f_hist_none_detail(),
+            )];
+        }
         return vec![Finding::new(
             "history",
-            i18n::f_hist_none(),
-            Severity::Good,
+            i18n::f_hist_none_partial(&i18n::span(watched)),
+            Severity::Info,
             i18n::f_hist_none_detail(),
         )];
     }
@@ -1888,6 +1906,31 @@ mod tests {
         let wire = Wire { tcp: Some(Err("timed out".into())), ..wire };
         let (_, v) = verdict_of(&wire);
         assert_eq!((v.segment, v.confidence), (Segment::Isp, Confidence::Certain));
+    }
+
+    #[test]
+    fn no_outages_is_only_good_news_when_the_day_was_watched() {
+        // Five minutes after a first start the scan said "no outages in the
+        // last 24 hours", graded Good, as if it had watched the whole day.
+        let store = Store::open_in_memory().unwrap();
+        let t = store::now();
+        let rows: Vec<_> =
+            (0..300).map(|i| (t - i as f64, "cloudflare".to_string(), Some(12.0), true)).collect();
+        store.add_samples(&rows).unwrap();
+
+        let f = check_history(&NetState::default(), &store, &Settings::default());
+        assert_eq!(f.len(), 1);
+        assert_ne!(f[0].severity, Severity::Good, "{f:?}");
+        assert!(f[0].title.contains("5 min") || f[0].detail.contains("5 min"), "{f:?}");
+
+        // A whole watched day is good news.
+        let store = Store::open_in_memory().unwrap();
+        let day: Vec<_> = (0..(24 * 3600 / 30))
+            .map(|i| (t - (i * 30) as f64, "cloudflare".to_string(), Some(12.0), true))
+            .collect();
+        store.add_samples(&day).unwrap();
+        let f = check_history(&NetState::default(), &store, &Settings::default());
+        assert_eq!(f[0].severity, Severity::Good, "{f:?}");
     }
 
     #[test]

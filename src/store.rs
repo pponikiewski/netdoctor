@@ -402,6 +402,28 @@ impl Store {
         .flatten()
     }
 
+    /// How many seconds of `[from, to]` were actually watched: the time
+    /// between consecutive sweeps, where they are no more than `gap_s` apart.
+    ///
+    /// "No outages in the last day" means nothing unless somebody watched the
+    /// day. This is what says how much of it they did.
+    ///
+    /// ponytail: the same one-day scan of distinct sweep timestamps as
+    /// [`Store::observing_since`], so it belongs in a scan or a report, not
+    /// in anything that runs every frame.
+    pub fn observed_seconds(&self, from: f64, to: f64, gap_s: f64) -> f64 {
+        let conn = self.held_read();
+        conn.query_row(
+            "SELECT COALESCE(SUM(gap), 0) FROM (
+                 SELECT ts - LAG(ts) OVER (ORDER BY ts) AS gap
+                 FROM (SELECT DISTINCT ts FROM samples WHERE ts >= ?1 AND ts <= ?2)
+             ) WHERE gap <= ?3",
+            params![from, to, gap_s],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0)
+    }
+
     /// The newest sample on record. Tells a restart whether it is resuming a
     /// stretch of observation or beginning one.
     pub fn last_sample_ts(&self) -> Option<f64> {
@@ -599,6 +621,27 @@ fn median(rtts: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_time_between_close_sweeps_counts_as_watched() {
+        let store = Store::open_in_memory().unwrap();
+        let t = now() - 1000.0;
+        // Ten minutes at one sweep a second, a two-hour sleep, then ten more
+        // seconds. Two targets per sweep must not double the count.
+        let mut rows = Vec::new();
+        for i in 0..=600 {
+            for target in ["gateway", "cloudflare"] {
+                rows.push((t - 7800.0 + i as f64, target.to_string(), Some(1.0), true));
+            }
+        }
+        for i in 0..=10 {
+            rows.push((t + i as f64, "gateway".to_string(), Some(1.0), true));
+        }
+        store.add_samples(&rows).unwrap();
+        let watched = store.observed_seconds(t - 86_400.0, now(), OBSERVATION_GAP_S);
+        assert!((watched - 610.0).abs() < 1e-6, "{watched}");
+        assert_eq!(store.observed_seconds(t + 100.0, now(), OBSERVATION_GAP_S), 0.0);
+    }
 
     #[test]
     fn renaming_an_outage_keeps_the_evidence_it_opened_with() {

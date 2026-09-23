@@ -1646,6 +1646,38 @@ pub fn f_icmp_filtered_detail(hosts: &str) -> String {
     }
 }
 
+/// A length of time the way a person says it: "5 min", "3 h 20 min".
+pub fn span(secs: f64) -> String {
+    let mins = (secs.max(0.0) / 60.0).round() as u64;
+    match (mins / 60, mins % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
+/// No outages in the last day, but the day was only partly watched.
+pub fn f_hist_none_partial(watched: &str) -> String {
+    match current() {
+        Lang::En => format!("No outages in the {watched} watched of the last 24 hours"),
+        Lang::Pl => format!("Brak awarii w {watched} obserwacji z ostatnich 24 godzin"),
+    }
+}
+
+/// How much of a report's window was actually watched.
+pub fn rep_watched(watched: &str, window: &str) -> String {
+    match current() {
+        Lang::En => {
+            format!("  Watched {watched} of the last {window}; outside that nothing is known.")
+        }
+        Lang::Pl => {
+            format!(
+                "  Obserwowano {watched} z ostatnich {window}; poza tym czasem nic nie wiadomo."
+            )
+        }
+    }
+}
+
 /// A resolver that did not answer a direct query in time.
 pub fn dns_server_silent(server: &str) -> String {
     match current() {

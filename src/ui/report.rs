@@ -100,7 +100,11 @@ pub fn build(app: &App) -> String {
 
     let _ = writeln!(out);
     let _ = writeln!(out, "{}", i18n::rep_sec_outages());
-    let events = app.store.events_since(24.0 * 3600.0);
+    let window = 24.0 * 3600.0;
+    let now = crate::store::now();
+    let watched = app.store.observed_seconds(now - window, now, crate::store::OBSERVATION_GAP_S);
+    let _ = writeln!(out, "{}", i18n::rep_watched(&i18n::span(watched), &i18n::span(window)));
+    let events = app.store.events_since(window);
     if events.is_empty() {
         let _ = writeln!(out, "  {}", i18n::rep_none());
     }
