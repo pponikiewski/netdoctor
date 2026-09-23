@@ -427,31 +427,59 @@ fn security_name(
     }
 }
 
-/// True when the Wi-Fi radio reports an active association. Used to tell a
-/// dropped association apart from a router that stopped answering.
-pub fn wifi_associated() -> bool {
+/// Whether the Wi-Fi card `adapter_guid` (as in [`NetState::adapter_guid`])
+/// reports an active association, or `None` when that could not be read.
+/// Used to tell a dropped association apart from a router that stopped
+/// answering, so "unknown" must not be read as either.
+pub fn wifi_associated(adapter_guid: &str) -> Option<bool> {
+    association_of(wlan_interfaces(), adapter_guid)
+}
+
+/// Every WLAN interface as (GUID, associated), or `None` when the WLAN
+/// service could not be asked.
+fn wlan_interfaces() -> Option<Vec<(String, bool)>> {
     unsafe {
         let mut version = 0u32;
         let mut raw = HANDLE::default();
         if WlanOpenHandle(2, None, &mut version, &mut raw) != ERROR_SUCCESS.0 {
-            return false;
+            return None;
         }
         let handle = WlanHandle(raw);
         let mut list: *mut WLAN_INTERFACE_INFO_LIST = ptr::null_mut();
         if WlanEnumInterfaces(handle.0, None, &mut list) != ERROR_SUCCESS.0 || list.is_null() {
-            return false;
+            return None;
         }
-        let mut connected = false;
+        let mut out = Vec::new();
         for i in 0..(*list).dwNumberOfItems as usize {
             let info = (*list).InterfaceInfo.as_ptr().add(i);
-            if (*info).isState == WLAN_INTERFACE_STATE(1) {
-                connected = true;
-                break;
-            }
+            out.push((
+                guid_text(&(*info).InterfaceGuid),
+                (*info).isState == WLAN_INTERFACE_STATE(1),
+            ));
         }
         WlanFreeMemory(list as *const _);
-        connected
+        Some(out)
     }
+}
+
+/// A GUID in the form `GetAdaptersAddresses` names adapters by.
+fn guid_text(g: &GUID) -> String {
+    let d = g.data4;
+    format!(
+        "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
+        g.data1, g.data2, g.data3, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]
+    )
+}
+
+/// Whether the interface `wanted` is associated, from the WLAN listing.
+///
+/// `None` when that could not be read: no listing, or no entry for this card.
+/// Both used to come back as "not associated", and any other card that was
+/// connected answered for this one.
+fn association_of(listing: Option<Vec<(String, bool)>>, wanted: &str) -> Option<bool> {
+    let bare = |g: &str| g.trim_matches(|c| c == '{' || c == '}').to_ascii_lowercase();
+    let wanted = bare(wanted);
+    listing?.into_iter().find(|(guid, _)| bare(guid) == wanted).map(|(_, connected)| connected)
 }
 
 /// Resolve a hostname, timing how long the resolver took.
@@ -473,6 +501,27 @@ pub fn dns_lookup_ms(host: &str) -> (Option<f64>, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_association_asked_about_is_the_routed_cards_and_can_be_unknown() {
+        const MINE: &str = "{6B29FC40-CA47-1067-B31D-00DD010662DA}";
+        const OTHER: &str = "{0F8FAD5B-D9CB-469F-A165-70867728950E}";
+        // The WLAN service did not answer: that is not "not associated".
+        assert_eq!(association_of(None, MINE), None);
+        // A second card that is connected says nothing about this one.
+        let two = vec![(OTHER.to_string(), true), (MINE.to_string(), false)];
+        assert_eq!(association_of(Some(two.clone()), MINE), Some(false));
+        assert_eq!(association_of(Some(two), &MINE.to_lowercase()), Some(false), "case");
+        // A card the listing does not know is unknown, not disconnected.
+        assert_eq!(association_of(Some(vec![(OTHER.to_string(), true)]), MINE), None);
+        assert_eq!(association_of(Some(vec![(MINE.to_string(), true)]), MINE), Some(true));
+    }
+
+    #[test]
+    fn a_wlan_guid_is_written_the_way_the_adapter_list_writes_it() {
+        let g = GUID::from_u128(0x6b29fc40_ca47_1067_b31d_00dd010662da);
+        assert_eq!(guid_text(&g), "{6B29FC40-CA47-1067-B31D-00DD010662DA}");
+    }
 
     #[test]
     fn band_follows_channel() {
@@ -540,6 +589,11 @@ mod tests {
         println!("GetBestInterface -> {:?}", best_route_interface());
         let st = read();
         println!("read() picked adapter={} guid={}", st.adapter_name, st.adapter_guid);
+        println!(
+            "WLAN lists {:?}; associated(picked) = {:?}",
+            wlan_interfaces(),
+            wifi_associated(&st.adapter_guid)
+        );
     }
 
     /// Prints what `read()` makes of this machine, once a second.

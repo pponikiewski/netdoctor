@@ -1227,7 +1227,9 @@ fn classify(
             i18n::mon_isp_detail(&net.gateway.map(|g| g.to_string()).unwrap_or_else(|| "?".into())),
         ),
         Some(false) => {
-            if net.medium == Medium::Wifi && !netstate::wifi_associated() {
+            if net.medium == Medium::Wifi
+                && netstate::wifi_associated(&net.adapter_guid) == Some(false)
+            {
                 (Status::AdapterDown, i18n::mon_wifi_deassociated().into())
             } else {
                 (Status::LanDown, i18n::mon_nothing_responded().into())
