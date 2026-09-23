@@ -122,12 +122,8 @@ fn language_thresholds_behaviour(app: &mut App, ui: &mut egui::Ui) {
 fn save(app: &mut App, ui: &mut egui::Ui) {
     let now = ui.input(|i| i.time);
 
-    if app.draft.probe_interval_ms < 300 {
-        app.toast(i18n::set_err_interval(), RED, now);
-        return;
-    }
-    if app.draft.ping_ok_ms >= app.draft.ping_bad_ms {
-        app.toast(i18n::set_err_thresholds(), RED, now);
+    if let Some(why) = app.draft.refusal() {
+        app.toast(why, RED, now);
         return;
     }
 

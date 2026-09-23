@@ -13,6 +13,13 @@ use crate::i18n::{self, Lang};
 pub const APP_NAME: &str = "NetDoctor";
 pub const DNS_TEST_HOST: &str = "example.com";
 
+/// The longest interval between sweeps that still lets an outage open. A gap
+/// wider than [`crate::store::OBSERVATION_GAP_S`] is read as a machine that
+/// slept, which resets the failure streak, so at that interval every sweep
+/// would start the count again. Half of it leaves room for a sweep that runs
+/// late by its own timeout and an adapter read.
+pub const MAX_PROBE_INTERVAL_MS: u64 = (crate::store::OBSERVATION_GAP_S * 1000.0 / 2.0) as u64;
+
 /// Where a probe sits in the chain, which is what lets us blame the right
 /// party when it stops answering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,8 +178,24 @@ impl Settings {
         self.lang.unwrap_or_else(i18n::detect)
     }
 
+    /// Held to the range [`Settings::refusal`] allows, for a file edited by
+    /// hand: past the ceiling no outage could be recorded at all.
     pub fn interval(&self) -> std::time::Duration {
-        std::time::Duration::from_millis(self.probe_interval_ms.max(300))
+        std::time::Duration::from_millis(self.probe_interval_ms.clamp(300, MAX_PROBE_INTERVAL_MS))
+    }
+
+    /// Why these settings must not be saved, if they must not.
+    pub fn refusal(&self) -> Option<String> {
+        if self.probe_interval_ms < 300 {
+            return Some(i18n::set_err_interval().into());
+        }
+        if self.probe_interval_ms > MAX_PROBE_INTERVAL_MS {
+            return Some(i18n::set_err_interval_max(MAX_PROBE_INTERVAL_MS / 1000));
+        }
+        if self.ping_ok_ms >= self.ping_bad_ms {
+            return Some(i18n::set_err_thresholds().into());
+        }
+        None
     }
 
     /// The ping timeout a sweep may actually use: the configured one, but
@@ -367,6 +390,29 @@ mod tests {
         assert_eq!(s.keep_days, 3);
         assert_eq!(s.ping_timeout_ms, Settings::default().ping_timeout_ms);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn an_interval_that_would_hide_every_outage_is_refused() {
+        // A gap between sweeps wider than `OBSERVATION_GAP_S` is read as a
+        // machine that slept: it resets the failure streak, so at a minute
+        // per sweep no outage could ever open. The setting was accepted.
+        let gap_ms = (crate::store::OBSERVATION_GAP_S * 1000.0) as u64;
+        for ms in [gap_ms, gap_ms + 1, 10 * gap_ms] {
+            let s = Settings { probe_interval_ms: ms, ..Default::default() };
+            assert!(s.refusal().is_some(), "{ms} ms was accepted");
+        }
+        assert!(Settings::default().refusal().is_none());
+        let slow = Settings { probe_interval_ms: MAX_PROBE_INTERVAL_MS, ..Default::default() };
+        assert!(slow.refusal().is_none(), "the ceiling itself is allowed");
+        let over = Settings { probe_interval_ms: MAX_PROBE_INTERVAL_MS * 3, ..Default::default() };
+        assert_eq!(
+            over.interval().as_millis() as u64,
+            MAX_PROBE_INTERVAL_MS,
+            "a file edited by hand"
+        );
+        let ceiling = format!("{} s", MAX_PROBE_INTERVAL_MS / 1000);
+        assert!(i18n::set_interval_hint().contains(&ceiling), "the hint names the ceiling");
     }
 
     #[test]

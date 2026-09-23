@@ -179,8 +179,8 @@ poprosisz.";
 
     set_interval => "Interval between sweeps (ms)", "Odstęp między seriami (ms)";
     set_interval_hint =>
-        "Lower is more detailed but adds traffic. The floor is 300 ms.",
-        "Mniej znaczy dokładniej, ale więcej ruchu. Dolna granica to 300 ms.";
+        "Lower is more detailed but adds traffic. Between 300 ms and 30 s.",
+        "Mniej znaczy dokładniej, ale więcej ruchu. Od 300 ms do 30 s.";
     set_ping_timeout => "Ping timeout (ms)", "Limit czasu pingu (ms)";
     set_fails_before_alarm => "Failed sweeps before an alarm", "Nieudane serie przed alarmem";
     set_fails_hint =>
@@ -1592,6 +1592,20 @@ pub fn toast_restored(secs: f64) -> String {
         Lang::Pl => {
             format!("Połączenie przywrócone po {secs:.0} s. Zobacz zakładkę Historia awarii.")
         }
+    }
+}
+
+/// Refusal of a probe interval too long for an outage to ever be recorded.
+pub fn set_err_interval_max(max_s: u64) -> String {
+    match current() {
+        Lang::En => format!(
+            "An interval above {max_s} s would stop outages from being recorded at all: sweeps \
+             that far apart read as a machine that slept."
+        ),
+        Lang::Pl => format!(
+            "Odstęp powyżej {max_s} s wyłączyłby zapisywanie awarii: tak rzadkie pomiary \
+             wyglądają jak uśpiony komputer."
+        ),
     }
 }
 
