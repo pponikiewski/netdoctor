@@ -140,13 +140,25 @@ pub fn status_colour(s: Status) -> egui::Color32 {
     }
 }
 
-/// The header's dot and headline for a snapshot. A sweep that measured
-/// nothing has no verdict, so it gets neither a verdict's words nor its
-/// colour: `status` on such a snapshot is only the default.
-pub fn verdict_line(snap: &Snapshot) -> (egui::Color32, &'static str) {
-    match snap.blind {
-        Some(_) => (FG_DIM, crate::i18n::mon_blind()),
-        None => (status_colour(snap.status), snap.status.headline()),
+/// The header's dot and headline for a snapshot. Only a fresh reading taken
+/// while sampling is a verdict: paused, stalled, not started yet or nothing
+/// sent, the header says which, in grey, and not what the last reading was.
+pub fn verdict_line(
+    snap: &Snapshot,
+    sampling: bool,
+    now: f64,
+    interval: std::time::Duration,
+) -> (egui::Color32, &'static str) {
+    use crate::monitor::Seen;
+    // The same reading the tray makes of the same snapshot. The header used
+    // to look only at `blind`, so a paused or stalled monitor stayed green
+    // here while the tray icon went grey.
+    match Seen::of(snap, sampling, now, interval) {
+        Seen::Paused => (FG_DIM, crate::i18n::mon_paused()),
+        Seen::Waiting => (FG_DIM, crate::i18n::mon_waiting()),
+        Seen::Blind => (FG_DIM, crate::i18n::mon_blind()),
+        Seen::Stale(_) => (FG_DIM, crate::i18n::mon_stale()),
+        Seen::Verdict(status, _) => (status_colour(status), status.headline()),
     }
 }
 
@@ -688,7 +700,12 @@ impl eframe::App for App {
 
 impl App {
     fn header(&mut self, ui: &mut egui::Ui) {
-        let (colour, headline) = verdict_line(&self.last);
+        let (colour, headline) = verdict_line(
+            &self.last,
+            !self.monitor.shared.paused(),
+            crate::store::now(),
+            self.settings.interval(),
+        );
 
         // The right-hand block's width is reserved before the left block is
         // drawn, and the left block is then held to what is left.
@@ -1367,16 +1384,37 @@ pub fn latency_colour(ms: f64, s: &Settings) -> egui::Color32 {
 mod tests {
     use super::*;
 
+    const NOW: f64 = 1_000_000.0;
+    const SECOND: std::time::Duration = std::time::Duration::from_secs(1);
+
     #[test]
     fn a_sweep_that_sent_nothing_shows_no_verdict() {
         // A blind snapshot carries the default status, "Ok". The header used
         // to paint whatever `status` said.
-        let blind = Snapshot { blind: Some("no ICMP handle".into()), ..Snapshot::default() };
-        let (colour, headline) = verdict_line(&blind);
+        let blind =
+            Snapshot { ts: NOW, blind: Some("no ICMP handle".into()), ..Snapshot::default() };
+        let (colour, headline) = verdict_line(&blind, true, NOW, SECOND);
         assert_eq!(colour, FG_DIM);
         assert_eq!(headline, crate::i18n::mon_blind());
 
-        let measured = Snapshot { status: Status::IspDown, ..Snapshot::default() };
-        assert_eq!(verdict_line(&measured), (RED, Status::IspDown.headline()));
+        let measured = Snapshot { ts: NOW, status: Status::IspDown, ..Snapshot::default() };
+        assert_eq!(verdict_line(&measured, true, NOW, SECOND), (RED, Status::IspDown.headline()));
+    }
+
+    #[test]
+    fn a_paused_or_stale_monitor_shows_no_verdict_in_the_window() {
+        // Found on a screenshot: twelve seconds into a pause the header still
+        // said "Connection healthy" in green. The tray was grey.
+        let healthy = Snapshot { ts: NOW, status: Status::Ok, ..Snapshot::default() };
+        let (colour, headline) = verdict_line(&healthy, false, NOW + 12.0, SECOND);
+        assert_eq!(colour, FG_DIM);
+        assert_eq!(headline, crate::i18n::mon_paused());
+
+        let (colour, headline) = verdict_line(&healthy, true, NOW + 120.0, SECOND);
+        assert_eq!(colour, FG_DIM, "a reading nobody refreshed");
+        assert_eq!(headline, crate::i18n::mon_stale());
+
+        let (_, headline) = verdict_line(&Snapshot::default(), true, NOW, SECOND);
+        assert_eq!(headline, crate::i18n::mon_waiting());
     }
 }

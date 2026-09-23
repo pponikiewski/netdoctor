@@ -147,6 +147,52 @@ impl Default for Snapshot {
     }
 }
 
+/// What the last snapshot can honestly be shown as. The window's header and
+/// the tray both read it, so neither can call a line healthy that the other
+/// shows as unmeasured.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Seen<'a> {
+    /// The user or a job paused sampling.
+    Paused,
+    /// No sweep yet.
+    Waiting,
+    /// The last sweep sent nothing: see [`Snapshot::blind`].
+    Blind,
+    /// Sampling is on, but the newest sweep is this many seconds old: the
+    /// sweep thread has stopped or is stuck. Its verdict is history.
+    Stale(f64),
+    Verdict(Status, &'a str),
+}
+
+/// How many intervals a reading may age before it stops being the latest
+/// word. A sweep can run late by its own timeout and an adapter read, so one
+/// or two missed beats is ordinary; five is not.
+const STALE_AFTER_INTERVALS: u32 = 5;
+/// And never less than this, so a short interval does not grey the icon on a
+/// single slow sweep.
+const STALE_FLOOR: Duration = Duration::from_secs(10);
+
+impl<'a> Seen<'a> {
+    /// `sampling` is false while the user or a job holds the monitor. `now`
+    /// is the wall clock the snapshot's `ts` was taken on, and `interval` the
+    /// sweep interval it should be refreshed at.
+    pub fn of(last: &'a Snapshot, sampling: bool, now: f64, interval: Duration) -> Self {
+        let age = now - last.ts;
+        let limit = (interval * STALE_AFTER_INTERVALS).max(STALE_FLOOR).as_secs_f64();
+        if !sampling {
+            Seen::Paused
+        } else if last.ts <= 0.0 {
+            Seen::Waiting
+        } else if age > limit {
+            Seen::Stale(age)
+        } else if last.blind.is_some() {
+            Seen::Blind
+        } else {
+            Seen::Verdict(last.status, &last.note)
+        }
+    }
+}
+
 /// Ring buffer of (timestamp, rtt) per target, for the live chart.
 pub type Series = Vec<(f64, Option<f64>)>;
 

@@ -951,6 +951,18 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
     let stats = &cache.stats;
+    // Without a current verdict (paused, stalled, nothing sent) the figures
+    // are the last ones taken, not a reading of the line now, so they lose
+    // their traffic-light colours rather than keep saying green or red.
+    let measuring = matches!(
+        crate::monitor::Seen::of(
+            &app.last,
+            !app.monitor.shared.paused(),
+            now,
+            app.settings.interval()
+        ),
+        crate::monitor::Seen::Verdict(..)
+    );
 
     // Cards of equal width in aligned columns, rather than a wrapped row.
     //
@@ -982,7 +994,7 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
                     stat.label,
                     &stat.value,
                     &stat.sub,
-                    stat.colour,
+                    if measuring { stat.colour } else { FG_DIM },
                     Some(width),
                     stat.tip,
                 );

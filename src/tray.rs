@@ -11,10 +11,12 @@
 //! whose window is hidden cannot be relied on to get frames, and a hidden
 //! window is exactly the situation this exists for.
 
-use std::time::Duration;
-
 use crate::i18n;
-use crate::monitor::{Notice, Snapshot, Status};
+#[cfg(test)]
+use crate::monitor::Snapshot;
+use crate::monitor::{Notice, Seen, Status};
+#[cfg(test)]
+use std::time::Duration;
 
 /// What the icon shows.
 ///
@@ -27,50 +29,6 @@ pub enum Level {
     Ok,
     Slow,
     Down,
-}
-
-/// What the monitor last left for the tray, reduced to what the icon can
-/// honestly say about it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Seen<'a> {
-    /// The user or a job paused sampling.
-    Paused,
-    /// No sweep yet.
-    Waiting,
-    /// The last sweep sent nothing: see [`crate::monitor::Snapshot::blind`].
-    Blind,
-    /// Sampling is on, but the newest sweep is this many seconds old: the
-    /// sweep thread has stopped or is stuck. Its verdict is history.
-    Stale(f64),
-    Verdict(Status, &'a str),
-}
-
-/// How many intervals a reading may age before it stops being the latest
-/// word. A sweep can run late by its own timeout and an adapter read, so one
-/// or two missed beats is ordinary; five is not.
-const STALE_AFTER_INTERVALS: u32 = 5;
-/// And never less than this, so a short interval does not grey the icon on a
-/// single slow sweep.
-const STALE_FLOOR: Duration = Duration::from_secs(10);
-
-impl<'a> Seen<'a> {
-    /// `now` is the wall clock the snapshot's `ts` was taken on, and
-    /// `interval` the sweep interval it should be refreshed at.
-    fn of(last: &'a Snapshot, sampling: bool, now: f64, interval: Duration) -> Self {
-        let age = now - last.ts;
-        let limit = (interval * STALE_AFTER_INTERVALS).max(STALE_FLOOR).as_secs_f64();
-        if !sampling {
-            Seen::Paused
-        } else if last.ts <= 0.0 {
-            Seen::Waiting
-        } else if age > limit {
-            Seen::Stale(age)
-        } else if last.blind.is_some() {
-            Seen::Blind
-        } else {
-            Seen::Verdict(last.status, &last.note)
-        }
-    }
 }
 
 impl Level {

@@ -948,6 +948,11 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     mon_no_gateway =>
         "No default gateway. This machine has no route to the network.",
         "Brak bramy domyślnej. Ten komputer nie ma trasy do sieci.";
+    mon_paused => "Measuring paused", "Pomiar wstrzymany";
+    mon_waiting => "Waiting for the first reading", "Czekam na pierwszy pomiar";
+    mon_stale =>
+        "No fresh reading: measuring has stopped",
+        "Brak świeżego pomiaru: pomiar przestał działać";
     mon_blind =>
         "Not measuring: Windows would not let the app send pings",
         "Brak pomiaru: Windows nie pozwolił aplikacji wysłać pingów";
