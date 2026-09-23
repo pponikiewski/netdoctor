@@ -88,5 +88,9 @@ z łamania dokładnie tej zasady.
 
 - 2026-09-23 — nieudany pomiar to osobny stan, a nie werdykt. Przebieg, w którym nie dało się wysłać ani jednego pinga, nie ma `Status`: `Snapshot.blind` niesie przyczynę, pętla traktuje go jak pauzę (bez próbki, bez kroku `Outages`, bez powiadomienia), a nagłówek i zasobnik pokazują go na szaro. Wybrane zamiast nowego wariantu `Status`, bo ten trafiałby do historii; koszt: każdy, kto pokazuje werdykt, musi najpierw sprawdzić `blind` (dziś `ui::verdict_line` i `tray::Seen`). W skanie to samo robią `Wire.blind` i `Segment::Unmeasured`. Zasobnik ocenia też wiek migawki (`Seen::Stale`). Interwał sondowania ma teraz sufit `MAX_PROBE_INTERVAL_MS`, połowę `OBSERVATION_GAP_S`, co zamyka zastrzeżenie z wpisu o ciągłości obserwacji.
 
+- 2026-09-23 — test DNS pyta resolvery karty bezpośrednio (zapytanie A po UDP, bez nowych zależności: `netstate::resolvers_answer`), a nie `getaddrinfo`. Klient DNS Windows odpowiada z pamięci podręcznej przez cały TTL wpisu i trzyma porażki w pamięci negatywnej, więc `getaddrinfo` mierzył pamięć, a nie resolver. Koszt: sieć, która blokuje UDP 53 przy działającym DoH, pokaże awarię DNS, której użytkownik nie odczuwa; bez znanego resolvera zostaje `getaddrinfo`. Awaria DNS wymaga `DNS_FAILS_TO_REPORT = 2` porażek z rzędu, a po porażce powtórka jest po `DNS_RETRY = 2 s`.
+
+- 2026-09-23 — werdykt „odcinek padł” wymaga zgodności pomiarów. „Internet odpowiada” znaczy: odpowiedział adres publiczny (`diagnose::is_public`; prywatne, APIPA i CGNAT się nie liczą, CGNAT to sieć dostawcy jak w `find_edge`). Skan ma dwie kotwice (1.1.1.1 i 8.8.8.8, ping i TCP), a monitor ocenia straty, jitter i opóźnienie z najlepszego publicznego celu, bo to, co robi łącze, widać na wszystkich celach naraz. Rodzaj awarii w historii to najpoważniejszy stan, jaki osiągnęła (`Recorded` + `Store::set_event_kind`), nie stan z chwili otwarcia.
+
 ## Open questions
 <!-- Track unresolved technical decisions -->

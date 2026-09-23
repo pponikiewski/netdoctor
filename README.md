@@ -21,6 +21,14 @@ reads the blame off the *pattern* of failures:
 | no | no | between the PC and the router (Wi-Fi, adapter, router) |
 | adapter disconnected | — | driver, power saving, or signal strength |
 | yes | yes, but names do not resolve | DNS failure |
+| no | yes | working: the router ignores pings to itself (a setting, not a fault) |
+
+"Internet answers" means a public address answered: a Pi-hole, a NAS or a
+provider's CGNAT box answering proves nothing past the provider. A verdict
+that something is down needs its readings to agree, so one filtered address
+or one lost DNS reply is not an outage. DNS is tested by asking the adapter's
+resolvers directly, past the Windows DNS cache, which would otherwise answer
+for a resolver that is gone.
 
 Every outage is written to SQLite along with the connection state at that
 instant — signal, RSSI, channel, access point, link rate, and whether the router

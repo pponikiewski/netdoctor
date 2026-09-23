@@ -32,6 +32,7 @@ zgadywanka.
 
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
+- 2026-09-23 — faza 2 przeglądu wiarygodności werdyktu: werdykt odpowiada temu, co zmierzono. Lokalne urządzenia nie udają internetu, skan i monitor nie polegają na jednym adresie, router ignorujący pingi nie jest awarią LAN, awaria ma w historii najpoważniejszy osiągnięty stan, DNS jest pytany z pominięciem pamięci podręcznej Windows i wymaga dwóch porażek, a reguły przyczyn mają pewność zgodną z dowodem (w tym poprawione id DHCP według manifestu dostawcy).
 - 2026-09-23 — faza 1 przeglądu wiarygodności werdyktu: błąd pomiaru nie jest już werdyktem. Nieotwarty ICMP nie zapisuje awarii ani nie powiadamia (skan mówi „nie ustalono”), nieczytelny stan Wi-Fi nie znaczy „rozłączona”, zasobnik szarzeje przy nieświeżym pomiarze, interwał ponad 30 s jest odrzucany. Każdy punkt z testem odtwarzającym i mutacją kontrolną.
 - 2026-09-23 — ikona w zasobniku (kolor stanu, menu, krzyżyk chowa) i powiadomienia Windows o awarii i powrocie, sprawdzone na prawdziwym odcięciu Wi-Fi. Przy okazji naprawione: `--minimised` nigdy nie ukrywało okna, awarie w historii trwały o ok. minutę za długo.
 - 2026-09-23 — siedem błędów z przeglądu 2026-09-22 naprawionych: aplikacja nie znika już po restarcie z aktualizacji, DNS nie blokuje pomiaru, sen i pauza nie zawyżają awarii, Modern Standby rozpoznawany, Apply bez odczytanego stanu zablokowane, pauzy zadań się nie gryzą, `--scan` pisze na konsolę. Restart i konsola sprawdzone na prawdziwych procesach, ze starą wersją jako kontrolą.
