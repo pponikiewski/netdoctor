@@ -2440,7 +2440,10 @@ pub fn cause_title(code: &str) -> String {
         }
         "roaming" => ("Handover to another access point", "Przełączenie na inny access point"),
         "signal_fade" => ("The signal faded away", "Sygnał stopniowo zanikał"),
-        "airtime_24ghz" => ("The 2.4 GHz channel is crowded", "Kanał 2.4 GHz jest zatłoczony"),
+        "airtime_24ghz" => (
+            "Strong signal on 2.4 GHz, and it dropped anyway",
+            "Mocny sygnał w paśmie 2.4 GHz, a łącze i tak padło",
+        ),
         "router_side" => (
             "The radio was fine, the router side was not",
             "Radio było w porządku, problem po stronie routera",
@@ -2548,12 +2551,14 @@ pub fn cause_advice(code: &str) -> String {
              zmienił położenie, albo coś stanęło między nimi. To nie jest wina routera.",
         ),
         "airtime_24ghz" => (
-            "2.4 GHz is shared with every neighbour, microwave and Bluetooth device around. Move \
-             to 5 GHz if the adapter supports it, or pick channel 1, 6 or 11 — whichever is least \
-             used nearby.",
-            "2.4 GHz dzielisz z każdym sąsiadem, mikrofalówką i urządzeniem Bluetooth w okolicy. \
-             Przejdź na 5 GHz, jeśli karta to obsługuje, albo wybierz kanał 1, 6 lub 11 — ten \
-             najmniej obciążony w pobliżu.",
+            "How busy the channel was is not measured here; the air scan in Optimise shows the \
+             networks around you. 2.4 GHz is shared with every neighbour, microwave and \
+             Bluetooth device around. Move to 5 GHz if the adapter supports it, or pick channel \
+             1, 6 or 11 — whichever is least used nearby.",
+            "Obciążenia kanału tu nie mierzono; skan Wi-Fi w zakładce Optymalizacja pokaże sieci \
+             wokół ciebie. 2.4 GHz dzielisz z każdym sąsiadem, mikrofalówką i urządzeniem \
+             Bluetooth w okolicy. Przejdź na 5 GHz, jeśli karta to obsługuje, albo wybierz kanał \
+             1, 6 lub 11 — ten najmniej obciążony w pobliżu.",
         ),
         "router_side" => (
             "The signal was strong and steady right up to the drop, so the radio link was not the \

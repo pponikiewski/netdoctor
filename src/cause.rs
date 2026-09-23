@@ -435,10 +435,12 @@ fn lan_rules(ev: &Evidence, out: &mut Vec<Cause>) {
             out.push(Cause::new("signal_fade", Confidence::Certain, i18n::ev_rssi_fade(from, to)));
         }
         // Steady and strong right up to the drop: the radio was fine, so the
-        // router or the airtime around it was not.
+        // router or the airtime around it was not. On 2.4 GHz the airtime is
+        // a suspect, but only a suspect: nothing here measured how busy the
+        // channel was, so it cannot be more than possible.
         Some((_, to)) if to >= -60 => {
             let cause = if ev.channel.is_some_and(|c| (1..=14).contains(&c)) {
-                Cause::new("airtime_24ghz", Confidence::Likely, i18n::ev_crowded_24(ev.channel))
+                Cause::new("airtime_24ghz", Confidence::Possible, i18n::ev_crowded_24(ev.channel))
             } else {
                 Cause::new("router_side", Confidence::Likely, i18n::ev_signal_was_fine(to))
             };
@@ -708,7 +710,13 @@ mod tests {
             ]),
         });
         let causes = verdicts(&event("lan", ctx, 30.0), &[], &[], &[]);
-        assert!(causes.iter().any(|c| c.code == "airtime_24ghz"));
+        let c = causes.iter().find(|c| c.code == "airtime_24ghz").unwrap();
+        // Nothing about the channel's traffic was measured: only that it was
+        // 2.4 GHz and the signal was good. That is a suspicion, and the title
+        // must not state crowding as a fact.
+        assert_eq!(c.confidence, Confidence::Possible);
+        let title = i18n::cause_title("airtime_24ghz");
+        assert!(!title.contains("crowded") && !title.contains("zatłoczony"), "{title}");
     }
 
     #[test]
