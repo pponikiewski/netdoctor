@@ -498,9 +498,167 @@ pub fn dns_lookup_ms(host: &str) -> (Option<f64>, String) {
     }
 }
 
+/// How long one resolver gets to answer a direct query.
+const DNS_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Asks every resolver in `servers` for `host` directly, all at once, and
+/// times the fastest answer. The error names each one that failed.
+///
+/// Not `getaddrinfo`, which answers from the Windows DNS cache for as long as
+/// the record lives: measured, a cached `example.com` comes back in 0.7 ms
+/// against 29 ms for a real query, so a dead resolver went unnoticed until
+/// the entry expired. A failed lookup can be held the same way by the
+/// negative cache after the resolver is back. The question here is whether
+/// the resolver answers. With no resolver known, the system lookup is all
+/// there is.
+pub fn resolvers_answer(servers: &[Ipv4Addr], host: &str) -> (Option<f64>, String) {
+    if servers.is_empty() {
+        return dns_lookup_ms(host);
+    }
+    let results: Vec<Result<f64, String>> = std::thread::scope(|s| {
+        let asked: Vec<_> = servers
+            .iter()
+            .enumerate()
+            .map(|(i, server)| s.spawn(move || query_resolver(*server, host, i as u16)))
+            .collect();
+        asked.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(String::new()))).collect()
+    });
+    let fastest = results.iter().filter_map(|r| r.as_ref().ok()).fold(f64::NAN, |a, b| a.min(*b));
+    if fastest.is_finite() {
+        return (Some(fastest), String::new());
+    }
+    let why: Vec<String> =
+        results.into_iter().filter_map(Result::err).filter(|e| !e.is_empty()).collect();
+    (None, why.join("; "))
+}
+
+/// One A query to `server`, timed from send to reply.
+fn query_resolver(server: Ipv4Addr, host: &str, salt: u16) -> Result<f64, String> {
+    use std::net::UdpSocket;
+    let failed = |e: std::io::Error| format!("{server}: {e}");
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    let id = (nanos as u16) ^ salt.rotate_left(8);
+
+    let socket = UdpSocket::bind(("0.0.0.0", 0)).map_err(failed)?;
+    socket.connect((server, 53)).map_err(failed)?;
+    let started = std::time::Instant::now();
+    socket.send(&dns_query(id, host)).map_err(failed)?;
+
+    let mut buf = [0u8; 512];
+    loop {
+        let left = DNS_QUERY_TIMEOUT.saturating_sub(started.elapsed());
+        if left.is_zero() {
+            return Err(crate::i18n::dns_server_silent(&server.to_string()));
+        }
+        socket.set_read_timeout(Some(left)).map_err(failed)?;
+        match socket.recv(&mut buf) {
+            Ok(n) => match dns_reply(id, &buf[..n]) {
+                // Somebody else's datagram, or a late reply to an earlier
+                // query: keep waiting for ours.
+                DnsReply::NotOurs => continue,
+                DnsReply::Answered => return Ok(started.elapsed().as_secs_f64() * 1000.0),
+                DnsReply::Refused(code) => {
+                    return Err(crate::i18n::dns_server_error(
+                        &server.to_string(),
+                        &rcode_name(code),
+                    ))
+                }
+            },
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                return Err(crate::i18n::dns_server_silent(&server.to_string()))
+            }
+            Err(e) => return Err(failed(e)),
+        }
+    }
+}
+
+/// A standard recursive query for the A record of `host`.
+fn dns_query(id: u16, host: &str) -> Vec<u8> {
+    let mut q = Vec::with_capacity(18 + host.len());
+    q.extend_from_slice(&id.to_be_bytes());
+    q.extend_from_slice(&[0x01, 0x00]); // recursion desired
+    q.extend_from_slice(&[0, 1, 0, 0, 0, 0, 0, 0]); // one question
+    for label in host.split('.').filter(|l| !l.is_empty()) {
+        let label = &label.as_bytes()[..label.len().min(63)];
+        q.push(label.len() as u8);
+        q.extend_from_slice(label);
+    }
+    q.push(0);
+    q.extend_from_slice(&[0, 1, 0, 1]); // type A, class IN
+    q
+}
+
+#[derive(Debug, PartialEq)]
+enum DnsReply {
+    NotOurs,
+    /// The resolver answered the question, whatever the answer was.
+    Answered,
+    /// The resolver answered with an error code.
+    Refused(u8),
+}
+
+fn dns_reply(id: u16, reply: &[u8]) -> DnsReply {
+    if reply.len() < 12 || reply[..2] != id.to_be_bytes() || reply[2] & 0x80 == 0 {
+        return DnsReply::NotOurs;
+    }
+    match reply[3] & 0x0f {
+        0 => DnsReply::Answered,
+        code => DnsReply::Refused(code),
+    }
+}
+
+fn rcode_name(code: u8) -> String {
+    match code {
+        1 => "FORMERR".into(),
+        2 => "SERVFAIL".into(),
+        3 => "NXDOMAIN".into(),
+        5 => "REFUSED".into(),
+        other => format!("RCODE {other}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dns_query_is_built_the_way_the_wire_expects() {
+        let q = dns_query(0xbeef, "example.com");
+        assert_eq!(&q[..12], &[0xbe, 0xef, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(&q[12..], b"\x07example\x03com\x00\x00\x01\x00\x01");
+    }
+
+    #[test]
+    fn a_reply_is_read_for_its_id_and_its_code_only() {
+        let mut ok = vec![0xbe, 0xef, 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0];
+        assert_eq!(dns_reply(0xbeef, &ok), DnsReply::Answered);
+        assert_eq!(dns_reply(0x1234, &ok), DnsReply::NotOurs, "another query's reply");
+        ok[3] = 0x82;
+        assert_eq!(dns_reply(0xbeef, &ok), DnsReply::Refused(2), "SERVFAIL");
+        let query = dns_query(0xbeef, "example.com");
+        assert_eq!(dns_reply(0xbeef, &query), DnsReply::NotOurs, "our own query echoed back");
+        assert_eq!(dns_reply(0xbeef, &ok[..5]), DnsReply::NotOurs, "truncated");
+    }
+
+    #[test]
+    #[ignore = "asks the live resolvers"]
+    fn show_resolvers_answer() {
+        let st = read();
+        println!("servers {:?}", st.dns_servers);
+        for _ in 0..3 {
+            println!("direct: {:?}", resolvers_answer(&st.dns_servers, "example.com"));
+            println!("system: {:?}", dns_lookup_ms("example.com"));
+        }
+        println!("dead: {:?}", resolvers_answer(&[Ipv4Addr::new(192, 0, 2, 1)], "example.com"));
+    }
 
     #[test]
     fn the_association_asked_about_is_the_routed_cards_and_can_be_unknown() {

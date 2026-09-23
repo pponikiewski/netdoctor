@@ -1646,6 +1646,22 @@ pub fn f_icmp_filtered_detail(hosts: &str) -> String {
     }
 }
 
+/// A resolver that did not answer a direct query in time.
+pub fn dns_server_silent(server: &str) -> String {
+    match current() {
+        Lang::En => format!("{server} did not answer"),
+        Lang::Pl => format!("{server} nie odpowiedział"),
+    }
+}
+
+/// A resolver that answered a direct query with an error code.
+pub fn dns_server_error(server: &str, code: &str) -> String {
+    match current() {
+        Lang::En => format!("{server} answered with {code}"),
+        Lang::Pl => format!("{server} odpowiedział błędem {code}"),
+    }
+}
+
 /// The tray's tooltip when the newest reading is `age` seconds old.
 pub fn tray_stale(age: f64) -> String {
     match current() {

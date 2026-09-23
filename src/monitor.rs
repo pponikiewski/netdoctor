@@ -356,6 +356,9 @@ pub struct Shared {
     pub gateway: Mutex<Option<Ipv4Addr>>,
     /// The latest DNS test, kept by `run_dns`.
     dns: Mutex<DnsReading>,
+    /// The current adapter's resolvers, published for `run_dns` beside the
+    /// gateway.
+    dns_servers: Mutex<Vec<Ipv4Addr>>,
     /// The user's extra targets that are hostnames, resolved by `run_hosts`.
     hosts: Mutex<HashMap<String, Ipv4Addr>>,
 }
@@ -366,30 +369,69 @@ pub struct Shared {
 const DNS_STALL: Duration = Duration::from_secs(5);
 /// How often the DNS test runs. The same ten seconds the sweep used to count.
 const DNS_EVERY: Duration = Duration::from_secs(10);
+/// How soon a failed test is repeated. Short, because until it is repeated
+/// the failure stands, and the outage it opens is only as precise as this.
+const DNS_RETRY: Duration = Duration::from_secs(2);
+/// Failed tests in a row before DNS counts as down. One lost UDP reply is
+/// not an outage.
+const DNS_FAILS_TO_REPORT: u32 = 2;
 /// How often the user's hostnames are looked up again when they all resolved.
 const HOSTS_EVERY: Duration = Duration::from_secs(300);
 /// And when one of them did not.
 const HOSTS_RETRY: Duration = Duration::from_secs(30);
 
-/// One DNS test, as `run_dns` last left it.
+/// The DNS tests, as `run_dns` last left them.
+///
+/// A single failed test used to be the answer until the next one, ten seconds
+/// later: ten bad sweeps, a recorded outage and a notification out of one
+/// lost reply, and every DNS outage in the history rounded up to ten seconds.
+/// A failure now has to repeat, and is repeated after [`DNS_RETRY`].
 #[derive(Debug, Clone, Default)]
 struct DnsReading {
+    /// The last successful test's time.
     ms: Option<f64>,
+    /// The last failed test's reason, while tests are failing.
     error: String,
+    /// Failed tests in a row.
+    fails: u32,
     /// Set while a lookup is running, so one that hangs can be reported as a
     /// failure instead of leaving the last good answer on screen.
     started: Option<Instant>,
 }
 
 impl DnsReading {
-    /// What the sweep reports: the last finished lookup, unless the one
-    /// running now has been silent for longer than a working resolver takes.
+    /// A test finished: `error` is empty when it succeeded.
+    fn finish(&mut self, ms: Option<f64>, error: String) {
+        self.started = None;
+        if error.is_empty() {
+            self.ms = ms;
+            self.error.clear();
+            self.fails = 0;
+        } else {
+            self.error = error;
+            self.fails += 1;
+        }
+    }
+
+    /// How long until the next test.
+    fn next_check(&self) -> Duration {
+        if self.fails > 0 {
+            DNS_RETRY
+        } else {
+            DNS_EVERY
+        }
+    }
+
+    /// What the sweep reports. A failure once it has repeated, or once the
+    /// test running now has been silent for longer than a working resolver
+    /// takes: that is several seconds of failing already, not one reading.
     fn current(&self, now: Instant) -> (Option<f64>, String) {
         match self.started {
             Some(t) if now.saturating_duration_since(t) > DNS_STALL => {
                 (None, i18n::dns_no_answer(DNS_STALL.as_secs()))
             }
-            _ => (self.ms, self.error.clone()),
+            _ if self.fails >= DNS_FAILS_TO_REPORT => (None, self.error.clone()),
+            _ => (self.ms, String::new()),
         }
     }
 }
@@ -498,6 +540,7 @@ impl Shared {
             path: Mutex::new(PathReading::default()),
             gateway: Mutex::new(None),
             dns: Mutex::new(DnsReading::default()),
+            dns_servers: Mutex::new(Vec::new()),
             hosts: Mutex::new(HashMap::new()),
         }
     }
@@ -545,12 +588,16 @@ fn nap(stop: &AtomicBool, total: Duration) -> bool {
 /// Times a lookup of the test host every [`DNS_EVERY`].
 fn run_dns(shared: Arc<Shared>, stop: Arc<AtomicBool>) {
     while !stop.load(Ordering::Relaxed) {
+        let mut wait = DNS_EVERY;
         if !shared.paused() {
+            let servers = held(&shared.dns_servers).clone();
             held(&shared.dns).started = Some(Instant::now());
-            let (ms, error) = netstate::dns_lookup_ms(DNS_TEST_HOST);
-            *held(&shared.dns) = DnsReading { ms, error, started: None };
+            let (ms, error) = netstate::resolvers_answer(&servers, DNS_TEST_HOST);
+            let mut reading = held(&shared.dns);
+            reading.finish(ms, error);
+            wait = reading.next_check();
         }
-        if !nap(&stop, DNS_EVERY) {
+        if !nap(&stop, wait) {
             return;
         }
     }
@@ -1035,6 +1082,7 @@ fn run_loop(
             }
             next_state_refresh = Instant::now() + Duration::from_secs(5);
             *held(&shared.gateway) = net.gateway;
+            *held(&shared.dns_servers) = net.dns_servers.clone();
         }
 
         // Read, never run: the lookup lives on `run_dns`.
@@ -1706,9 +1754,27 @@ mod tests {
     }
 
     #[test]
+    fn one_failed_lookup_is_not_a_dns_outage_and_a_failure_is_rechecked_soon() {
+        // One lost UDP reply used to stand as the answer for the next ten
+        // seconds: ten bad sweeps, a recorded outage and a notification.
+        let t0 = Instant::now();
+        let mut r = DnsReading::default();
+        r.finish(Some(4.0), String::new());
+        r.finish(None, "timed out".into());
+        assert_eq!(r.current(t0).1, "", "one failure is not reported");
+        assert!(r.next_check() < DNS_EVERY, "and it is looked at again soon");
+        r.finish(None, "timed out".into());
+        assert_eq!(r.current(t0).1, "timed out", "two in a row are");
+        assert!(r.next_check() <= Duration::from_secs(2), "so its end is not rounded to 10 s");
+        r.finish(Some(5.0), String::new());
+        assert_eq!(r.current(t0), (Some(5.0), String::new()));
+        assert_eq!(r.next_check(), DNS_EVERY);
+    }
+
+    #[test]
     fn a_hung_dns_lookup_is_a_failure_not_the_last_good_answer() {
         let t0 = Instant::now();
-        let reading = DnsReading { ms: Some(4.0), error: String::new(), started: Some(t0) };
+        let reading = DnsReading { ms: Some(4.0), started: Some(t0), ..DnsReading::default() };
         // Still inside the allowance: the previous answer stands.
         assert_eq!(reading.current(t0 + Duration::from_secs(1)).0, Some(4.0));
         // Past it: reported as a failure, with a reason.

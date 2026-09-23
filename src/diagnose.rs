@@ -886,7 +886,7 @@ fn find_edge(gw: Ipv4Addr, cfg: &Settings) -> Option<(Ipv4Addr, bool)> {
 /// at a time, and — the part that actually matters — the three latencies the
 /// segment split subtracts from each other finally describe the same instant.
 fn measure_wire(net: &NetState, cfg: &Settings) -> Wire {
-    use crate::probe::netstate::dns_lookup_ms;
+    use crate::probe::netstate::resolvers_answer;
     use crate::settings::DNS_TEST_HOST;
 
     let mut wire = Wire::default();
@@ -897,7 +897,17 @@ fn measure_wire(net: &NetState, cfg: &Settings) -> Wire {
         let internet_alt = s.spawn(|| measure(ANCHOR_ALT, 15, cfg));
         let tcp = s.spawn(|| tcp_probe(ANCHOR, cfg));
         let tcp_alt = s.spawn(|| tcp_probe(ANCHOR_ALT, cfg));
-        let dns = s.spawn(|| dns_lookup_ms(DNS_TEST_HOST));
+        // Straight to the adapter's resolvers, past the Windows cache (see
+        // `resolvers_answer`), and asked twice before a failure stands: a
+        // scan is one reading, and one lost reply is not a broken resolver.
+        let dns = s.spawn(|| {
+            let first = resolvers_answer(&net.dns_servers, DNS_TEST_HOST);
+            if first.1.is_empty() {
+                first
+            } else {
+                resolvers_answer(&net.dns_servers, DNS_TEST_HOST)
+            }
+        });
         // The traceroute has to finish before its result can be pinged, so the
         // whole two-step sequence lives on one thread rather than blocking the
         // others behind it.
