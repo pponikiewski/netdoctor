@@ -51,9 +51,9 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
         });
     }
 
-    if !app.last.note.is_empty() || app.last.roamed {
+    if !app.last.note.is_empty() || app.last.roamed || app.last.blind.is_some() {
         ui.add_space(S_SM);
-        let mut note = app.last.note.clone();
+        let mut note = app.last.blind.clone().unwrap_or_else(|| app.last.note.clone());
         if app.last.roamed {
             if !note.is_empty() {
                 note.push(' ');

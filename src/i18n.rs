@@ -631,6 +631,20 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     seg_dns => "In DNS", "W DNS";
     seg_config => "In this machine's settings", "W ustawieniach tego komputera";
     seg_healthy => "Nowhere — the chain is sound", "Nigdzie — łańcuch jest sprawny";
+    seg_unmeasured => "Not established: the scan could not ping", "Nie ustalono: skan nie mógł pingować";
+    cost_unmeasured =>
+        "Unknown. The pings that cut the chain into segments could not be sent, so this scan \
+         cannot say where a fault is, or whether there is one.",
+        "Nieznany. Nie dało się wysłać pingów, które dzielą łańcuch na odcinki, więc ten skan \
+         nie powie, gdzie jest usterka ani czy w ogóle jest.";
+    f_icmp_blind =>
+        "Pings could not be sent",
+        "Nie dało się wysłać pingów";
+    f_icmp_blind_advice =>
+        "Something on this PC is blocking ICMP for the app (security software, policy). Run the \
+         scan again; if it repeats, check what is blocking it.",
+        "Coś na tym komputerze blokuje aplikacji ICMP (program zabezpieczający, zasady). Uruchom \
+         skan ponownie; jeśli się powtórzy, sprawdź, co to blokuje.";
 
     cost_none =>
         "Nothing measurable. Calls, games and streaming should all behave.",
@@ -915,6 +929,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     mon_no_gateway =>
         "No default gateway. This machine has no route to the network.",
         "Brak bramy domyślnej. Ten komputer nie ma trasy do sieci.";
+    mon_blind =>
+        "Not measuring: Windows would not let the app send pings",
+        "Brak pomiaru: Windows nie pozwolił aplikacji wysłać pingów";
 
     // -----------------------------------------------------------------------
     // load test tab
@@ -1575,6 +1592,20 @@ pub fn toast_restored(secs: f64) -> String {
         Lang::Pl => {
             format!("Połączenie przywrócone po {secs:.0} s. Zobacz zakładkę Historia awarii.")
         }
+    }
+}
+
+/// Why a sweep measured nothing: no ICMP handle could be opened.
+pub fn mon_blind_detail(err: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "No ICMP handle could be opened ({err}). Nothing was sent, so there is no verdict \
+             about the connection, and no outage is recorded."
+        ),
+        Lang::Pl => format!(
+            "Nie udało się otworzyć uchwytu ICMP ({err}). Nic nie zostało wysłane, więc nie ma \
+             werdyktu o połączeniu i żadna awaria nie jest zapisywana."
+        ),
     }
 }
 

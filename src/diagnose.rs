@@ -125,6 +125,8 @@ pub enum Segment {
     Config,
     /// Nothing found.
     Healthy,
+    /// The scan could not send its pings, so there is no chain to cut.
+    Unmeasured,
 }
 
 impl Segment {
@@ -137,6 +139,7 @@ impl Segment {
             Segment::Dns => i18n::seg_dns(),
             Segment::Config => i18n::seg_config(),
             Segment::Healthy => i18n::seg_healthy(),
+            Segment::Unmeasured => i18n::seg_unmeasured(),
         }
     }
 }
@@ -283,10 +286,7 @@ pub fn scan(
     let wire = measure_wire(net, settings);
 
     out.extend(report_dns(net, &wire, &mut m));
-    out.extend(report_link(net, &wire, &mut m));
-    out.extend(report_edge(&wire, &mut m));
-    out.extend(report_internet(store, settings, &wire, &mut m));
-    out.extend(report_reachability(&wire, &mut m));
+    out.extend(report_wire(net, store, settings, &wire, &mut m));
 
     say(i18n::step_mtu(), 0.50);
     out.extend(check_mtu(net, store, settings));
@@ -363,6 +363,16 @@ pub fn judge(findings: &[Finding], m: &Measurements, cfg: &Settings) -> Verdict 
             v.actions = worst_of(seg);
             return v;
         }
+    }
+
+    // Everything below reads the pings. Without them the only honest verdict
+    // is that there is none; a clean-looking rest would read as "healthy".
+    if has("icmp_blind") {
+        v.segment = Segment::Unmeasured;
+        v.confidence = Confidence::Possible;
+        v.cost = i18n::cost_unmeasured().into();
+        v.actions = actions_for_key(findings, "icmp_blind");
+        return v;
     }
 
     // 2. Loss, attributed to the first segment that shows it. Loss that is
@@ -564,6 +574,7 @@ fn cost_for(seg: Segment, m: &Measurements) -> String {
         Segment::Dns => i18n::cost_dns(m.dns_ms.unwrap_or(0.0)),
         Segment::Uplink => i18n::cost_load(m.load.as_ref().and_then(|l| l.bump_ms).unwrap_or(0.0)),
         Segment::Healthy => i18n::cost_none().into(),
+        Segment::Unmeasured => i18n::cost_unmeasured().into(),
         _ => i18n::cost_down().into(),
     }
 }
@@ -764,10 +775,13 @@ fn stats_line(s: &Stats) -> String {
 /// the scan measures the link rather than itself.
 const PROBE_GAP_MS: u64 = 60;
 
-fn measure(host: Ipv4Addr, count: usize, cfg: &Settings) -> Stats {
-    let samples = icmp::ping_series(host, count, cfg.ping_timeout_ms, PROBE_GAP_MS);
+/// `Err` carries why nothing could be sent, which is not the same as nothing
+/// coming back.
+fn measure(host: Ipv4Addr, count: usize, cfg: &Settings) -> Result<Stats, String> {
+    let samples = icmp::ping_series(host, count, cfg.ping_timeout_ms, PROBE_GAP_MS)
+        .map_err(|e| e.describe())?;
     let rtts: Vec<f64> = samples.iter().flatten().copied().collect();
-    store::summarise(samples.len(), &rtts)
+    Ok(store::summarise(samples.len(), &rtts))
 }
 
 /// The hop past the gateway that the scan measured, and whether it turned out
@@ -790,6 +804,10 @@ struct Wire {
     internet: Option<Stats>,
     tcp: Option<Result<f64, String>>,
     dns: (Option<f64>, String),
+    /// Why a ping series could not be sent at all, when one could not. The
+    /// three latencies are then not readings, and nothing may be read off
+    /// them: a router that was never asked is not a silent router.
+    blind: Option<String>,
 }
 
 /// 100.64.0.0/10, the carrier-grade NAT range. Unlike the RFC 1918 ranges this
@@ -853,22 +871,60 @@ fn measure_wire(net: &NetState, cfg: &Settings) -> Wire {
         // others behind it.
         let edge = net.gateway.map(|gw| {
             s.spawn(move || {
-                find_edge(gw, cfg).map(|(addr, local)| Edge {
-                    addr,
-                    stats: measure(addr, 10, cfg),
-                    local,
-                })
+                find_edge(gw, cfg).map(|(addr, local)| (addr, measure(addr, 10, cfg), local))
             })
         });
 
-        wire.gateway = gateway.and_then(|h| h.join().ok());
-        wire.internet = internet.join().ok();
+        // A series that could not be sent leaves its leg empty and says why.
+        let mut blind = None;
+        let mut taken = |r: Result<Stats, String>| r.map_err(|e| blind = Some(e)).ok();
+
+        wire.gateway = gateway.and_then(|h| h.join().ok()).and_then(&mut taken);
+        wire.internet = internet.join().ok().and_then(&mut taken);
         wire.tcp = tcp.join().ok();
         wire.dns = dns.join().unwrap_or((None, String::new()));
-        wire.edge = edge.and_then(|h| h.join().ok()).flatten();
+        wire.edge = edge
+            .and_then(|h| h.join().ok())
+            .flatten()
+            .and_then(|(addr, stats, local)| taken(stats).map(|stats| Edge { addr, stats, local }));
+        wire.blind = blind;
     });
 
     wire
+}
+
+/// The findings read off the pings and the TCP probe.
+///
+/// When a ping series could not be sent, none of the three latencies is a
+/// reading, so the findings that compare or judge them are not made at all.
+/// Only what does not depend on them stays: a missing gateway is known from
+/// the adapter, and the TCP probe went out on its own socket.
+fn report_wire(
+    net: &NetState,
+    store: &Store,
+    cfg: &Settings,
+    wire: &Wire,
+    m: &mut Measurements,
+) -> Vec<Finding> {
+    let mut out = Vec::new();
+    match &wire.blind {
+        None => {
+            out.extend(report_link(net, wire, m));
+            out.extend(report_edge(wire, m));
+            out.extend(report_internet(store, cfg, wire, m));
+        }
+        Some(why) => {
+            if net.gateway.is_none() {
+                out.extend(report_link(net, wire, m));
+            }
+            out.push(
+                Finding::new("icmp_blind", i18n::f_icmp_blind(), Severity::Warn, why.clone())
+                    .advise(i18n::f_icmp_blind_advice()),
+            );
+        }
+    }
+    out.extend(report_reachability(wire, m));
+    out
 }
 
 fn report_link(net: &NetState, wire: &Wire, m: &mut Measurements) -> Vec<Finding> {
@@ -1688,6 +1744,34 @@ mod tests {
         assert!(!is_apipa(Ipv4Addr::new(169, 253, 0, 1)));
         assert!(!is_apipa(Ipv4Addr::new(169, 255, 0, 1)));
         assert!(!is_apipa(Ipv4Addr::new(192, 168, 0, 1)));
+    }
+
+    #[test]
+    fn a_scan_that_could_not_ping_names_no_segment() {
+        // Found by reading: `ping_series` turned a handle it could not open
+        // into ten lost packets, and the verdict was "LAN, clear" while the
+        // TCP probe to the same anchor connected in 14 ms.
+        let wire = Wire {
+            tcp: Some(Ok(14.0)),
+            dns: (Some(9.0), String::new()),
+            blind: Some("access denied".into()),
+            ..Default::default()
+        };
+        let net = NetState {
+            adapter_name: "WiFi".into(),
+            gateway: Some(Ipv4Addr::new(192, 168, 1, 1)),
+            ..Default::default()
+        };
+        let store = Store::open_in_memory().unwrap();
+        let mut m = Measurements::default();
+        let findings = report_wire(&net, &store, &Settings::default(), &wire, &mut m);
+
+        assert!(!findings.iter().any(|f| f.key == "gateway_silent"), "the router was never asked");
+        assert!(!findings.iter().any(|f| f.key == "internet_silent"));
+        let v = judge(&findings, &m, &Settings::default());
+        assert_eq!(v.segment, Segment::Unmeasured);
+        assert_ne!(v.confidence, Confidence::Certain);
+        assert!(!v.actions.is_empty(), "the user is told what to check");
     }
 
     #[test]

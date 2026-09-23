@@ -29,6 +29,7 @@ fn segment_colour(seg: Segment) -> egui::Color32 {
     match seg {
         Segment::Healthy => GREEN,
         Segment::Config => super::ACCENT,
+        Segment::Unmeasured => FG_DIM,
         _ => RED,
     }
 }

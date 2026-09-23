@@ -27,15 +27,40 @@ pub enum Level {
     Down,
 }
 
-impl Level {
-    fn of(status: Status, sampling: bool, has_sample: bool) -> Level {
-        if !sampling || !has_sample {
-            return Level::Unknown;
+/// What the monitor last left for the tray, reduced to what the icon can
+/// honestly say about it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Seen<'a> {
+    /// The user or a job paused sampling.
+    Paused,
+    /// No sweep yet.
+    Waiting,
+    /// The last sweep sent nothing: see [`crate::monitor::Snapshot::blind`].
+    Blind,
+    Verdict(Status, &'a str),
+}
+
+impl<'a> Seen<'a> {
+    fn of(status: Status, note: &'a str, blind: bool, sampling: bool, has_sample: bool) -> Self {
+        if !sampling {
+            Seen::Paused
+        } else if !has_sample {
+            Seen::Waiting
+        } else if blind {
+            Seen::Blind
+        } else {
+            Seen::Verdict(status, note)
         }
-        match status {
-            Status::Ok => Level::Ok,
-            Status::Degraded => Level::Slow,
-            _ => Level::Down,
+    }
+}
+
+impl Level {
+    fn of(seen: Seen) -> Level {
+        match seen {
+            Seen::Paused | Seen::Waiting | Seen::Blind => Level::Unknown,
+            Seen::Verdict(Status::Ok, _) => Level::Ok,
+            Seen::Verdict(Status::Degraded, _) => Level::Slow,
+            Seen::Verdict(..) => Level::Down,
         }
     }
 
@@ -57,17 +82,13 @@ impl Level {
 }
 
 /// The hover text: the verdict and its note, or why there is none.
-fn tooltip(status: Status, note: &str, sampling: bool, has_sample: bool) -> String {
-    if !sampling {
-        return i18n::tray_paused().to_string();
-    }
-    if !has_sample {
-        return i18n::tray_waiting().to_string();
-    }
-    if note.is_empty() {
-        format!("NetDoctor: {}", status.headline())
-    } else {
-        format!("NetDoctor: {}\n{note}", status.headline())
+fn tooltip(seen: Seen) -> String {
+    match seen {
+        Seen::Paused => i18n::tray_paused().to_string(),
+        Seen::Waiting => i18n::tray_waiting().to_string(),
+        Seen::Blind => format!("NetDoctor: {}", i18n::mon_blind()),
+        Seen::Verdict(status, "") => format!("NetDoctor: {}", status.headline()),
+        Seen::Verdict(status, note) => format!("NetDoctor: {}\n{note}", status.headline()),
     }
 }
 
@@ -153,7 +174,7 @@ mod imp {
         WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
     };
 
-    use super::{balloon_text, circle_bits, fill, tooltip, Level};
+    use super::{balloon_text, circle_bits, fill, tooltip, Level, Seen};
     use crate::monitor::{Notice, Shared};
 
     /// The window class. A test finds the tray window by it.
@@ -301,13 +322,13 @@ mod imp {
 
         /// Reads the monitor and works out what the icon should say.
         fn read(&self) -> (Level, String) {
-            let (ts, status, note) = {
+            let (ts, status, note, blind) = {
                 let last = self.shared.last.lock().unwrap_or_else(|p| p.into_inner());
-                (last.ts, last.status, last.note.clone())
+                (last.ts, last.status, last.note.clone(), last.blind.is_some())
             };
             let sampling = !self.shared.paused();
-            let has_sample = ts > 0.0;
-            (Level::of(status, sampling, has_sample), tooltip(status, &note, sampling, has_sample))
+            let seen = Seen::of(status, &note, blind, sampling, ts > 0.0);
+            (Level::of(seen), tooltip(seen))
         }
 
         fn add(&self) -> bool {
@@ -812,10 +833,11 @@ mod tests {
 
     #[test]
     fn the_icon_colour_follows_the_verdict() {
-        assert_eq!(Level::of(Status::Ok, true, true), Level::Ok);
-        assert_eq!(Level::of(Status::Degraded, true, true), Level::Slow);
+        let level = |status| Level::of(Seen::of(status, "", false, true, true));
+        assert_eq!(level(Status::Ok), Level::Ok);
+        assert_eq!(level(Status::Degraded), Level::Slow);
         for down in [Status::DnsFail, Status::IspDown, Status::LanDown, Status::AdapterDown] {
-            assert_eq!(Level::of(down, true, true), Level::Down, "{down:?}");
+            assert_eq!(level(down), Level::Down, "{down:?}");
         }
     }
 
@@ -823,15 +845,26 @@ mod tests {
     fn a_paused_or_unstarted_monitor_is_grey_not_green() {
         // The snapshot still says "Ok" from before the pause. Showing it
         // would claim a line nobody is measuring is healthy.
-        assert_eq!(Level::of(Status::Ok, false, true), Level::Unknown);
-        assert_eq!(Level::of(Status::Ok, true, false), Level::Unknown);
-        assert_eq!(tooltip(Status::Ok, "", false, true), i18n::tray_paused());
-        assert_eq!(tooltip(Status::Ok, "", true, false), i18n::tray_waiting());
+        let paused = Seen::of(Status::Ok, "", false, false, true);
+        let waiting = Seen::of(Status::Ok, "", false, true, false);
+        assert_eq!(Level::of(paused), Level::Unknown);
+        assert_eq!(Level::of(waiting), Level::Unknown);
+        assert_eq!(tooltip(paused), i18n::tray_paused());
+        assert_eq!(tooltip(waiting), i18n::tray_waiting());
+    }
+
+    #[test]
+    fn a_sweep_that_sent_nothing_is_grey_and_says_so() {
+        // A blind snapshot carries the default status, which is "Ok".
+        let blind = Seen::of(Status::Ok, "", true, true, true);
+        assert_eq!(Level::of(blind), Level::Unknown);
+        assert!(tooltip(blind).contains(i18n::mon_blind()));
+        assert!(!tooltip(blind).contains(Status::Ok.headline()));
     }
 
     #[test]
     fn the_tooltip_carries_the_verdict_and_its_note() {
-        let tip = tooltip(Status::IspDown, "router answers", true, true);
+        let tip = tooltip(Seen::of(Status::IspDown, "router answers", false, true, true));
         assert!(tip.contains(Status::IspDown.headline()));
         assert!(tip.contains("router answers"));
     }

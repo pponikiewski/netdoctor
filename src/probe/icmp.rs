@@ -325,11 +325,16 @@ pub fn ping_once(addr: Ipv4Addr, timeout_ms: u32) -> PingResult {
 /// looks faster on paper and is worse, because several series running at once
 /// then arrive as a burst and the measurement starts reporting its own
 /// contention — a Wi-Fi link measured that way shows jitter it does not have.
-pub fn ping_series(addr: Ipv4Addr, count: usize, timeout_ms: u32, gap_ms: u64) -> Vec<Option<f64>> {
-    let pinger = match Pinger::new() {
-        Ok(p) => p,
-        Err(_) => return vec![None; count],
-    };
+///
+/// `Err` when no handle could be opened. That used to come back as `count`
+/// lost packets, and the scan then named a dead router with certainty.
+pub fn ping_series(
+    addr: Ipv4Addr,
+    count: usize,
+    timeout_ms: u32,
+    gap_ms: u64,
+) -> Result<Vec<Option<f64>>, PingError> {
+    let pinger = Pinger::new()?;
     let gap = Duration::from_millis(gap_ms);
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
@@ -341,7 +346,7 @@ pub fn ping_series(addr: Ipv4Addr, count: usize, timeout_ms: u32, gap_ms: u64) -
             }
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]

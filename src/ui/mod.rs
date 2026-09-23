@@ -140,6 +140,16 @@ pub fn status_colour(s: Status) -> egui::Color32 {
     }
 }
 
+/// The header's dot and headline for a snapshot. A sweep that measured
+/// nothing has no verdict, so it gets neither a verdict's words nor its
+/// colour: `status` on such a snapshot is only the default.
+pub fn verdict_line(snap: &Snapshot) -> (egui::Color32, &'static str) {
+    match snap.blind {
+        Some(_) => (FG_DIM, crate::i18n::mon_blind()),
+        None => (status_colour(snap.status), snap.status.headline()),
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Tab {
     Live,
@@ -657,7 +667,7 @@ impl eframe::App for App {
 
 impl App {
     fn header(&mut self, ui: &mut egui::Ui) {
-        let status = self.last.status;
+        let (colour, headline) = verdict_line(&self.last);
 
         // The right-hand block's width is reserved before the left block is
         // drawn, and the left block is then held to what is left.
@@ -673,7 +683,7 @@ impl App {
 
         ui.horizontal_top(|ui| {
             ui.add_space(2.0);
-            status_dot(ui, status_colour(status), 7.0);
+            status_dot(ui, colour, 7.0);
             ui.add_space(S_XS);
 
             let left_w = (ui.available_width() - reserved).max(220.0);
@@ -682,9 +692,7 @@ impl App {
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.set_max_width(left_w);
-                    ui.label(
-                        egui::RichText::new(status.headline()).size(T_LEAD).strong().color(FG),
-                    );
+                    ui.label(egui::RichText::new(headline).size(T_LEAD).strong().color(FG));
                     ui.add_space(S_XS * 0.5);
                     let facts = self.connection_facts();
                     if facts.is_empty() {
@@ -1331,5 +1339,23 @@ pub fn latency_colour(ms: f64, s: &Settings) -> egui::Color32 {
         YELLOW
     } else {
         RED
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sweep_that_sent_nothing_shows_no_verdict() {
+        // A blind snapshot carries the default status, "Ok". The header used
+        // to paint whatever `status` said.
+        let blind = Snapshot { blind: Some("no ICMP handle".into()), ..Snapshot::default() };
+        let (colour, headline) = verdict_line(&blind);
+        assert_eq!(colour, FG_DIM);
+        assert_eq!(headline, crate::i18n::mon_blind());
+
+        let measured = Snapshot { status: Status::IspDown, ..Snapshot::default() };
+        assert_eq!(verdict_line(&measured), (RED, Status::IspDown.headline()));
     }
 }

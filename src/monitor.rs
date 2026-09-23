@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{bounded, Receiver, Sender};
 
 use crate::i18n;
-use crate::probe::icmp::{PingResult, Pinger};
+use crate::probe::icmp::{PingError, PingResult, Pinger};
 use crate::probe::netstate::{self, Medium, NetState};
 use crate::probe::path::{self, PathReading};
 use crate::settings::{Scope, Settings, DNS_TEST_HOST};
@@ -124,6 +124,10 @@ pub struct Snapshot {
     /// the first sweep of this run has placed itself in the history. See
     /// [`Store::observing_since`].
     pub observed_from: Option<f64>,
+    /// Why this sweep measured nothing, when it did not: no ICMP handle could
+    /// be opened, so no probe was sent. `status` is then not a verdict, and
+    /// whatever shows one has to show this instead.
+    pub blind: Option<String>,
 }
 
 impl Default for Snapshot {
@@ -138,6 +142,7 @@ impl Default for Snapshot {
             dns_error: String::new(),
             roamed: false,
             observed_from: None,
+            blind: None,
         }
     }
 }
@@ -709,15 +714,42 @@ impl PingerPool {
     /// A handle that cannot be opened leaves its target to be pinged on a
     /// neighbour's handle afterwards, sequentially: fewer handles is slower,
     /// not wrong.
-    fn sweep(&mut self, targets: &[Resolved], timeout_ms: u32) -> Vec<PingResult> {
+    ///
+    /// `Err` when not one handle could be opened. Nothing was sent, so there
+    /// is no result to report for any target: an empty list here used to be
+    /// read as "the router is gone" and recorded as an outage.
+    fn sweep(
+        &mut self,
+        targets: &[Resolved],
+        timeout_ms: u32,
+    ) -> Result<Vec<PingResult>, PingError> {
+        self.sweep_opening(targets, timeout_ms, Pinger::new)
+    }
+
+    /// `sweep`, with the way a handle is opened passed in, so a test can make
+    /// it fail.
+    fn sweep_opening(
+        &mut self,
+        targets: &[Resolved],
+        timeout_ms: u32,
+        mut open: impl FnMut() -> Result<Pinger, PingError>,
+    ) -> Result<Vec<PingResult>, PingError> {
+        let mut refused = None;
         while self.handles.len() < targets.len() {
-            match Pinger::new() {
+            match open() {
                 Ok(p) => self.handles.push(p),
-                Err(_) => break,
+                Err(e) => {
+                    refused = Some(e);
+                    break;
+                }
             }
         }
         if self.handles.is_empty() {
-            return Vec::new();
+            return match refused {
+                Some(e) => Err(e),
+                // No targets, so no handle was asked for.
+                None => Ok(Vec::new()),
+            };
         }
 
         let mut out: Vec<Option<PingResult>> = (0..targets.len()).map(|_| None).collect();
@@ -741,7 +773,7 @@ impl PingerPool {
             }
         });
 
-        out.into_iter().map(|r| r.unwrap_or_else(PingResult::timeout)).collect()
+        Ok(out.into_iter().map(|r| r.unwrap_or_else(PingResult::timeout)).collect())
     }
 }
 
@@ -983,7 +1015,28 @@ fn run_loop(
         // All at once, one handle each: a sweep costs one timeout rather than
         // one per target, so the cadence holds during an outage instead of
         // stretching to four seconds exactly when the samples matter.
-        for (t, r) in targets.iter().zip(pool.sweep(&targets, settings.sweep_timeout_ms())) {
+        let swept = match pool.sweep(&targets, settings.sweep_timeout_ms()) {
+            Ok(swept) => swept,
+            Err(e) => {
+                // Nothing was sent, so there is no verdict and no sample. To
+                // the outage bookkeeping this is a pause, and in the history
+                // a gap: what happened meanwhile is not known.
+                outages.pause(prev_sweep_ts);
+                let snap = Snapshot {
+                    ts,
+                    net: net.clone(),
+                    dns_ms,
+                    dns_error,
+                    blind: Some(i18n::mon_blind_detail(&e.describe())),
+                    ..Snapshot::default()
+                };
+                *held(&shared.last) = snap.clone();
+                let _ = tx.try_send(snap);
+                pace(started, settings.interval(), &stop);
+                continue;
+            }
+        };
+        for (t, r) in targets.iter().zip(swept) {
             let sample = Sample {
                 ok: r.ok(),
                 rtt_ms: r.rtt_ms,
@@ -1048,6 +1101,7 @@ fn run_loop(
             dns_error: dns_error.clone(),
             roamed,
             observed_from: Some(observed_from),
+            blind: None,
         };
 
         // The lead-up is recorded on every sweep, good ones included: by the
@@ -1112,17 +1166,7 @@ fn run_loop(
             let _ = store.prune(settings.keep_days);
         }
 
-        let elapsed = started.elapsed();
-        let interval = settings.interval();
-        if interval > elapsed {
-            // Wake early enough to notice a stop request promptly.
-            let mut remaining = interval - elapsed;
-            while remaining > Duration::ZERO && !stop.load(Ordering::Relaxed) {
-                let step = remaining.min(Duration::from_millis(200));
-                thread::sleep(step);
-                remaining = remaining.saturating_sub(step);
-            }
-        }
+        pace(started, settings.interval(), &stop);
     }
 
     // Shutting down while an outage is open: close it at the last sweep that
@@ -1132,6 +1176,12 @@ fn run_loop(
         let at = prev_sweep_ts.unwrap_or_else(store::now);
         let _ = store.close_event_at(id, at, "");
     }
+}
+
+/// Sleeps out what is left of a sweep's interval, waking early enough to
+/// notice a stop request promptly.
+fn pace(started: Instant, interval: Duration, stop: &AtomicBool) {
+    let _ = nap(stop, interval.saturating_sub(started.elapsed()));
 }
 
 /// How far back the line's loss and jitter are judged from, at most.
@@ -1266,7 +1316,7 @@ mod tests {
 
         let mut pool = PingerPool::default();
         let at = std::time::Instant::now();
-        let results = pool.sweep(&targets, timeout);
+        let results = pool.sweep(&targets, timeout).expect("an ICMP handle");
         let elapsed = at.elapsed();
 
         assert_eq!(results.len(), targets.len(), "every target gets a result");
@@ -1294,7 +1344,7 @@ mod tests {
         );
 
         let mut pool = PingerPool::default();
-        let results = pool.sweep(&targets, 300);
+        let results = pool.sweep(&targets, 300).expect("an ICMP handle");
 
         assert_eq!(results.len(), 5);
         for (t, r) in targets.iter().zip(&results) {
@@ -1302,6 +1352,34 @@ mod tests {
                 "loopback" => assert!(r.ok(), "this machine answers itself"),
                 _ => assert!(!r.ok(), "{} is a reserved address and must not reply", t.key),
             }
+        }
+    }
+
+    #[test]
+    fn a_sweep_that_could_not_open_icmp_is_not_an_outage() {
+        // The bug: with no handle the pool returned an empty list, `classify`
+        // found no router result, and "adapter down" went into the history
+        // and out as a notification. Nothing had been measured at all.
+        let mut pool = PingerPool::default();
+        let swept =
+            pool.sweep_opening(&targets(), 100, || Err(PingError::Api("access denied".into())));
+        if let Ok(results) = swept {
+            let results: HashMap<String, Sample> = targets()
+                .iter()
+                .zip(results)
+                .map(|(t, r)| (t.key.clone(), sample(r.ok(), r.rtt_ms)))
+                .collect();
+            let store = Store::open_in_memory().unwrap();
+            let (status, _) = classify(
+                &results,
+                &targets(),
+                &wifi_state(),
+                "",
+                &Settings::default(),
+                &store,
+                QUALITY_WINDOW_S,
+            );
+            panic!("a sweep that measured nothing was judged as {status:?}");
         }
     }
 
