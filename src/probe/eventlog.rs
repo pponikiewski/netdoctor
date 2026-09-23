@@ -208,10 +208,26 @@ fn classify(provider: &str, id: u32, level: u32) -> Option<Kind> {
         return known;
     }
 
-    if matches!(short, "dhcp" | "dhcpv6") || p.contains("dhcp-client") {
+    // DHCPv6 logs its service starting and stopping on every network, with
+    // IPv6 or without, and a network without IPv6 has no v6 lease to lose.
+    // The monitor measures IPv4, so nothing it logs explains an outage here.
+    if p.contains("dhcpv6") {
+        return None;
+    }
+    if matches!(short, "dhcp") || p.contains("dhcp-client") {
         // The DHCP client logs its successes too; only a failure to get or
-        // renew a lease explains an outage.
-        return matches!(id, 1001..=1006 | 1046 | 1047 | 50066 | 50067).then_some(Kind::DhcpFail);
+        // renew a lease explains an outage. The ids are the ones its manifest
+        // (`Get-WinEvent -ListProvider Microsoft-Windows-Dhcp-Client`) marks
+        // as errors and warnings about the lease: 1001 no address, 1002
+        // refused (NACK), 1003 not renewed, 1006 not configured. 1005 in the
+        // same manifest is an address already in use. 1046, 1047, 50066 and
+        // 50067 used to be here and are informational: the fallback
+        // configuration read, an address attached for an SSID.
+        return match id {
+            1001 | 1002 | 1003 | 1006 => Some(Kind::DhcpFail),
+            1005 => Some(Kind::DuplicateIp),
+            _ => None,
+        };
     }
 
     // Anything else has to be an error or worse, from something that plausibly
@@ -588,5 +604,32 @@ mod tests {
             None,
             "the DHCP client logs routine renewals too"
         );
+    }
+
+    #[test]
+    fn only_the_dhcp_ids_the_manifest_calls_failures_are_failures() {
+        // Read off the provider manifests (`Get-WinEvent -ListProvider`) on
+        // Windows 11 26200. 1046 and 1047 are the fallback configuration
+        // being read, 50066 and 50067 an address attached for an SSID: all
+        // informational, and 50066/50067 come with ordinary Wi-Fi
+        // connections. They were each a certain "DHCP lease failed".
+        const V4: &str = "Microsoft-Windows-Dhcp-Client";
+        for routine in [1046, 1047, 50066, 50067, 50036, 50103] {
+            assert_eq!(classify(V4, routine, 4), None, "{routine} is informational");
+        }
+        for failed in [1001, 1002, 1003, 1006] {
+            assert_eq!(classify(V4, failed, 2), Some(Kind::DhcpFail), "{failed}");
+        }
+        // 1005 is the address already in use on the network.
+        assert_eq!(classify(V4, 1005, 3), Some(Kind::DuplicateIp));
+
+        // DHCPv6 logs its service starting and stopping on every network,
+        // IPv6 or not (51046, 51047, 51057 on this machine, no IPv6 at all),
+        // and a network without IPv6 has no DHCPv6 lease to lose. It never
+        // explains an IPv4 outage.
+        const V6: &str = "Microsoft-Windows-DHCPv6-Client";
+        for id in [1000, 1003, 51046, 51047, 51057, 51062] {
+            assert_eq!(classify(V6, id, 2), None, "DHCPv6 {id}");
+        }
     }
 }

@@ -333,7 +333,11 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
     }
 
     if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::DhcpFail) {
-        out.push(Cause::new("log_dhcp", Confidence::Certain, i18n::ev_log_dhcp(&at(e))));
+        // 1003 is a renewal that failed while the lease was still valid: the
+        // router did not answer the DHCP client, which fits a LAN fault but
+        // did not itself take the address away. The others are no address.
+        let conf = if e.id == 1003 { Confidence::Likely } else { Confidence::Certain };
+        out.push(Cause::new("log_dhcp", conf, i18n::ev_log_dhcp(&at(e))));
     }
 
     if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::DuplicateIp) {
@@ -917,6 +921,18 @@ mod tests {
         assert!(!verdicts(&event("lan", wifi_ctx(), 30.0), &[], &[], &both)
             .iter()
             .any(|c| c.code == "log_link_down"));
+    }
+
+    #[test]
+    fn a_renewal_that_failed_is_weaker_evidence_than_no_address_at_all() {
+        let conf = |id| {
+            let mut e = log(Kind::DhcpFail, -5.0, None);
+            e.id = id;
+            let causes = verdicts(&event("lan", wifi_ctx(), 30.0), &[], &[], &[e]);
+            causes.iter().find(|c| c.code == "log_dhcp").map(|c| c.confidence)
+        };
+        assert_eq!(conf(1001), Some(Confidence::Certain), "no address");
+        assert_eq!(conf(1003), Some(Confidence::Likely), "not renewed, lease still valid");
     }
 
     #[test]
