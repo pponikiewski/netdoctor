@@ -207,7 +207,10 @@ one English label that would silently fail everywhere else.
   out which channel to ask the router for.
 - **Outage history** — when, how long, whose fault, and on selecting an entry,
   why: cause, evidence, what Windows logged around it, the lead-up plotted, and
-  a route to the fix.
+  a route to the fix. A line that stays *slow* (loss, jitter or latency past
+  the thresholds in Settings) for three readings in a row is recorded here too,
+  as "unstable"; it does not trigger a notification. An outage that starts slow
+  and then goes down is recorded as the worst state it reached.
 - **Settings** — probe cadence (300 ms to 30 s; slower and a sleeping machine
   could not be told from an outage), thresholds, extra ping targets (your game
   server, for instance), autostart, updates.
@@ -242,7 +245,7 @@ it matters, since several of these only take effect after one.
 | --- | --- | --- |
 | Adapter power management | low | the most common cause of drops on a laptop |
 | Wi-Fi power plan | low | a second, independent radio throttle |
-| Fast DNS (1.1.1.1) | low | removes the router as a single point of failure |
+| Fast DNS (1.1.1.1) | medium | removes the router as a single point of failure |
 | TCP auto-tuning = normal | low | undoes the damage done by "ping boost" guides |
 | Disable Nagle | medium | a few ms off twitch games; needs a restart |
 | Multimedia packet throttle | medium | Windows caps traffic during media playback |
@@ -365,8 +368,10 @@ cargo test a_real_outage -- --ignored --nocapture
 - `tweak_snapshots.json` — prior state for every applied change
 - `netdoctor-report.txt` — written by "Save report"
 
-Samples older than the configured retention (14 days by default) are pruned
-automatically.
+Samples **and recorded outages** older than the configured retention (14 days
+by default) are pruned automatically, so an outage from three weeks ago is gone
+from the history and from any report. An outage still in progress is never
+pruned. The log of changes the app made is kept.
 
 `history.db` is the one file here that gets big. At the defaults — four targets,
 one sweep a second — a full 14 days of retention measures **367 MB**. That is
