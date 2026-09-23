@@ -818,6 +818,23 @@ fn is_cgnat(a: Ipv4Addr) -> bool {
     o[0] == 100 && (64..128).contains(&o[1])
 }
 
+/// Whether an answer from `a` says anything about the internet.
+///
+/// A private address is the user's own equipment: a Pi-hole, a NAS, a second
+/// router. A link-local one is this machine's failed lease, and a CGNAT one is
+/// the provider's own network, which [`find_edge`] already treats as the
+/// provider's edge rather than the open internet. None of them answering can
+/// show that the line past the provider works.
+pub fn is_public(a: Ipv4Addr) -> bool {
+    !(a.is_private()
+        || a.is_loopback()
+        || a.is_unspecified()
+        || a.is_broadcast()
+        || a.is_multicast()
+        || is_apipa(a)
+        || is_cgnat(a))
+}
+
 /// Walk the path and pick the hop that represents the provider's edge.
 ///
 /// The first hop past the gateway is not automatically the provider: on a
@@ -1735,6 +1752,24 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let findings = check_medium(&net, &store, &Settings::default());
         assert_ne!(findings[0].title, i18n::f_apipa());
+    }
+
+    #[test]
+    fn only_a_public_address_speaks_for_the_internet() {
+        for local in [
+            [192, 168, 1, 5],
+            [10, 0, 0, 1],
+            [172, 16, 0, 1],
+            [169, 254, 1, 1],
+            [100, 64, 0, 1],
+            [100, 127, 255, 254],
+            [127, 0, 0, 1],
+        ] {
+            assert!(!is_public(Ipv4Addr::from(local)), "{local:?}");
+        }
+        for public in [[1, 1, 1, 1], [8, 8, 8, 8], [100, 63, 255, 255], [100, 128, 0, 1]] {
+            assert!(is_public(Ipv4Addr::from(public)), "{public:?}");
+        }
     }
 
     #[test]

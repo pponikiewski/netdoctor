@@ -1206,9 +1206,14 @@ fn classify(
     store: &Store,
     quality_window_s: f64,
 ) -> (Status, String) {
+    // Only a public address can vouch for the internet: see
+    // [`crate::diagnose::is_public`]. A resolver the user runs at home, or a
+    // host they added on their own network, used to answer for it and hide
+    // an outage at the provider.
     let internet_ok = targets
         .iter()
         .filter(|t| matches!(t.scope, Scope::Internet | Scope::Isp))
+        .filter(|t| crate::diagnose::is_public(t.host))
         .any(|t| results.get(&t.key).map(|s| s.ok).unwrap_or(false));
 
     let gw = results.get("gateway").map(|s| s.ok);
@@ -1699,6 +1704,44 @@ mod tests {
         );
         assert_eq!(status, Status::IspDown);
         assert!(note.contains("Router"));
+    }
+
+    #[test]
+    fn a_local_box_that_answers_does_not_prove_the_internet_works() {
+        // A Pi-hole or a NAS added as a target, or a resolver that is really
+        // the provider's CGNAT box: each answered, and the verdict was "Ok"
+        // with every public target silent.
+        let resolved = |key: &str, a: [u8; 4], scope| Resolved {
+            key: key.into(),
+            host: Ipv4Addr::from(a),
+            scope,
+        };
+        let targets = vec![
+            resolved("gateway", [192, 168, 1, 1], Scope::Lan),
+            resolved("dns_isp", [100, 64, 0, 1], Scope::Isp),
+            resolved("cloudflare", [1, 1, 1, 1], Scope::Internet),
+            resolved("google", [8, 8, 8, 8], Scope::Internet),
+            resolved("custom0", [192, 168, 1, 5], Scope::Internet),
+            resolved("custom1", [169, 254, 3, 3], Scope::Internet),
+            resolved("custom2", [10, 0, 0, 9], Scope::Internet),
+        ];
+        let mut r = HashMap::new();
+        for t in &targets {
+            let public = matches!(t.key.as_str(), "cloudflare" | "google");
+            r.insert(t.key.clone(), sample(!public, (!public).then_some(3.0)));
+        }
+        let store = Store::open_in_memory().unwrap();
+        let s = Settings::default();
+        let (status, _) = classify(&r, &targets, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
+        assert_eq!(status, Status::IspDown);
+
+        // And a public address the user added does count.
+        r.insert("custom0".into(), sample(false, None));
+        let mut public = targets;
+        public.push(resolved("custom3", [9, 9, 9, 9], Scope::Internet));
+        r.insert("custom3".into(), sample(true, Some(20.0)));
+        let (status, _) = classify(&r, &public, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
+        assert_ne!(status, Status::IspDown);
     }
 
     #[test]
