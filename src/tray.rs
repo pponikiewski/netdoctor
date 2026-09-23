@@ -34,7 +34,9 @@ pub enum Level {
 impl Level {
     fn of(seen: Seen) -> Level {
         match seen {
-            Seen::Paused | Seen::Waiting | Seen::Blind | Seen::Stale(_) => Level::Unknown,
+            Seen::Paused | Seen::Waiting | Seen::Blind | Seen::Unrecorded | Seen::Stale(_) => {
+                Level::Unknown
+            }
             Seen::Verdict(Status::Ok, _) => Level::Ok,
             Seen::Verdict(Status::Degraded, _) => Level::Slow,
             Seen::Verdict(..) => Level::Down,
@@ -64,6 +66,7 @@ fn tooltip(seen: Seen) -> String {
         Seen::Paused => i18n::tray_paused().to_string(),
         Seen::Waiting => i18n::tray_waiting().to_string(),
         Seen::Blind => format!("NetDoctor: {}", i18n::mon_blind()),
+        Seen::Unrecorded => format!("NetDoctor: {}", i18n::mon_unrecorded()),
         Seen::Stale(age) => i18n::tray_stale(age),
         Seen::Verdict(status, "") => format!("NetDoctor: {}", status.headline()),
         Seen::Verdict(status, note) => format!("NetDoctor: {}\n{note}", status.headline()),
@@ -889,6 +892,21 @@ mod tests {
         assert_eq!(Level::of(blind), Level::Unknown);
         assert!(tooltip(blind).contains(i18n::mon_blind()));
         assert!(!tooltip(blind).contains(Status::Ok.headline()));
+    }
+
+    #[test]
+    fn a_healthy_line_that_is_not_being_recorded_is_grey_not_green() {
+        // The pings came back, but the samples loss and jitter are read from
+        // never reached the database: "healthy" would be judged on nothing.
+        let snap = Snapshot { unrecorded: Some("disk full".into()), ..swept(Status::Ok, "", 0.5) };
+        let seen = Seen::of(&snap, true, NOW, SECOND);
+        assert_eq!(Level::of(seen), Level::Unknown);
+        assert!(tooltip(seen).contains(i18n::mon_unrecorded()));
+        assert!(!tooltip(seen).contains(Status::Ok.headline()));
+        // An outage is read off the pings and stays one without the database.
+        let down =
+            Snapshot { unrecorded: Some("disk full".into()), ..swept(Status::IspDown, "", 0.5) };
+        assert_eq!(Level::of(Seen::of(&down, true, NOW, SECOND)), Level::Down);
     }
 
     #[test]

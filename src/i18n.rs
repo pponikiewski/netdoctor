@@ -883,6 +883,13 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          tab.",
         "Ping po IP może działać, a mimo to nic się nie ładuje w przeglądarce. Przełącz się na \
          1.1.1.1 na zakładce Optymalizacja.";
+    f_dns_own_failing_advice =>
+        "This is a DNS server on your own network (Pi-hole, AdGuard Home or a company server). \
+         Check that it is running. NetDoctor does not offer to replace it, because that would \
+         switch off what you run it for.",
+        "To serwer DNS w Twojej własnej sieci (Pi-hole, AdGuard Home albo serwer firmowy). \
+         Sprawdź, czy działa. NetDoctor nie proponuje jego zamiany, bo wyłączyłoby to to, do \
+         czego go używasz.";
     f_dns_slow_advice =>
         "Every new connection waits on this, which is why pages seem to stall before loading.",
         "Każde nowe połączenie na to czeka — dlatego strony wyglądają, jakby się zawieszały przed \
@@ -1104,6 +1111,15 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          internet. It usually passes; if it does not, restart NetDoctor.",
         "Windows nie pozwolił wysłać wiadomości testowych. To nie jest ocena Twojego \
          internetu. Zwykle mija samo, a jeśli nie, uruchom NetDoctora ponownie.";
+    sum_unrecorded =>
+        "The internet answers, but NetDoctor cannot record.",
+        "Internet odpowiada, ale NetDoctor nie może zapisywać pomiarów.";
+    sum_unrecorded_todo =>
+        "Its database refused the latest readings, so loss and jitter are not judged and an \
+         outage would not be recorded. Check the free space on the disk, then restart NetDoctor.",
+        "Baza danych odrzuciła ostatnie pomiary, więc straty i jitter nie są oceniane, a awaria \
+         nie zostałaby zapisana. Sprawdź wolne miejsce na dysku, potem uruchom NetDoctora \
+         ponownie.";
     sum_stale =>
         "Measuring has stopped.",
         "Pomiar się zatrzymał.";
@@ -1132,6 +1148,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     mon_stale =>
         "No fresh reading: measuring has stopped",
         "Brak świeżego pomiaru: pomiar przestał działać";
+    mon_unrecorded =>
+        "Not recording: readings cannot be saved",
+        "Brak zapisu: nie da się zapisać pomiarów";
     mon_blind =>
         "Not measuring: Windows would not let the app send pings",
         "Brak pomiaru: Windows nie pozwolił aplikacji wysłać pingów";
@@ -1145,17 +1164,19 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     bloat_blurb =>
         "Idle latency says little. What matters is what happens to it when somebody in the house \
          starts a download. This test saturates the link and measures the rise.\n\n\
-         It pulls a few dozen MB from Cloudflare and takes about 25 seconds. Skip it on a \
-         metered connection.",
+         It downloads from Cloudflare and then uploads to it, and takes about 35 seconds. Skip \
+         it on a metered connection.",
         "Opóźnienie na bezczynnym łączu mówi niewiele. Liczy się to, co się z nim dzieje, gdy \
          ktoś w domu zaczyna pobierać plik. Ten test wysyca łącze i mierzy wzrost.\n\n\
-         Pobiera kilkadziesiąt MB z Cloudflare i trwa około 25 sekund. Pomiń go na połączeniu \
-         z limitem transferu.";
+         Pobiera dane z Cloudflare, a potem je tam wysyła, i trwa około 35 sekund. Pomiń go na \
+         połączeniu z limitem transferu.";
     bloat_btn_run => "Run test", "Uruchom test";
     bloat_card_idle => "Idle latency", "Opóźnienie bezczynne";
-    bloat_card_loaded => "Under load", "Pod obciążeniem";
+    bloat_card_loaded => "Downloading", "Przy pobieraniu";
     bloat_card_increase => "Increase", "Wzrost";
-    bloat_card_throughput => "Throughput", "Przepustowość";
+    bloat_card_throughput => "Download", "Pobieranie";
+    bloat_card_loaded_up => "Uploading", "Przy wysyłaniu";
+    bloat_card_throughput_up => "Upload", "Wysyłanie";
     bloat_card_throughput_sub => "during the test", "w trakcie testu";
     bloat_card_grade => "Grade", "Ocena";
 
@@ -1163,6 +1184,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     bloat_prog_load =>
         "Saturating the link and measuring latency under load…",
         "Wysycanie łącza i pomiar opóźnienia pod obciążeniem…";
+    bloat_prog_upload =>
+        "Saturating the upload and measuring latency…",
+        "Wysycanie wysyłania i pomiar opóźnienia…";
     bloat_prog_done => "Done", "Gotowe";
 
     grade_a =>
@@ -1170,11 +1194,11 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Doskonale. Łącze nie puchnie pod obciążeniem.";
     grade_b => "Good. A mild rise, unnoticeable in games.", "Dobrze. Lekki wzrost, w grach niezauważalny.";
     grade_c =>
-        "Fair. Latency climbs noticeably while downloading.",
-        "Średnio. Opóźnienie wyraźnie rośnie podczas pobierania.";
+        "Fair. Latency climbs noticeably while the line is busy.",
+        "Średnio. Opóźnienie wyraźnie rośnie, gdy łącze jest zajęte.";
     grade_d =>
-        "Poor. Games will stutter during any download.",
-        "Słabo. Gry będą się ciąć przy każdym pobieraniu.";
+        "Poor. Games will stutter during any download or upload.",
+        "Słabo. Gry będą się ciąć przy każdym pobieraniu lub wysyłaniu.";
     grade_f => "Very poor. Textbook bufferbloat.", "Bardzo słabo. Podręcznikowy bufferbloat.";
     grade_unknown => "Not measured.", "Nie zmierzono.";
 
@@ -1348,6 +1372,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          przestaną działać nazwy wewnętrzne. Zmiana dotyczy wyłącznie IPv4, więc ruch idący do \
          resolvera po IPv6 zostaje przy starym.";
     tw_dns_none => "none / from DHCP", "brak / z DHCP";
+    tw_dns_own_note =>
+        "  (your own DNS server: left as it is)",
+        "  (Twój własny serwer DNS: zostaje bez zmian)";
     tw_dns_router_only_note =>
         "  (router only, single point of failure)",
         "  (tylko router, pojedynczy punkt awarii)";
@@ -2030,6 +2057,20 @@ pub fn tray_stale(age: f64) -> String {
 }
 
 /// Why a sweep measured nothing: no ICMP handle could be opened.
+pub fn mon_unrecorded_detail(err: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "The readings could not be saved ({err}). Loss and jitter are read back from them, \
+             so the line is not judged healthy, and no outage is recorded until saving works."
+        ),
+        Lang::Pl => format!(
+            "Nie udało się zapisać pomiarów ({err}). Straty i jitter są liczone z zapisanych \
+             pomiarów, więc łącze nie jest oceniane jako zdrowe, a awarie nie są zapisywane, \
+             dopóki zapis nie zacznie działać."
+        ),
+    }
+}
+
 pub fn mon_blind_detail(err: &str) -> String {
     match current() {
         Lang::En => format!(
@@ -2123,8 +2164,8 @@ pub fn rep_loaded_line(avg: f64, max: Option<f64>, loss: f64) -> String {
 /// metered or mobile connection.
 pub fn bloat_cost_warning() -> &'static str {
     match current() {
-        Lang::En => "The test downloads as fast as the line allows for about 14 seconds. On a fast connection that is well over a gigabyte — avoid it on a metered or mobile link.",
-        Lang::Pl => "Test pobiera dane z pełną prędkością łącza przez około 14 sekund. Na szybkim łączu to grubo ponad gigabajt — nie uruchamiaj go na połączeniu taryfowym ani na telefonie.",
+        Lang::En => "The test downloads, then uploads, as fast as the line allows for about 14 seconds each. On a fast connection that is well over a gigabyte — avoid it on a metered or mobile link.",
+        Lang::Pl => "Test pobiera, a potem wysyła dane z pełną prędkością łącza, po około 14 sekund w każdą stronę. Na szybkim łączu to grubo ponad gigabajt — nie uruchamiaj go na połączeniu taryfowym ani na telefonie.",
     }
 }
 
@@ -2133,6 +2174,30 @@ pub fn bloat_data_used(mib: f64) -> String {
     match current() {
         Lang::En => format!("Data used by this test: {mib:.0} MB"),
         Lang::Pl => format!("Dane zużyte przez ten test: {mib:.0} MB"),
+    }
+}
+
+/// Every upload stream died: the download half still stands on its own.
+pub fn bloat_no_upload() -> &'static str {
+    match current() {
+        Lang::En => "The upload could not be loaded: every stream failed. Only the download is graded.",
+        Lang::Pl => "Nie udało się obciążyć wysyłania: wszystkie strumienie padły. Oceniane jest tylko pobieranie.",
+    }
+}
+
+/// Under a good grade: the load it was measured at, which only the user can
+/// hold against the speed they pay for.
+pub fn bloat_saturation_caveat(down: f64, up: Option<f64>) -> String {
+    let up = up.map_or_else(|| "?".to_string(), |u| format!("{u:.0}"));
+    match current() {
+        Lang::En => format!(
+            "Measured at {down:.0} Mbps down and {up} Mbps up. If your plan is clearly faster, \
+             the test did not fill the line, and the grade may be better than the line."
+        ),
+        Lang::Pl => format!(
+            "Zmierzone przy {down:.0} Mbps pobierania i {up} Mbps wysyłania. Jeśli Twój pakiet \
+             jest wyraźnie szybszy, test nie zapchał łącza i ocena może być lepsza niż łącze."
+        ),
     }
 }
 
@@ -2467,6 +2532,13 @@ pub fn f_load_ok(bump: f64) -> String {
     }
 }
 
+pub fn f_load_detail_up(loaded: f64, mbps: f64) -> String {
+    match current() {
+        Lang::En => format!("Uploading: {loaded:.0} ms at {mbps:.0} Mbps."),
+        Lang::Pl => format!("Przy wysyłaniu: {loaded:.0} ms przy {mbps:.0} Mbps."),
+    }
+}
+
 pub fn f_load_detail(idle: f64, loaded: f64, mbps: f64, grade: &str) -> String {
     match current() {
         Lang::En => format!(
@@ -2685,6 +2757,55 @@ pub fn f_stats_line(
             format!("śr. {avg} ms, min {min}, maks {max}, jitter {jitter} ms, straty {loss:.0}%")
         }
     }
+}
+
+/// Over the before/after figures of a change on the Optimise tab.
+pub fn opt_effect_heading(applied: &str) -> String {
+    match current() {
+        Lang::En => format!("The line around the change made {applied}"),
+        Lang::Pl => format!("Łącze wokół zmiany z {applied}"),
+    }
+}
+
+pub fn opt_effect_before() -> String {
+    pick("before", "przed")
+}
+
+pub fn opt_effect_after() -> String {
+    pick("after", "po")
+}
+
+/// One side of the comparison: "before (24 h): ping 18.0 ms, jitter 3.1 ms, loss 0.4%".
+pub fn opt_effect_side(
+    label: &str,
+    span: &str,
+    median: Option<f64>,
+    jitter: Option<f64>,
+    loss: f64,
+) -> String {
+    let (median, jitter) = (figure_or_dash(median, 0, 1), figure_or_dash(jitter, 0, 1));
+    match current() {
+        Lang::En => {
+            format!("{label} ({span}): ping {median} ms, jitter {jitter} ms, loss {loss:.1}%")
+        }
+        Lang::Pl => {
+            format!("{label} ({span}): ping {median} ms, jitter {jitter} ms, straty {loss:.1}%")
+        }
+    }
+}
+
+pub fn opt_effect_no_data(label: &str) -> String {
+    match current() {
+        Lang::En => format!("{label}: too few readings to compare"),
+        Lang::Pl => format!("{label}: za mało pomiarów, żeby porównać"),
+    }
+}
+
+pub fn opt_effect_caveat() -> String {
+    pick(
+        "Measured, not proven: the time of day or another change can move these figures too.",
+        "To pomiar, nie dowód: pora dnia albo inna zmiana też mogą przesunąć te liczby.",
+    )
 }
 
 pub fn f_loss(pct: f64) -> String {
@@ -3309,6 +3430,55 @@ pub fn ev_dns_router_only() -> String {
     )
 }
 
+pub fn ev_router_wan_down(status: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "the router itself reported its internet connection as \"{status}\" during the outage"
+        ),
+        Lang::Pl => format!(
+            "router sam zgłaszał w trakcie awarii swoje połączenie z internetem jako „{status}”"
+        ),
+    }
+}
+
+pub fn ev_router_restarted() -> String {
+    pick(
+        "the router's uptime counter started again during the outage: the router, or its \
+         connection to the provider, restarted",
+        "licznik czasu działania routera ruszył od nowa w trakcie awarii: uruchomił się ponownie \
+         router albo jego połączenie z dostawcą",
+    )
+}
+
+pub fn ev_wan_new_ip() -> String {
+    pick(
+        "the router came back with a different public address: its session with the provider \
+         was set up anew",
+        "router wrócił z innym adresem publicznym: jego sesja u dostawcy została nawiązana od nowa",
+    )
+}
+
+pub fn ev_router_wan_up() -> String {
+    pick(
+        "the router reported its internet connection as up throughout: the break was past it, \
+         in the provider's network or beyond",
+        "router cały czas zgłaszał połączenie z internetem jako aktywne: przerwa była dalej, w \
+         sieci dostawcy albo za nią",
+    )
+}
+
+pub fn ev_dns_own_resolver(err: &str) -> String {
+    let what = ev_dns_error(err);
+    match current() {
+        Lang::En => {
+            format!("{what}; the resolver is on your own network, so check that it is running")
+        }
+        Lang::Pl => {
+            format!("{what}; resolver jest w Twojej własnej sieci, więc sprawdź, czy działa")
+        }
+    }
+}
+
 pub fn ev_dns_error(err: &str) -> String {
     if err.is_empty() {
         return pick("the test lookup did not complete", "testowe zapytanie nie zakończyło się");
@@ -3718,10 +3888,23 @@ pub fn mon_ping_detail(worst: f64) -> String {
 /// The worst sample seen while the link was saturated.
 pub fn bloat_worst(max: f64, loss_pct: f64) -> String {
     match current() {
-        Lang::En => format!("Worst sample under load: {max:.0} ms, packet loss {loss_pct:.0}%."),
+        Lang::En => {
+            format!("Worst sample while downloading: {max:.0} ms, packet loss {loss_pct:.0}%.")
+        }
         Lang::Pl => format!(
-            "Najgorsza próbka pod obciążeniem: {max:.0} ms, utrata pakietów {loss_pct:.0}%."
+            "Najgorsza próbka przy pobieraniu: {max:.0} ms, utrata pakietów {loss_pct:.0}%."
         ),
+    }
+}
+
+pub fn bloat_worst_up(max: f64, loss_pct: f64) -> String {
+    match current() {
+        Lang::En => {
+            format!("Worst sample while uploading: {max:.0} ms, packet loss {loss_pct:.0}%.")
+        }
+        Lang::Pl => {
+            format!("Najgorsza próbka przy wysyłaniu: {max:.0} ms, utrata pakietów {loss_pct:.0}%.")
+        }
     }
 }
 

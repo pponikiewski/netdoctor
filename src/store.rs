@@ -4,6 +4,7 @@
 //! across four targets a transaction per sample would hammer the disk for no
 //! reason.
 
+use crate::probe::igd::RouterReading;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -46,6 +47,14 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_start ON events(ts_start);
 CREATE INDEX IF NOT EXISTS idx_events_scope ON events(scope, ts_start);
+
+CREATE TABLE IF NOT EXISTS router (
+    ts       REAL NOT NULL,
+    status   TEXT NOT NULL,
+    uptime_s INTEGER,
+    ip_tag   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_router_ts ON router(ts);
 
 CREATE TABLE IF NOT EXISTS tweaks (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -279,15 +288,20 @@ impl Store {
     /// days. If a full-history view ever ships, move the reduction into SQL
     /// with `LAG(rtt_ms) OVER (ORDER BY ts)` rather than making this bigger.
     pub fn stats(&self, target: &str, window_s: f64) -> Stats {
-        let cutoff = now() - window_s;
+        self.stats_between(target, now() - window_s, f64::INFINITY)
+    }
+
+    /// [`Store::stats`] over `from <= ts < to`, for a stretch that does not
+    /// end now: the day before a change was applied, for one.
+    pub fn stats_between(&self, target: &str, from: f64, to: f64) -> Stats {
         let conn = self.held_read();
-        let mut stmt = match conn
-            .prepare_cached("SELECT rtt_ms, ok FROM samples WHERE target=? AND ts>=? ORDER BY ts")
-        {
+        let mut stmt = match conn.prepare_cached(
+            "SELECT rtt_ms, ok FROM samples WHERE target=? AND ts>=? AND ts<? ORDER BY ts",
+        ) {
             Ok(s) => s,
             Err(_) => return Stats::default(),
         };
-        let rows = stmt.query_map(params![target, cutoff], |r| {
+        let rows = stmt.query_map(params![target, from, to], |r| {
             Ok((r.get::<_, Option<f64>>(0)?, r.get::<_, i64>(1)? != 0))
         });
         let Ok(rows) = rows else {
@@ -322,6 +336,7 @@ impl Store {
         let outage_cutoff = now() - (keep_days.max(OUTAGE_KEEP_DAYS) as f64) * 86400.0;
         let conn = self.held();
         conn.execute("DELETE FROM samples WHERE ts < ?", params![cutoff])?;
+        conn.execute("DELETE FROM router WHERE ts < ?", params![cutoff])?;
         // An outage still open has no end yet and is never old enough to
         // touch. `close_orphans` runs at startup so this only ever spares one
         // that is genuinely still running, rather than every row a crash
@@ -485,6 +500,34 @@ impl Store {
         rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
+    /// One answer from the router's UPnP service. See [`crate::probe::igd`].
+    pub fn add_router_reading(&self, r: &RouterReading) -> Result<()> {
+        self.held().execute(
+            "INSERT INTO router (ts, status, uptime_s, ip_tag) VALUES (?,?,?,?)",
+            params![r.ts, r.status, r.uptime_s.map(|u| u as i64), r.ip_tag],
+        )?;
+        Ok(())
+    }
+
+    /// The router's answers inside a time span, oldest first.
+    pub fn router_between(&self, from: f64, to: f64) -> Vec<RouterReading> {
+        let conn = self.held_read();
+        let Ok(mut stmt) = conn.prepare_cached(
+            "SELECT ts, status, uptime_s, ip_tag FROM router WHERE ts>=? AND ts<=? ORDER BY ts",
+        ) else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map(params![from, to], |r| {
+            Ok(RouterReading {
+                ts: r.get(0)?,
+                status: r.get(1)?,
+                uptime_s: r.get::<_, Option<i64>>(2)?.map(|u| u.max(0) as u64),
+                ip_tag: r.get(3)?,
+            })
+        });
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
+    }
+
     /// The stored evidence for one outage. `None` when the row is gone.
     pub fn event_context(&self, id: i64) -> Option<EventContext> {
         let conn = self.held_read();
@@ -638,6 +681,34 @@ fn median(rtts: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn router_readings_come_back_in_order_and_are_pruned_with_samples() {
+        let store = Store::open_in_memory().unwrap();
+        let t = now();
+        for (dt, status) in [(-20.0, "Connected"), (-10.0, "Disconnected")] {
+            let r = RouterReading {
+                ts: t + dt,
+                status: status.into(),
+                uptime_s: Some(100),
+                ip_tag: Some("ab".into()),
+            };
+            store.add_router_reading(&r).unwrap();
+        }
+        let old = RouterReading {
+            ts: t - 30.0 * 86_400.0,
+            status: "Connected".into(),
+            uptime_s: None,
+            ip_tag: None,
+        };
+        store.add_router_reading(&old).unwrap();
+        let got = store.router_between(t - 60.0, t);
+        let statuses: Vec<&str> = got.iter().map(|r| r.status.as_str()).collect();
+        assert_eq!(statuses, ["Connected", "Disconnected"]);
+        assert_eq!(got[0].uptime_s, Some(100));
+        store.prune(14).unwrap();
+        assert!(store.router_between(0.0, t).iter().all(|r| r.ts > t - 86_400.0));
+    }
 
     #[test]
     fn outages_outlive_the_samples_but_not_their_lead_up() {

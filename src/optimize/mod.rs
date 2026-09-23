@@ -674,7 +674,13 @@ impl Tweak for FastDns {
         if net.dns_is_router_only() {
             text.push_str(crate::i18n::tw_dns_router_only_note());
         }
-        let optimal = current.iter().any(|d| good.contains(&d.as_str()));
+        // A resolver the user runs is not "worth changing": see
+        // [`NetState::dns_is_own_resolver`].
+        let own = net.dns_is_own_resolver();
+        if own {
+            text.push_str(crate::i18n::tw_dns_own_note());
+        }
+        let optimal = (!own).then(|| current.iter().any(|d| good.contains(&d.as_str())));
         // The servers alone do not say where they came from: Windows lists
         // DHCP-assigned and typed-in resolvers alike. Restoring a DHCP list
         // as static pins the router's address, and every other network the
@@ -684,7 +690,7 @@ impl Tweak for FastDns {
             Some(by_hand) => json!({ "servers": current, "dhcp": !by_hand }),
             None => Value::Null,
         };
-        State::new(text, Some(optimal), snapshot)
+        State::new(text, optimal, snapshot)
     }
 
     fn apply(&self, net: &NetState) -> Result<String> {

@@ -97,6 +97,9 @@ pub fn read(
         }
         Seen::Waiting => return unknown(i18n::sum_waiting(), i18n::sum_waiting_todo(), None),
         Seen::Blind => return unknown(i18n::sum_blind(), i18n::sum_blind_todo(), None),
+        Seen::Unrecorded => {
+            return unknown(i18n::sum_unrecorded(), i18n::sum_unrecorded_todo(), None)
+        }
         Seen::Stale(_) => return unknown(i18n::sum_stale(), i18n::sum_stale_todo(), None),
         Seen::Verdict(status, _) => status,
     };
@@ -310,7 +313,8 @@ mod tests {
 
     #[test]
     fn nothing_measured_draws_nothing_as_fine() {
-        for seen in [Seen::Paused, Seen::Waiting, Seen::Blind, Seen::Stale(60.0)] {
+        for seen in [Seen::Paused, Seen::Waiting, Seen::Blind, Seen::Unrecorded, Seen::Stale(60.0)]
+        {
             let v = read(seen, true, Some(80), &router(3.0), 20.0);
             assert_eq!((v.local, v.provider), (Link::Unknown, Link::Unknown), "{seen:?}");
         }

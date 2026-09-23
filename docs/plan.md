@@ -53,13 +53,15 @@ Jeden wątek `game` co 3 s sprawdza procesy (ToolHelp) i ustawia `Shared.gaming`
 
 Zrobione w tej sesji: cofanie DNS wraca do DHCP, awaria przepisywana dopiero po serii odczytów, test TCP gdy pingi milkną, liczniki błędów kabla w Diagnozie.
 
-- [ ] Nieudane zastosowanie zmiany zapisywać jako `apply_failed`; `after_tweak` bierze tylko udane (audyt #4)
-- [ ] Jeden zestaw progów jakości dla Live i Diagnozy (audyt #5)
-- [ ] "Szybki DNS" nie jest "do zmiany" przy własnym prywatnym resolverze (Pi-hole) (audyt #6)
-- [ ] Pomiar skutku zmiany: ping/jitter/straty 24 h przed i po, w wierszu zmiany (audyt #7)
-- [ ] Bufferbloat przy wysyłaniu + ostrzeżenie, gdy test nie nasycił łącza (audyt #8)
-- [ ] Błąd zapisu próbek do bazy jako "nie mierzę", nie zielony werdykt (audyt #9)
-- [ ] UPnP IGD: czas działania routera, stan WAN, publiczny IP w kontekście awarii (restart routera vs rozłączenie przez dostawcę)
+- [x] Nieudane zastosowanie zmiany zapisywać jako `apply_failed`; `after_tweak` bierze tylko udane (audyt #4). Także `revert_failed` w zakładce Optymalizacja; test w `cause.rs`. Tryb gry (`game.rs`) też zapisuje `revert_failed` (audyt #13)
+- [x] Jeden zestaw progów jakości dla Live i Diagnozy (audyt #5). Jitter: Live nie podwaja już `jitter_ok_ms`, test w `monitor.rs`. Uwaga: ping ma ten sam próg, ale Live bierze najszybszy cel, a Diagnoza średnią jednej kotwicy (inna statystyka, nie inny próg)
+- [x] "Szybki DNS" nie jest "do zmiany" przy własnym prywatnym resolverze (Pi-hole) (audyt #6). `NetState::dns_is_own_resolver`: prywatny DNS inny niż brama; Optymalizacja, Diagnoza i przyczyny bez naprawy `fast_dns`; testy w `netstate.rs` i `cause.rs`
+- [x] Pomiar skutku zmiany: ping/jitter/straty 24 h przed i po, w wierszu zmiany (audyt #7). `effect.rs` + `Store::stats_between`, panel zmiany w Optymalizacji, okno „po” kończy cofnięcie; 3 testy w `effect.rs`. Nie oglądane w działającej aplikacji
+- [x] Bufferbloat przy wysyłaniu + ostrzeżenie, gdy test nie nasycił łącza (audyt #8). Druga faza POST do `speed.cloudflare.com/__up`, ocena z gorszego kierunku, przy A/B dopisek z prędkościami pomiaru; testy w `bandwidth.rs`. Endpoint sprawdzony jednym chunked POST (HTTP 200); pełnego testu w aplikacji nie uruchamiano (koszt transferu)
+- [x] Błąd zapisu próbek do bazy jako "nie mierzę", nie zielony werdykt (audyt #9). Nowy `Seen::Unrecorded` (szara ikona, nagłówek „nie może zapisywać”), tylko zamiast werdyktu Ok; test w `tray.rs`. Sprawdzone testami, nie oglądane w działającej aplikacji
+- [x] Ostatni widoczny hop obwiniany tylko, gdy jest celem trasy (audyt #11, `Path.dest`, test w `path.rs`)
+- [x] Model kanałów 5/6 GHz liczy cały blok 80 MHz sąsiada za pół (audyt #12, test w `airscan.rs`)
+- [x] UPnP IGD: czas działania routera, stan WAN, publiczny IP w kontekście awarii (restart routera vs rozłączenie przez dostawcę). `probe/igd.rs`, wątek `run_router` co 30 s, tabela `router`, reguły `router_wan_down` / `router_restarted` / `wan_new_ip` / `router_wan_up`. Odczyt sprawdzony na żywo (test `#[ignore]` `the_live_router_answers`: Connected, uptime ~19 dni); reguły tylko na danych syntetycznych, bez prawdziwej awarii
 - [ ] IPv6: czy jest adres i trasa, czy połączenie przez v6 dochodzi (wolne pierwsze ładowanie)
 - [ ] BSS Load z beaconów: zajętość kanału i liczba stacji wg punktu dostępowego
 - [ ] Sprawdzić na żywo: VPN bez bramy daje `AdapterDown` (audyt #10)

@@ -128,6 +128,10 @@ pub struct Snapshot {
     /// be opened, so no probe was sent. `status` is then not a verdict, and
     /// whatever shows one has to show this instead.
     pub blind: Option<String>,
+    /// Why this sweep's samples did not reach the database, when they did
+    /// not. Loss and jitter are read back from there, so a healthy verdict
+    /// judged without them is not one: see [`Seen::Unrecorded`].
+    pub unrecorded: Option<String>,
     /// The loss and jitter the verdict was judged on. See [`LineQuality`].
     pub quality: LineQuality,
 }
@@ -145,6 +149,7 @@ impl Default for Snapshot {
             roamed: false,
             observed_from: None,
             blind: None,
+            unrecorded: None,
             quality: LineQuality::default(),
         }
     }
@@ -161,6 +166,11 @@ pub enum Seen<'a> {
     Waiting,
     /// The last sweep sent nothing: see [`Snapshot::blind`].
     Blind,
+    /// The line answered, but its samples could not be saved: see
+    /// [`Snapshot::unrecorded`]. Only a healthy verdict turns into this. A
+    /// failure is read off the pings themselves and stands without the
+    /// database.
+    Unrecorded,
     /// Sampling is on, but the newest sweep is this many seconds old: the
     /// sweep thread has stopped or is stuck. Its verdict is history.
     Stale(f64),
@@ -190,6 +200,8 @@ impl<'a> Seen<'a> {
             Seen::Stale(age)
         } else if last.blind.is_some() {
             Seen::Blind
+        } else if last.unrecorded.is_some() && last.status == Status::Ok {
+            Seen::Unrecorded
         } else {
             Seen::Verdict(last.status, &last.note)
         }
@@ -374,6 +386,7 @@ fn context_json(
         "gateway": net.gateway.map(|g| g.to_string()),
         "dns": net.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>(),
         "dns_is_router_only": net.dns_is_router_only(),
+        "dns_is_own_resolver": net.dns_is_own_resolver(),
         "dns_ms": snap.dns_ms,
         "dns_error": snap.dns_error,
         "roamed": roamed_recently,
@@ -545,6 +558,7 @@ pub struct Monitor {
 
 impl Monitor {
     pub fn start(store: Arc<Store>, settings: Settings) -> Monitor {
+        let store_for_router = Arc::clone(&store);
         let shared = Arc::new(Shared::new(settings));
         let stop = Arc::new(AtomicBool::new(false));
         // Bounded so a stalled UI cannot grow the queue without limit; the
@@ -591,6 +605,17 @@ impl Monitor {
                 .spawn(move || job(shared, stop))
                 // ponytail: as above.
                 .expect("spawn worker thread");
+        }
+
+        {
+            let shared = Arc::clone(&shared);
+            let stop = Arc::clone(&stop);
+            let store = Arc::clone(&store_for_router);
+            thread::Builder::new()
+                .name("netdoctor-router".into())
+                .spawn(move || run_router(shared, store, stop))
+                // ponytail: as above.
+                .expect("spawn router thread");
         }
 
         Monitor { shared, rx, notices, stop, handle: Some(handle) }
@@ -815,6 +840,59 @@ const PATH_REFRESH_S: f64 = 300.0;
 /// rate-limiting — which would show up as loss the path module then has to
 /// explain away.
 const HOP_INTERVAL_S: u64 = 5;
+
+/// How often the router is asked about its WAN connection. Often enough that
+/// an outage of a minute has a reading inside it, rarely enough to be no load
+/// on the router at all.
+const ROUTER_INTERVAL: Duration = Duration::from_secs(30);
+
+/// How long to wait before looking for the router's UPnP service again after
+/// it was not found: most routers that do not answer never will.
+const ROUTER_REDISCOVER: Duration = Duration::from_secs(600);
+
+/// Records what the router says about its own internet connection, for the
+/// outage analysis to read afterwards (see [`crate::cause`]). Nothing here
+/// feeds the live verdict: that stays on what this machine measured.
+fn run_router(shared: Arc<Shared>, store: Arc<Store>, stop: Arc<AtomicBool>) {
+    use crate::probe::igd;
+    let mut found: Option<(Ipv4Addr, igd::Igd)> = None;
+    let mut last_look: Option<(Ipv4Addr, Instant)> = None;
+
+    while !stop.load(Ordering::Relaxed) {
+        let gateway = *held(&shared.gateway);
+        if !shared.paused() {
+            if let Some(gw) = gateway {
+                if found.as_ref().is_some_and(|(g, _)| *g != gw) {
+                    found = None;
+                }
+                let due =
+                    last_look.is_none_or(|(g, at)| g != gw || at.elapsed() >= ROUTER_REDISCOVER);
+                if found.is_none() && due {
+                    last_look = Some((gw, Instant::now()));
+                    found = igd::discover(gw).map(|i| (gw, i));
+                }
+                if let Some((_, service)) = &found {
+                    match igd::read(service) {
+                        Some(reading) => {
+                            let _ = store.add_router_reading(&reading);
+                        }
+                        // The control URL can move when the router restarts;
+                        // look again on the next round rather than in ten
+                        // minutes.
+                        None => {
+                            found = None;
+                            last_look = None;
+                        }
+                    }
+                }
+            }
+        }
+        let until = Instant::now() + ROUTER_INTERVAL;
+        while Instant::now() < until && !stop.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(200));
+        }
+    }
+}
 
 /// Keeps the per-hop picture current, independently of the sweep.
 ///
@@ -1297,7 +1375,8 @@ fn run_loop(
         // way a window longer than the ring -- or one that predates this
         // process -- can be drawn at all. Two copies of the same samples,
         // one of them capped at an arbitrary count, was one too many.
-        let _ = store.add_samples(&rows);
+        let unrecorded =
+            store.add_samples(&rows).err().map(|e| i18n::mon_unrecorded_detail(&e.to_string()));
 
         let roamed = !net.bssid.is_empty() && !last_bssid.is_empty() && net.bssid != last_bssid;
         if !net.bssid.is_empty() {
@@ -1347,6 +1426,7 @@ fn run_loop(
             roamed,
             observed_from: Some(observed_from),
             blind: None,
+            unrecorded,
             // The same read `classify` judged on, repeated for the cards: two
             // small queries, and the figures cannot drift from the verdict.
             quality: line_quality(&targets, &store, quality_window),
@@ -1558,7 +1638,9 @@ fn quality_verdict(
     if let Some(loss) = q.loss_pct.filter(|l| *l > settings.loss_ok_pct) {
         return (Status::Degraded, i18n::mon_loss_detail(loss));
     }
-    if let Some(jitter) = q.jitter_ms.filter(|j| *j > settings.jitter_ok_ms * 2.0) {
+    // The same limit the Diagnose tab warns at, and the one the setting names.
+    // This used to be twice it, so 20 ms read "healthy" here and a warning there.
+    if let Some(jitter) = q.jitter_ms.filter(|j| *j > settings.jitter_ok_ms) {
         return (Status::Degraded, i18n::mon_jitter_detail(jitter));
     }
     if fastest > settings.ping_bad_ms {
@@ -2361,6 +2443,42 @@ mod tests {
         store2.add_samples(&lossy).unwrap();
         let (status, _) = classify(&r, &targets, &wifi_state(), "", &s, &store2, QUALITY_WINDOW_S);
         assert_eq!(status, Status::Degraded);
+    }
+
+    #[test]
+    fn jitter_past_the_setting_is_unstable_here_as_in_diagnose() {
+        // 20 ms of jitter on both targets: past the 15 ms `jitter_ok_ms`
+        // names and Diagnose warns at, under the 30 ms this used to wait for.
+        let store = Store::open_in_memory().unwrap();
+        let t = store::now();
+        let mut rows = Vec::new();
+        for i in 1..=30 {
+            let rtt = if i % 2 == 0 { 10.0 } else { 30.0 };
+            rows.push((t - i as f64, "cloudflare".to_string(), Some(rtt), true));
+            rows.push((t - i as f64, "google".to_string(), Some(rtt), true));
+        }
+        store.add_samples(&rows).unwrap();
+        let targets = vec![
+            targets().remove(0),
+            Resolved {
+                key: "cloudflare".into(),
+                host: Ipv4Addr::new(1, 1, 1, 1),
+                scope: Scope::Internet,
+            },
+            Resolved {
+                key: "google".into(),
+                host: Ipv4Addr::new(8, 8, 8, 8),
+                scope: Scope::Internet,
+            },
+        ];
+        let mut r = HashMap::new();
+        r.insert("gateway".into(), sample(true, Some(2.0)));
+        r.insert("cloudflare".into(), sample(true, Some(10.0)));
+        r.insert("google".into(), sample(true, Some(10.0)));
+        let s = Settings::default();
+        let (status, note) =
+            classify(&r, &targets, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
+        assert_eq!(status, Status::Degraded, "{note}");
     }
 
     #[test]

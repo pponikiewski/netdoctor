@@ -138,7 +138,7 @@ netdoctor.exe --help
 ```
 
 `--scan` includes the load test unless you add `--quick`, so a scripted scan
-downloads a few hundred megabytes every time it runs. See the Load test entry
+downloads and uploads a few hundred megabytes every time it runs. See the Load test entry
 under Tabs for what that costs. `--quick` is the flag to reach for on a metered
 connection or in anything scheduled.
 
@@ -208,19 +208,29 @@ one English label that would silently fail everywhere else.
   loss, MTU, TCP settings, and the recorded outage history. Each finding
   explains itself, and some link straight to the fix.
 - **Load test** — bufferbloat: idle latency versus latency with the link
-  saturated. Grade A–F and specific advice. This is usually the answer to
+  saturated, first downloading and then uploading, since on an asymmetric
+  line the upload queue (video calls, cloud backups) is usually the worse
+  one. Grade A–F from the worse direction, and specific advice. A good grade
+  names the speeds it was measured at: if your plan is clearly faster, the
+  test did not fill the line. This is usually the answer to
   "good ping, still lagging". **It costs data**: saturating the link is the
-  measurement, so it downloads from `speed.cloudflare.com` on four streams for
-  about 13 seconds, and a faster line therefore pays more. Roughly 130 MB on
-  100 Mbit/s, roughly 1.3 GB on gigabit. The result screen prints what it
-  actually pulled. On a metered or mobile connection, skip it.
+  measurement, so it moves data to and from `speed.cloudflare.com` on four
+  streams for about 13 seconds each way, and a faster line therefore pays
+  more. Roughly 130 MB of download on 100 Mbit/s, roughly 1.3 GB on gigabit,
+  plus the upload. The result screen prints what it actually moved. On a
+  metered or mobile connection, skip it.
 - **Optimise** — every tweak grouped by what it is about (power and sleep,
   radio and range, names and addresses, throughput and latency, what else
   uses the link, last resort), each row saying in words whether it is set,
   worth changing, or not available on this machine — a Wi-Fi setting on a
   cable and a property the driver does not expose both say so rather than
-  looking like a failure. Plus a scan of the surrounding Wi-Fi that works
-  out which channel to ask the router for.
+  looking like a failure. A DNS server you run yourself (a Pi-hole, AdGuard
+  Home, a company resolver) is left alone and never offered a replacement.
+  Once a change has been applied, its row shows the line in the day before
+  it against the time since (median ping, jitter, loss), or says there are
+  too few readings; the figures are measured, not proof that the change did
+  it. Plus a scan of the surrounding Wi-Fi that works out which channel to
+  ask the router for.
 - **Outage history** — when, how long, whose fault, and on selecting an entry,
   why: cause, evidence, what Windows logged around it, the lead-up plotted, and
   a route to the fix. A line that stays *slow* (loss, jitter or latency past
@@ -229,6 +239,13 @@ one English label that would silently fail everywhere else.
   and then goes down is recorded as the worst state it reached, once that
   state held for as many readings as opening an outage takes: a router that
   misses one ping to itself does not turn the provider's outage into yours.
+  If the router answers UPnP (most do unless it is switched off), NetDoctor
+  asks it every 30 seconds how its internet connection is doing, read-only.
+  An outage then also says whether the router itself reported that
+  connection as down, whether the router or its connection restarted during
+  it, whether it came back with a new public address, or whether the router
+  thought it was up throughout and the break was further out. A router that
+  does not answer adds nothing, and silence is never read as "connected".
   **Save report** here writes a text file for a support ticket over the range
   you pick (24 hours, 7 or 30 days, or everything kept): how much of it was
   actually watched, totals per kind of outage, and for each outage its cause
@@ -249,7 +266,8 @@ An outage is only recorded if the monitor is running when it happens. So:
 - **An icon in the notification area** shows the line's state: green when it
   works, yellow when it is slow, red when it is down, grey when nothing is
   being measured (paused, no reading yet, the last reading is more than a few
-  intervals old, or Windows would not let the app send pings: none of these
+  intervals old, Windows would not let the app send pings, or the readings
+  could not be saved and a healthy line cannot be judged: none of these
   is recorded as an outage). Hover for the verdict, click to
   open the window, right-click for Quit.
 - **The close button hides the window to that icon** and measuring goes on.
@@ -393,7 +411,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-306 tests, covering the failure-blame logic, the statistics, the registry layer,
+327 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable
@@ -424,7 +442,9 @@ cargo test a_real_outage -- --ignored --nocapture
 
 `%LOCALAPPDATA%\NetDoctor\`
 
-- `history.db` — samples, outage events, tweak log (WAL mode)
+- `history.db` — samples, outage events, tweak log, the router's UPnP
+  readings (WAL mode). The router's public address is stored only as a
+  fingerprint, enough to tell a new address from the same one
 - `settings.json` — your settings; unknown keys from older versions are ignored
 - `tweak_snapshots.json` — prior state for every applied change
 - `netdoctor-report.txt` — written by "Save report"

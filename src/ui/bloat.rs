@@ -57,14 +57,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             Some(v) => stat_card(ui, i18n::bloat_card_idle(), &format!("{v:.0} ms"), "", FG),
             None => stat_card(ui, i18n::bloat_card_idle(), "—", "", FG_DIM),
         };
-        let bump = r.bump_ms.unwrap_or(0.0);
-        let colour = if bump < 60.0 {
-            GREEN
-        } else if bump < 150.0 {
-            YELLOW
-        } else {
-            RED
-        };
+        let colour = bump_colour(r.bump_ms.unwrap_or(0.0));
         match r.loaded_avg {
             Some(v) => stat_card(ui, i18n::bloat_card_loaded(), &format!("{v:.0} ms"), "", colour),
             None => stat_card(ui, i18n::bloat_card_loaded(), "—", "", FG_DIM),
@@ -88,6 +81,34 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let g = r.grade_or_unknown();
         stat_card(ui, i18n::bloat_card_grade(), g.letter(), "", grade_colour(g));
     });
+    // The other direction, in the same order under the download's cards.
+    if let Some(up) = &r.upload {
+        ui.horizontal_wrapped(|ui| {
+            let colour = bump_colour(up.bump_ms.unwrap_or(0.0));
+            match up.loaded_avg {
+                Some(v) => {
+                    stat_card(ui, i18n::bloat_card_loaded_up(), &format!("{v:.0} ms"), "", colour)
+                }
+                None => stat_card(ui, i18n::bloat_card_loaded_up(), "—", "", FG_DIM),
+            };
+            match up.bump_ms {
+                Some(v) => {
+                    stat_card(ui, i18n::bloat_card_increase(), &format!("+{v:.0} ms"), "", colour)
+                }
+                None => stat_card(ui, i18n::bloat_card_increase(), "—", "", FG_DIM),
+            };
+            match up.mbps {
+                Some(v) => stat_card(
+                    ui,
+                    i18n::bloat_card_throughput_up(),
+                    &format!("{v:.0} Mbps"),
+                    i18n::bloat_card_throughput_sub(),
+                    FG,
+                ),
+                None => stat_card(ui, i18n::bloat_card_throughput_up(), "—", "", FG_DIM),
+            };
+        });
+    }
 
     ui.add_space(S_LG);
     egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_LG)).show(
@@ -112,10 +133,23 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     );
                     ui.add_space(S_SM);
                 }
-                ui.label(egui::RichText::new(bandwidth::advice(&r)).size(T_BODY).color(FG_DIM));
-                if r.bytes > 0 {
+                if let Some(up) = &r.upload {
+                    if let (Some(max), true) = (up.loaded_max, up.loaded_avg.is_some()) {
+                        ui.label(
+                            egui::RichText::new(i18n::bloat_worst_up(max, up.loaded_loss_pct))
+                                .size(T_BODY)
+                                .color(FG),
+                        );
+                    }
+                    if !up.note.is_empty() {
+                        ui.label(egui::RichText::new(&up.note).size(T_BODY).color(YELLOW));
+                    }
                     ui.add_space(S_SM);
-                    let mb = r.bytes as f64 / 1_000_000.0;
+                }
+                ui.label(egui::RichText::new(bandwidth::advice(&r)).size(T_BODY).color(FG_DIM));
+                if r.total_bytes() > 0 {
+                    ui.add_space(S_SM);
+                    let mb = r.total_bytes() as f64 / 1_000_000.0;
                     ui.label(
                         egui::RichText::new(i18n::bloat_data_used(mb)).size(T_BODY).color(FG_DIM),
                     );
@@ -123,6 +157,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
         },
     );
+}
+
+/// The same bands for either direction's rise.
+fn bump_colour(bump: f64) -> egui::Color32 {
+    if bump < 60.0 {
+        GREEN
+    } else if bump < 150.0 {
+        YELLOW
+    } else {
+        RED
+    }
 }
 
 fn start(app: &mut App) {

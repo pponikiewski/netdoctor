@@ -91,6 +91,14 @@ impl NetState {
             && self.gateway.is_some()
             && self.dns_servers.iter().all(|d| Some(*d) == self.gateway)
     }
+
+    /// A resolver on the user's own network that is not the router: a
+    /// Pi-hole, an AdGuard Home, a company server. Someone chose it, and
+    /// swapping it for a public one would switch off its filtering or its
+    /// internal names, so it is never offered as the fix.
+    pub fn dns_is_own_resolver(&self) -> bool {
+        self.dns_servers.iter().any(|d| d.is_private() && Some(*d) != self.gateway)
+    }
 }
 
 /// Snapshot of the connection carrying the default route.
@@ -759,6 +767,18 @@ mod tests {
         assert!(st.dns_is_router_only());
         st.dns_servers.push(Ipv4Addr::new(1, 1, 1, 1));
         assert!(!st.dns_is_router_only());
+    }
+
+    #[test]
+    fn a_pi_hole_is_an_own_resolver_and_the_router_is_not() {
+        let mut st = NetState {
+            gateway: Some(Ipv4Addr::new(192, 168, 50, 1)),
+            dns_servers: vec![Ipv4Addr::new(192, 168, 50, 1), Ipv4Addr::new(1, 1, 1, 1)],
+            ..Default::default()
+        };
+        assert!(!st.dns_is_own_resolver());
+        st.dns_servers.insert(0, Ipv4Addr::new(192, 168, 50, 5));
+        assert!(st.dns_is_own_resolver());
     }
 
     #[test]

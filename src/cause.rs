@@ -19,6 +19,7 @@
 use crate::i18n;
 use crate::monitor::LeadSample;
 use crate::probe::eventlog::{Kind, SysEvent};
+use crate::probe::igd::RouterReading;
 use crate::store::{Event, EventContext, TweakLogRow};
 
 /// How much the evidence supports the cause. This is about the strength of the
@@ -78,6 +79,7 @@ pub struct Evidence {
     pub rssi_dbm: Option<i32>,
     pub channel: Option<u32>,
     pub dns_is_router_only: bool,
+    pub dns_is_own_resolver: bool,
     pub dns_error: String,
     pub up: bool,
     pub rssi_at_recovery: Option<i32>,
@@ -103,6 +105,7 @@ impl Evidence {
             rssi_dbm: v["rssi_dbm"].as_i64().map(|n| n as i32),
             channel: v["channel"].as_u64().map(|n| n as u32),
             dns_is_router_only: v["dns_is_router_only"].as_bool().unwrap_or(false),
+            dns_is_own_resolver: v["dns_is_own_resolver"].as_bool().unwrap_or(false),
             dns_error: v["dns_error"].as_str().unwrap_or_default().to_string(),
             up: v["up"].as_bool().unwrap_or(true),
             rssi_at_recovery: ctx
@@ -196,13 +199,16 @@ pub fn analyse(
     history: &[Event],
     tweaks: &[TweakLogRow],
     log: &[SysEvent],
+    router: &[RouterReading],
 ) -> Vec<Cause> {
     let mut out = Vec::new();
 
     // A change applied minutes earlier outranks every signal reading: if the
-    // user broke it themselves, nothing else is worth saying first.
+    // user broke it themselves, nothing else is worth saying first. Only one
+    // that took effect: a failed attempt changed nothing it could be blamed for.
     if let Some(t) = tweaks
         .iter()
+        .filter(|t| t.action == "apply")
         .filter(|t| t.ts < event.ts_start && event.ts_start - t.ts <= TWEAK_SUSPECT_WINDOW_S)
         .max_by(|a, b| a.ts.partial_cmp(&b.ts).unwrap_or(std::cmp::Ordering::Equal))
     {
@@ -221,6 +227,9 @@ pub fn analyse(
     // because a row too old to carry a context can still be explained by the
     // log, which was written by someone else and is still there.
     log_rules(event, log, &mut out);
+    // The router's own account is, like the log, written by someone else and
+    // independent of the stored context.
+    router_rules(event, router, &mut out);
 
     let Some(ev) = evidence else {
         if out.is_empty() {
@@ -283,6 +292,60 @@ const LOG_TRAIL_S: f64 = 120.0;
 /// wireless case wrote down the 802.11 reason code for it. That is why they
 /// come back `Certain` where the mapping is unambiguous, and why they are
 /// produced before the inference rules rather than alongside them.
+/// How far around an outage the router's readings are looked for: one
+/// polling interval and some, so the reading just before and just after it
+/// are in range.
+pub const ROUTER_MARGIN_S: f64 = 300.0;
+
+/// Slack on "the counter started during the outage": the router's clock and
+/// this machine's are read a poll apart.
+const ROUTER_CLOCK_SLACK_S: f64 = 60.0;
+
+/// What the router said about its WAN link around the outage.
+///
+/// Each rule rests on the router's own words, never on their absence: a
+/// router that was not asked (UPnP off, or itself unreachable) adds nothing,
+/// and a gap is not read as "connected".
+fn router_rules(event: &Event, router: &[RouterReading], out: &mut Vec<Cause>) {
+    let (start, end) = (event.ts_start, event.ts_end.unwrap_or(event.ts_start));
+    let inside: Vec<&RouterReading> =
+        router.iter().filter(|r| r.ts >= start && r.ts <= end).collect();
+
+    if let Some(down) = inside.iter().find(|r| !r.connected()) {
+        out.push(Cause::new(
+            "router_wan_down",
+            Confidence::Likely,
+            i18n::ev_router_wan_down(&down.status),
+        ));
+    }
+
+    let restarted = router.iter().filter(|r| r.ts >= start).any(|r| {
+        r.counter_start()
+            .is_some_and(|c| c >= start - ROUTER_CLOCK_SLACK_S && c <= end + ROUTER_CLOCK_SLACK_S)
+    });
+    if restarted {
+        out.push(Cause::new("router_restarted", Confidence::Likely, i18n::ev_router_restarted()));
+    }
+
+    let before = router.iter().rev().find(|r| r.ts < start).and_then(|r| r.ip_tag.as_ref());
+    let after = router.iter().find(|r| r.ts > end).and_then(|r| r.ip_tag.as_ref());
+    if let (Some(b), Some(a)) = (before, after) {
+        if a != b {
+            out.push(Cause::new("wan_new_ip", Confidence::Likely, i18n::ev_wan_new_ip()));
+        }
+    }
+
+    // Asked during a provider outage and answering "connected" every time:
+    // the router thinks its link is fine, so the break is past it.
+    if event.scope == "isp"
+        && !restarted
+        && !inside.is_empty()
+        && inside.iter().all(|r| r.connected())
+    {
+        out.push(Cause::new("router_wan_up", Confidence::Possible, i18n::ev_router_wan_up()));
+    }
+}
+
 fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
     let t0 = event.ts_start;
     let at = |e: &SysEvent| i18n::clock_offset(e.offset_from(t0));
@@ -504,6 +567,14 @@ fn dns_rules(ev: &Evidence, out: &mut Vec<Cause>) {
             Cause::new("dns_router_only", Confidence::Likely, i18n::ev_dns_router_only())
                 .with_fix("fast_dns"),
         );
+    } else if ev.dns_is_own_resolver {
+        // The user's own resolver stalled. Pointing them at 1.1.1.1 would
+        // "fix" it by switching off whatever they run it for.
+        out.push(Cause::new(
+            "dns_own_resolver",
+            Confidence::Likely,
+            i18n::ev_dns_own_resolver(&ev.dns_error),
+        ));
     } else {
         out.push(
             Cause::new("dns_resolver", Confidence::Likely, i18n::ev_dns_error(&ev.dns_error))
@@ -628,7 +699,62 @@ mod tests {
         log: &[SysEvent],
     ) -> Vec<Cause> {
         let evidence = Evidence::from_context(&o.ctx);
-        analyse(&o.row, evidence.as_ref(), history, tweaks, log)
+        analyse(&o.row, evidence.as_ref(), history, tweaks, log, &[])
+    }
+
+    fn reading(ts: f64, status: &str, uptime: u64, ip: &str) -> RouterReading {
+        RouterReading {
+            ts,
+            status: status.into(),
+            uptime_s: Some(uptime),
+            ip_tag: (!ip.is_empty()).then(|| ip.to_string()),
+        }
+    }
+
+    #[test]
+    fn the_router_saying_its_wan_is_down_is_named() {
+        // Outage 1000..1300 (the helper's start plus 300 s).
+        let o = event("isp", serde_json::json!({}), 300.0);
+        let router = [
+            reading(990.0, "Connected", 50_000, "a"),
+            reading(1_100.0, "Disconnected", 50_110, "a"),
+            reading(1_320.0, "Connected", 50_330, "a"),
+        ];
+        let causes =
+            analyse(&o.row, Evidence::from_context(&o.ctx).as_ref(), &[], &[], &[], &router);
+        let codes: Vec<&str> = causes.iter().map(|c| c.code).collect();
+        assert!(codes.contains(&"router_wan_down"), "{codes:?}");
+        assert!(!codes.contains(&"router_restarted"), "{codes:?}");
+        assert!(!codes.contains(&"wan_new_ip"), "{codes:?}");
+        assert!(!codes.contains(&"router_wan_up"), "{codes:?}");
+    }
+
+    #[test]
+    fn a_counter_that_started_again_and_a_new_address_are_named() {
+        let o = event("lan", serde_json::json!({}), 300.0);
+        // The counter reads 60 s at 1320: it started at 1260, inside.
+        let router =
+            [reading(990.0, "Connected", 50_000, "a"), reading(1_320.0, "Connected", 60, "b")];
+        let causes =
+            analyse(&o.row, Evidence::from_context(&o.ctx).as_ref(), &[], &[], &[], &router);
+        let codes: Vec<&str> = causes.iter().map(|c| c.code).collect();
+        assert!(codes.contains(&"router_restarted"), "{codes:?}");
+        assert!(codes.contains(&"wan_new_ip"), "{codes:?}");
+    }
+
+    #[test]
+    fn a_router_connected_throughout_puts_the_break_past_it_and_silence_says_nothing() {
+        let o = event("isp", serde_json::json!({}), 300.0);
+        let router = [
+            reading(1_100.0, "Connected", 50_110, "a"),
+            reading(1_200.0, "Connected", 50_210, "a"),
+        ];
+        let causes =
+            analyse(&o.row, Evidence::from_context(&o.ctx).as_ref(), &[], &[], &[], &router);
+        assert!(causes.iter().any(|c| c.code == "router_wan_up"));
+        // No readings at all: not "connected", nothing.
+        let none = analyse(&o.row, Evidence::from_context(&o.ctx).as_ref(), &[], &[], &[], &[]);
+        assert!(none.iter().all(|c| !c.code.starts_with("router") && c.code != "wan_new_ip"));
     }
 
     #[test]
@@ -768,6 +894,23 @@ mod tests {
         assert!(!verdicts(&event("lan", ctx.clone(), 40.0), &[], &stale, &[])
             .iter()
             .any(|c| c.code == "after_tweak"));
+        // Neither is one that never took effect.
+        let failed = vec![TweakLogRow {
+            action: "apply_failed".into(),
+            result: "access denied".into(),
+            ..tweaks[0].clone()
+        }];
+        assert!(!verdicts(&event("lan", ctx.clone(), 40.0), &[], &failed, &[])
+            .iter()
+            .any(|c| c.code == "after_tweak"));
+    }
+
+    #[test]
+    fn a_failing_pi_hole_is_not_answered_with_a_public_resolver() {
+        let ctx = serde_json::json!({ "dns_is_own_resolver": true, "dns_error": "timeout" });
+        let causes = verdicts(&event("dns", ctx, 15.0), &[], &[], &[]);
+        assert_eq!(causes[0].code, "dns_own_resolver");
+        assert_eq!(causes[0].fix_tweak, None);
     }
 
     #[test]

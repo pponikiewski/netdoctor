@@ -360,7 +360,10 @@ pub fn restore(net: &NetState) -> Result<()> {
             .unwrap_or_else(|| Err(anyhow!("unknown tweak {id}")));
         match reverted {
             Ok(msg) => log(id, "revert", &msg),
-            Err(_) => left.tweaks.push(id.clone()),
+            Err(e) => {
+                log(id, "revert_failed", &e.to_string());
+                left.tweaks.push(id.clone());
+            }
         }
     }
     for name in &session.services {

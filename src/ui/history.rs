@@ -200,7 +200,11 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
         Some((id, events)) if *id == event.id => events.clone(),
         _ => Vec::new(),
     };
-    let causes = cause::analyse(event, detail.evidence.as_ref(), events, &tweaks, &log);
+    let router = app.store.router_between(
+        event.ts_start - cause::ROUTER_MARGIN_S,
+        event.ts_end.unwrap_or(event.ts_start) + cause::ROUTER_MARGIN_S,
+    );
+    let causes = cause::analyse(event, detail.evidence.as_ref(), events, &tweaks, &log, &router);
 
     ui.label(egui::RichText::new(i18n::hist_cause_heading()).size(T_BODY).strong().color(FG_DIM));
     ui.add_space(S_XS);

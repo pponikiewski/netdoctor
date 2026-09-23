@@ -73,6 +73,9 @@ pub struct Path {
     pub hops: Vec<Hop>,
     /// When the walk was taken, so a stale path can be noticed.
     pub discovered: f64,
+    /// Where the walk was headed. Only a hop at this address has nothing
+    /// behind it by nature; any other last hop is where the walk ran out.
+    pub dest: Option<Ipv4Addr>,
 }
 
 /// How far to walk. Past a dozen hops the addresses belong to networks nobody
@@ -117,7 +120,7 @@ pub fn discover(dest: Ipv4Addr, gateway: Option<Ipv4Addr>, timeout_ms: u32) -> P
         hops.push(Hop { ttl: h.hop, addr, owner });
     }
 
-    Path { hops, discovered: crate::store::now() }
+    Path { hops, discovered: crate::store::now(), dest: Some(dest) }
 }
 
 /// Addresses in 100.64.0.0/10: the provider's own NAT, not the user's.
@@ -244,7 +247,13 @@ const MIN_SAMPLES: usize = 8;
 /// is only responsible if the hops behind it are losing too. A spike that
 /// clears at the very next hop measured nothing but that one router's
 /// willingness to answer.
-pub fn blame(hops: &[HopReading]) -> Option<Blame> {
+///
+/// `dest` is where the path was walked to. A hop with nothing measurable
+/// behind it is only taken at its word when it is that destination: a walk
+/// that ran out at `MAX_HOPS`, or ended at a silent target, leaves a router
+/// rate-limiting its own replies as the last one visible, and that is not
+/// where the loss starts.
+pub fn blame(hops: &[HopReading], dest: Option<Ipv4Addr>) -> Option<Blame> {
     let usable: Vec<&HopReading> =
         hops.iter().filter(|h| h.samples >= MIN_SAMPLES && !h.silent).collect();
     if usable.len() < 2 {
@@ -256,10 +265,13 @@ pub fn blame(hops: &[HopReading]) -> Option<Blame> {
             continue;
         }
         let downstream = &usable[i + 1..];
-        // The last hop has nothing behind it to corroborate with, so it is
-        // taken at face value: loss at the far end is loss at the far end.
-        let carries = downstream.is_empty()
-            || downstream.iter().all(|d| d.loss_pct >= h.loss_pct * LOSS_CARRY);
+        // The destination has nothing behind it to corroborate with, so it
+        // is taken at face value: loss at the far end is loss at the far end.
+        let carries = if downstream.is_empty() {
+            Some(h.addr) == dest
+        } else {
+            downstream.iter().all(|d| d.loss_pct >= h.loss_pct * LOSS_CARRY)
+        };
         if carries {
             return Some(Blame {
                 ttl: h.ttl,
@@ -283,8 +295,11 @@ pub fn blame(hops: &[HopReading]) -> Option<Blame> {
             continue;
         }
         let downstream = &usable[i + 1..];
-        let carries = downstream.is_empty()
-            || downstream.iter().filter_map(|d| d.avg_ms).all(|d| d >= avg * 0.8);
+        let carries = if downstream.is_empty() {
+            Some(h.addr) == dest
+        } else {
+            downstream.iter().filter_map(|d| d.avg_ms).all(|d| d >= avg * 0.8)
+        };
         if carries {
             return Some(Blame {
                 ttl: h.ttl,
@@ -363,7 +378,7 @@ impl Tracker {
                 }
             })
             .collect();
-        let blame = blame(&hops);
+        let blame = blame(&hops, self.path.dest);
         PathReading { hops, blame }
     }
 }
@@ -394,7 +409,7 @@ mod tests {
             hop(3, 3, 0.0, 14.0, Owner::Internet),
             hop(4, 4, 0.0, 16.0, Owner::Internet),
         ];
-        assert_eq!(blame(&path), None, "a rate-limited router is not a fault");
+        assert_eq!(blame(&path, None), None, "a rate-limited router is not a fault");
     }
 
     #[test]
@@ -406,7 +421,7 @@ mod tests {
             hop(4, 4, 38.0, 16.0, Owner::Internet),
             hop(5, 5, 45.0, 18.0, Owner::Internet),
         ];
-        let b = blame(&path).expect("persistent loss has a source");
+        let b = blame(&path, None).expect("persistent loss has a source");
         assert_eq!(b.ttl, 3);
         assert_eq!(b.owner, Owner::Internet);
         assert!(b.added_ms.is_none(), "this is a loss verdict, not a latency one");
@@ -419,7 +434,24 @@ mod tests {
             hop(2, 2, 30.0, 9.0, Owner::Edge),
             hop(3, 3, 80.0, 14.0, Owner::Internet),
         ];
-        assert_eq!(blame(&path).unwrap().ttl, 2, "loss enters the path at hop 2");
+        assert_eq!(blame(&path, None).unwrap().ttl, 2, "loss enters the path at hop 2");
+    }
+
+    #[test]
+    fn the_last_visible_hop_is_blamed_only_when_it_is_the_destination() {
+        // The walk ran out (twelve hops, or a target that never answers) at a
+        // router that rate-limits its own replies. Nothing behind it can
+        // confirm the loss, so nothing is accused.
+        let path = [
+            hop(1, 1, 0.0, 2.0, Owner::Gateway),
+            hop(2, 2, 0.0, 9.0, Owner::Edge),
+            hop(3, 3, 30.0, 14.0, Owner::Internet),
+        ];
+        assert_eq!(blame(&path, None), None);
+        assert_eq!(blame(&path, Some(Ipv4Addr::new(1, 1, 1, 1))), None);
+        // The same loss at the destination itself is loss at the far end.
+        let b = blame(&path, Some(Ipv4Addr::new(10, 0, 0, 3))).expect("the target is losing");
+        assert_eq!(b.ttl, 3);
     }
 
     #[test]
@@ -429,7 +461,7 @@ mod tests {
             hop(2, 2, 2.0, 9.0, Owner::Edge),
             hop(3, 3, 0.0, 14.0, Owner::Internet),
         ];
-        assert_eq!(blame(&path), None);
+        assert_eq!(blame(&path, None), None);
     }
 
     #[test]
@@ -440,7 +472,7 @@ mod tests {
             hop(3, 3, 0.0, 95.0, Owner::Internet),
             hop(4, 4, 0.0, 99.0, Owner::Internet),
         ];
-        let b = blame(&path).expect("the delay has a source too");
+        let b = blame(&path, None).expect("the delay has a source too");
         assert_eq!(b.ttl, 3);
         assert!(b.added_ms.unwrap() > 80.0);
     }
@@ -452,7 +484,7 @@ mod tests {
             hop(2, 2, 0.0, 90.0, Owner::Edge),
             hop(3, 3, 0.0, 14.0, Owner::Internet),
         ];
-        assert_eq!(blame(&path), None, "the hops behind it are fast, so nothing is slow");
+        assert_eq!(blame(&path, None), None, "the hops behind it are fast, so nothing is slow");
     }
 
     #[test]
@@ -461,7 +493,7 @@ mod tests {
         for h in &mut path {
             h.samples = 3;
         }
-        assert_eq!(blame(&path), None, "three probes is not a loss measurement");
+        assert_eq!(blame(&path, None), None, "three probes is not a loss measurement");
     }
 
     #[test]
@@ -476,7 +508,11 @@ mod tests {
         ];
         path[1].silent = true;
         path[1].avg_ms = None;
-        assert_eq!(blame(&path), None, "a router that declines to answer is not dropping traffic");
+        assert_eq!(
+            blame(&path, None),
+            None,
+            "a router that declines to answer is not dropping traffic"
+        );
     }
 
     #[test]
@@ -488,7 +524,7 @@ mod tests {
             hop(2, 2, 100.0, 0.0, Owner::Edge),
             hop(3, 3, 100.0, 0.0, Owner::Internet),
         ];
-        assert_eq!(blame(&path).unwrap().ttl, 2);
+        assert_eq!(blame(&path, None).unwrap().ttl, 2);
     }
 
     #[test]
@@ -544,6 +580,7 @@ mod tests {
                 Hop { ttl: 2, addr: b, owner: Owner::Edge },
             ],
             discovered: 0.0,
+            dest: None,
         });
         t.stats.push((a, HopStats::default()));
         t.stats.push((b, HopStats::default()));
@@ -556,6 +593,7 @@ mod tests {
                 Hop { ttl: 2, addr: c, owner: Owner::Edge },
             ],
             discovered: 10.0,
+            dest: None,
         });
         assert!(
             t.stats.iter().any(|(addr, _)| *addr == a),

@@ -37,13 +37,13 @@ use crate::store::{self, Stats, Store};
 /// Where the scan aims everything that has to leave the building.
 pub(crate) const ANCHOR: Ipv4Addr = Ipv4Addr::new(1, 1, 1, 1);
 /// The monitor's key for `ANCHOR`, which is how the baseline is looked up.
-const ANCHOR_KEY: &str = "cloudflare";
+pub(crate) const ANCHOR_KEY: &str = "cloudflare";
 /// A second anchor on another operator's network. One address can be
 /// filtered by a network in between, and a verdict that the internet is gone
 /// should not rest on one address answering.
 pub(crate) const ANCHOR_ALT: Ipv4Addr = Ipv4Addr::new(8, 8, 8, 8);
 /// The monitor's key for `ANCHOR_ALT`.
-const ANCHOR_ALT_KEY: &str = "google";
+pub(crate) const ANCHOR_ALT_KEY: &str = "google";
 /// A seven-day window is long enough to average out one bad evening and short
 /// enough that a line which genuinely changed does not stay judged by its past.
 const BASELINE_WINDOW_S: f64 = 7.0 * 86400.0;
@@ -416,7 +416,7 @@ pub fn judge(findings: &[Finding], m: &Measurements, cfg: &Settings) -> Verdict 
     //    the commonest cause of "it's slow" and never shows up in a ping.
     if let Some(load) = &m.load {
         if matches!(load.grade_or_unknown(), Grade::D | Grade::F) {
-            let bump = load.bump_ms.unwrap_or(0.0);
+            let bump = load.worst_bump().unwrap_or(0.0);
             v.segment = Segment::Uplink;
             v.confidence = Confidence::Certain;
             v.cost = i18n::cost_load(bump);
@@ -804,25 +804,28 @@ fn report_dns(net: &NetState, wire: &Wire, m: &mut Measurements) -> Vec<Finding>
         net.dns_servers.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
     };
 
+    // A resolver the user runs (Pi-hole, AdGuard, a company server) is
+    // checked like any other, but the public one is never offered in its place.
+    let own = net.dns_is_own_resolver();
+    let offer_fix = |f: Finding| if own { f } else { f.fixed_by("fast_dns") };
     let mut out = Vec::new();
     let (ms, err) = (wire.dns.0, wire.dns.1.clone());
     m.dns_ms = ms;
     match (ms, err.is_empty()) {
-        (_, false) => out.push(
-            Finding::new("dns_resolve", i18n::f_dns_failing(), Severity::Critical, err)
-                .advise(i18n::f_dns_failing_advice())
-                .fixed_by("fast_dns"),
-        ),
-        (Some(ms), true) if ms > 150.0 => out.push(
+        (_, false) => out.push(offer_fix(
+            Finding::new("dns_resolve", i18n::f_dns_failing(), Severity::Critical, err).advise(
+                if own { i18n::f_dns_own_failing_advice() } else { i18n::f_dns_failing_advice() },
+            ),
+        )),
+        (Some(ms), true) if ms > 150.0 => out.push(offer_fix(
             Finding::new(
                 "dns_slow",
                 i18n::f_dns_slow(ms),
                 Severity::Warn,
                 i18n::f_dns_servers(&servers),
             )
-            .advise(i18n::f_dns_slow_advice())
-            .fixed_by("fast_dns"),
-        ),
+            .advise(i18n::f_dns_slow_advice()),
+        )),
         (Some(ms), true) => out.push(Finding::new(
             "dns_ok",
             i18n::f_dns_ok(ms),
@@ -1357,14 +1360,21 @@ fn check_load(
         return vec![Finding::new("load", i18n::f_load_skipped(), Severity::Info, res.error)];
     }
 
-    let bump = res.bump_ms.unwrap_or(0.0);
+    let bump = res.worst_bump().unwrap_or(0.0);
     let grade = res.grade_or_unknown();
-    let detail = i18n::f_load_detail(
+    let mut detail = i18n::f_load_detail(
         res.idle_avg.unwrap_or(0.0),
         res.loaded_avg.unwrap_or(0.0),
         res.mbps.unwrap_or(0.0),
         grade.letter(),
     );
+    if let Some(up) = &res.upload {
+        detail.push(' ');
+        detail.push_str(&match (up.loaded_avg, up.mbps) {
+            (Some(loaded), Some(mbps)) => i18n::f_load_detail_up(loaded, mbps),
+            _ => up.note.clone(),
+        });
+    }
     m.load = Some(res);
 
     match grade {

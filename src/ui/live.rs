@@ -86,7 +86,12 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
 /// The monitor's own explanation of the current reading, and a roam if one
 /// just happened. Empty when there is nothing to add to the summary.
 fn monitor_note(app: &App) -> String {
-    let mut note = app.last.blind.clone().unwrap_or_else(|| app.last.note.clone());
+    let mut note = app
+        .last
+        .blind
+        .clone()
+        .or_else(|| app.last.unrecorded.clone())
+        .unwrap_or_else(|| app.last.note.clone());
     if app.last.roamed {
         if !note.is_empty() {
             note.push(' ');
@@ -1093,7 +1098,7 @@ fn collect_stats(app: &App) -> Vec<Stat> {
             label: i18n::live_card_jitter(),
             value: ms_text(j),
             sub: i18n::live_card_jitter_window(&window),
-            colour: quality_colour(j, s.jitter_good_ms, s.jitter_ok_ms * 2.0),
+            colour: quality_colour(j, s.jitter_good_ms, s.jitter_ok_ms),
             tip: i18n::live_tip_jitter(),
         },
         None => Stat {
@@ -1541,9 +1546,9 @@ mod tests {
         assert_eq!(loss(0.0), GREEN);
         assert_eq!(loss(1.5), FG, "between good and unstable: no alarm colour");
         assert_eq!(loss(s.loss_ok_pct + 0.1), YELLOW, "where the headline turns unstable");
-        let jitter = |v| quality_colour(v, s.jitter_good_ms, s.jitter_ok_ms * 2.0);
-        assert_eq!(jitter(20.0), FG, "the headline turns unstable only past twice jitter_ok");
-        assert_eq!(jitter(31.0), YELLOW);
+        let jitter = |v| quality_colour(v, s.jitter_good_ms, s.jitter_ok_ms);
+        assert_eq!(jitter(10.0), FG);
+        assert_eq!(jitter(s.jitter_ok_ms + 0.1), YELLOW, "where Diagnose warns, too");
         for v in [0.0, 5.0, 50.0, 100.0] {
             assert_ne!(loss(v), RED);
             assert_ne!(jitter(v), RED);

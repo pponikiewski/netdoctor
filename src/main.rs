@@ -12,6 +12,7 @@ mod autostart;
 mod bandwidth;
 mod cause;
 mod diagnose;
+mod effect;
 mod game;
 mod i18n;
 mod monitor;

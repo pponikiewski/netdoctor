@@ -13,6 +13,7 @@ mod settings_tab;
 mod summary;
 mod update_ui;
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -158,6 +159,7 @@ pub fn verdict_line(
         Seen::Paused => (FG_DIM, crate::i18n::mon_paused()),
         Seen::Waiting => (FG_DIM, crate::i18n::mon_waiting()),
         Seen::Blind => (FG_DIM, crate::i18n::mon_blind()),
+        Seen::Unrecorded => (FG_DIM, crate::i18n::mon_unrecorded()),
         Seen::Stale(_) => (FG_DIM, crate::i18n::mon_stale()),
         Seen::Verdict(status, _) => (status_colour(status), status.headline()),
     }
@@ -197,7 +199,7 @@ pub enum Job {
     /// `powercfg`, which is 369 ms of the 369 ms this costs, so it does not
     /// happen on the UI thread. The generation is what makes a read that
     /// started before an apply land in the bin rather than on screen.
-    TweakStates(u64, Vec<(String, String, Option<bool>)>),
+    TweakStates(u64, Vec<(String, String, Option<bool>)>, HashMap<String, crate::effect::Effect>),
 }
 
 pub struct App {
@@ -251,6 +253,9 @@ pub struct App {
     pub card_cache: Option<live::CardCache>,
 
     pub tweak_states: Vec<(String, String, Option<bool>)>,
+    /// What the line did before and after each change the log says was
+    /// applied, keyed by tweak id. Read with the states, off the UI thread.
+    pub tweak_effects: HashMap<String, crate::effect::Effect>,
     pub selected_tweak: Option<usize>,
     /// The read this app has asked for most recently. Bumped by every
     /// `refresh_tweaks`; a result carrying an older number is a read that an
@@ -365,6 +370,7 @@ impl App {
             chart_cache: None,
             card_cache: None,
             tweak_states: Vec::new(),
+            tweak_effects: HashMap::new(),
             tweaks_gen: 0,
             tweaks_shown_gen: 0,
             selected_tweak: None,
@@ -406,17 +412,29 @@ impl App {
     pub fn refresh_tweaks(&mut self) {
         let net = self.net.clone();
         let tx = self.tx.clone();
+        let store = Arc::clone(&self.store);
         self.tweaks_gen += 1;
         let gen = self.tweaks_gen;
         std::thread::spawn(move || {
-            let states = crate::optimize::all()
+            let tweaks = crate::optimize::all();
+            let states = tweaks
                 .iter()
                 .map(|t| {
                     let s = t.read(&net);
                     (t.id().to_string(), s.text, s.optimal)
                 })
                 .collect();
-            let _ = tx.send(Job::TweakStates(gen, states));
+            // Before and after each change, read here rather than per frame:
+            // a day of samples on two anchors is tens of thousands of rows.
+            let now = crate::store::now();
+            let log = store.tweaks_between(0.0, now);
+            let effects = tweaks
+                .iter()
+                .filter_map(|t| {
+                    crate::effect::of(&store, &log, t.id(), now).map(|e| (t.id().to_string(), e))
+                })
+                .collect();
+            let _ = tx.send(Job::TweakStates(gen, states, effects));
         });
     }
 
@@ -496,13 +514,14 @@ impl App {
                         *f = frac;
                     }
                 }
-                Job::TweakStates(gen, states) => {
+                Job::TweakStates(gen, states, effects) => {
                     // A read started before the last apply describes the
                     // machine as it was, not as it is. Showing it would put a
                     // just-applied tweak back in the "worth changing" column.
                     if gen == self.tweaks_gen {
                         self.tweaks_shown_gen = gen;
                         self.tweak_states = states;
+                        self.tweak_effects = effects;
                     }
                 }
                 Job::SysLog(id, events) => {

@@ -92,5 +92,9 @@ z łamania dokładnie tej zasady.
 
 - 2026-09-23 — werdykt „odcinek padł” wymaga zgodności pomiarów. „Internet odpowiada” znaczy: odpowiedział adres publiczny (`diagnose::is_public`; prywatne, APIPA i CGNAT się nie liczą, CGNAT to sieć dostawcy jak w `find_edge`). Skan ma dwie kotwice (1.1.1.1 i 8.8.8.8, ping i TCP), a monitor ocenia straty, jitter i opóźnienie z najlepszego publicznego celu, bo to, co robi łącze, widać na wszystkich celach naraz. Rodzaj awarii w historii to najpoważniejszy stan, jaki osiągnęła (`Recorded` + `Store::set_event_kind`), nie stan z chwili otwarcia.
 
+- 2026-09-23 — skutek zmiany ustawień liczony z istniejących tabel, bez nowego schematu: `effect::of` bierze ostatnie udane `apply` z dziennika zmian i porównuje próbki z doby przed z czasem po (do cofnięcia albo doby), każdą miarę z lepszej kotwicy, jak nagłówek. Liczone w wątku, który czyta stany zmian (`refresh_tweaks`), a nie per klatka. Świadomie bez werdyktu „pomogło”: pora dnia i inne zmiany w tym samym oknie przesuwają liczby, więc aplikacja pokazuje pomiar i zastrzeżenie. Nieudany zapis próbek to `Seen::Unrecorded`, osobny od `Blind`, bo pingi poszły i awaria z nich wykryta nadal jest awarią; zamienia tylko werdykt Ok.
+
+- 2026-09-23 — router pytany o własne łącze przez UPnP IGD (bez nowych zależności: SSDP na `UdpSocket`, SOAP przez ureq, XML czytany wyszukiwaniem tekstu). Nowa tabela `router` (ts, status, uptime_s, ip_tag), przycinana razem z próbkami. Odczyty są dowodem dla analizy awarii, nie wchodzą do werdyktu na żywo. Adres publiczny zapisywany tylko jako odcisk FNV-1a. Opis i adres sterujący przyjmowane tylko z hosta bramy, bo router odpytywany jest co 30 s pod adresem, który sam podał. Licznik `NewUptime` na wielu routerach (miniupnpd) startuje od nowa także przy ponownym połączeniu WAN, więc reguła mówi „router albo jego połączenie się zrestartowało”, nie „router się zrestartował”.
+
 ## Open questions
 <!-- Track unresolved technical decisions -->

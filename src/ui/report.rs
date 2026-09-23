@@ -322,8 +322,18 @@ fn outages_section(
         let evidence = ctx.as_ref().and_then(Evidence::from_context);
         let log = (n - i <= LOG_READ_LIMIT).then(|| read_log(e));
         let tweaks = store.tweaks_between(e.ts_start - 3600.0, e.ts_start);
-        let causes =
-            cause::analyse(e, evidence.as_ref(), &events, &tweaks, log.as_deref().unwrap_or(&[]));
+        let router = store.router_between(
+            e.ts_start - cause::ROUTER_MARGIN_S,
+            e.ts_end.unwrap_or(e.ts_start) + cause::ROUTER_MARGIN_S,
+        );
+        let causes = cause::analyse(
+            e,
+            evidence.as_ref(),
+            &events,
+            &tweaks,
+            log.as_deref().unwrap_or(&[]),
+            &router,
+        );
         for (k, c) in causes.iter().take(3).enumerate() {
             let title = i18n::cause_title(c.code);
             let line = if k == 0 {

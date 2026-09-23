@@ -485,6 +485,33 @@ fn detail_panel(
                 ui.label(egui::RichText::new(status.label()).size(T_META).color(status.colour()));
                 ui.label(egui::RichText::new(state_text).size(T_META).color(FG_DIM));
             });
+            if let Some(e) = app.tweak_effects.get(t.id()) {
+                ui.add_space(S_XS);
+                ui.label(
+                    egui::RichText::new(i18n::opt_effect_heading(
+                        &crate::diagnose::format_datetime(e.applied),
+                    ))
+                    .size(T_META)
+                    .strong()
+                    .color(FG_DIM),
+                );
+                for (label, side) in
+                    [(i18n::opt_effect_before(), e.before), (i18n::opt_effect_after(), e.after)]
+                {
+                    let text = match side {
+                        Some(s) => i18n::opt_effect_side(
+                            &label,
+                            &i18n::span(s.span_s),
+                            s.median_ms,
+                            s.jitter_ms,
+                            s.loss_pct,
+                        ),
+                        None => i18n::opt_effect_no_data(&label),
+                    };
+                    ui.label(egui::RichText::new(text).size(T_META).monospace().color(FG_DIM));
+                }
+                ui.label(egui::RichText::new(i18n::opt_effect_caveat()).size(T_META).color(FG_DIM));
+            }
             if optimize::has_snapshot(t.as_ref(), &app.net) {
                 ui.label(
                     egui::RichText::new(i18n::opt_revert_available())
@@ -511,7 +538,7 @@ fn detail_panel(
                             app.toast(msg, GREEN, now);
                         }
                         Err(e) => {
-                            app.store.log_tweak(t.id(), "apply", "", &e.to_string());
+                            app.store.log_tweak(t.id(), "apply_failed", "", &e.to_string());
                             app.toast(e.to_string(), RED, now);
                         }
                     }
@@ -533,7 +560,10 @@ fn detail_panel(
                             app.store.log_tweak(t.id(), "revert", "", &msg);
                             app.toast(msg, GREEN, now);
                         }
-                        Err(e) => app.toast(e.to_string(), RED, now),
+                        Err(e) => {
+                            app.store.log_tweak(t.id(), "revert_failed", "", &e.to_string());
+                            app.toast(e.to_string(), RED, now);
+                        }
                     }
                     app.refresh_tweaks();
                 }
@@ -594,7 +624,7 @@ fn apply_all_safe(app: &mut App, ui: &mut egui::Ui) {
                 applied += 1;
             }
             Err(e) => {
-                app.store.log_tweak(t.id(), "apply", "", &e.to_string());
+                app.store.log_tweak(t.id(), "apply_failed", "", &e.to_string());
                 failed += 1;
             }
         }

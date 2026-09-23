@@ -4,6 +4,10 @@
 //! somebody starts a download. That jump is bufferbloat — oversized buffers in
 //! the router or at the ISP queueing packets instead of dropping them — and it
 //! is the usual reason a game lags "even though the ping is fine".
+//!
+//! Both directions are loaded in turn. On an asymmetric line the upload
+//! queue is usually the worse one, and it is the one a video call or a
+//! backup to the cloud fills.
 
 use std::io::Read;
 use std::net::Ipv4Addr;
@@ -17,6 +21,11 @@ use crate::store;
 
 /// Cloudflare's speed-test endpoint serves an arbitrary-length payload.
 const LOAD_URL: &str = "https://speed.cloudflare.com/__down?bytes=25000000";
+/// Takes a body of any length and throws it away.
+const UP_URL: &str = "https://speed.cloudflare.com/__up";
+/// Bytes per upload request. Each stream posts one after another, like the
+/// download pulls one 25 MB payload after another.
+const UP_CHUNK: u64 = 10_000_000;
 const STREAMS: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +61,20 @@ impl Grade {
         }
     }
 
+    /// How bad, for picking the worse of two directions. `Unknown` ranks
+    /// below `A`: a direction that was not measured cannot make the other
+    /// one look worse.
+    fn rank(&self) -> u8 {
+        match self {
+            Grade::Unknown => 0,
+            Grade::A => 1,
+            Grade::B => 2,
+            Grade::C => 3,
+            Grade::D => 4,
+            Grade::F => 5,
+        }
+    }
+
     fn from_bump(bump_ms: f64) -> Grade {
         match bump_ms {
             b if b < 25.0 => Grade::A,
@@ -81,11 +104,44 @@ pub struct BloatResult {
     /// Bytes pulled during the test, so the cost of running it is visible
     /// rather than implied.
     pub bytes: u64,
+    /// The same measurement with the line loaded the other way. `None` when
+    /// the test never got that far. The fields above are the download, and
+    /// `grade` is the worse of the two directions.
+    pub upload: Option<Upload>,
+}
+
+/// Latency while this machine sends as fast as it can.
+#[derive(Debug, Clone, Default)]
+pub struct Upload {
+    pub loaded_avg: Option<f64>,
+    pub loaded_max: Option<f64>,
+    pub loaded_loss_pct: f64,
+    pub bump_ms: Option<f64>,
+    pub mbps: Option<f64>,
+    /// `None` when no upload stream held, which is "not measured", not a pass.
+    pub grade: Option<Grade>,
+    pub bytes: u64,
+    /// Why the grade is missing or not to be taken at face value.
+    pub note: String,
 }
 
 impl BloatResult {
     pub fn grade_or_unknown(&self) -> Grade {
         self.grade.unwrap_or(Grade::Unknown)
+    }
+
+    /// The larger rise of the two directions: the one the grade came from.
+    pub fn worst_bump(&self) -> Option<f64> {
+        let up = self.upload.as_ref().and_then(|u| u.bump_ms);
+        match (self.bump_ms, up) {
+            (Some(d), Some(u)) => Some(d.max(u)),
+            (d, u) => d.or(u),
+        }
+    }
+
+    /// Everything the test moved, both ways.
+    pub fn total_bytes(&self) -> u64 {
+        self.bytes + self.upload.as_ref().map_or(0, |u| u.bytes)
     }
 }
 
@@ -136,7 +192,116 @@ fn download(stop: Arc<AtomicBool>, counter: Arc<AtomicU64>) -> bool {
     true
 }
 
-/// Measure latency before and during saturation.
+/// Hands over zeros until the chunk is spent or the test is stopped,
+/// counting what it gave. A stop ends the body early, which is a normal end
+/// of a chunked upload rather than an error.
+struct Pusher {
+    stop: Arc<AtomicBool>,
+    counter: Arc<AtomicU64>,
+    left: u64,
+}
+
+impl Read for Pusher {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.left == 0 || self.stop.load(Ordering::Relaxed) {
+            return Ok(0);
+        }
+        let n = buf.len().min(self.left as usize);
+        buf[..n].fill(0);
+        self.left -= n as u64;
+        self.counter.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
+    }
+}
+
+/// Pushes bytes until told to stop. Returns true if it was still pushing
+/// then, for the same reason as [`download`].
+fn upload(stop: Arc<AtomicBool>, counter: Arc<AtomicU64>) -> bool {
+    while !stop.load(Ordering::Relaxed) {
+        let body =
+            Pusher { stop: Arc::clone(&stop), counter: Arc::clone(&counter), left: UP_CHUNK };
+        if ureq::post(UP_URL).timeout(Duration::from_secs(20)).send(body).is_err() {
+            // A request cut short by the stop is the test ending, not a
+            // stream dying.
+            return stop.load(Ordering::Relaxed);
+        }
+    }
+    true
+}
+
+/// One direction of load: the pings taken while `work` ran on every stream.
+struct Loaded {
+    samples: Vec<Option<f64>>,
+    mbps: Option<f64>,
+    alive: usize,
+    bytes: u64,
+}
+
+fn under_load(
+    host: Ipv4Addr,
+    load: Duration,
+    timeout_ms: u32,
+    work: fn(Arc<AtomicBool>, Arc<AtomicU64>) -> bool,
+) -> Loaded {
+    let stop = Arc::new(AtomicBool::new(false));
+    let counter = Arc::new(AtomicU64::new(0));
+    let workers: Vec<_> = (0..STREAMS)
+        .map(|_| {
+            let stop = Arc::clone(&stop);
+            let counter = Arc::clone(&counter);
+            thread::spawn(move || work(stop, counter))
+        })
+        .collect();
+
+    // Let the streams ramp up before the buffers start to matter.
+    thread::sleep(Duration::from_millis(1500));
+    let started = Instant::now();
+    let start_bytes = counter.load(Ordering::Relaxed);
+
+    let samples = ping_window(host, load, timeout_ms);
+
+    let elapsed = started.elapsed().as_secs_f64();
+    let moved = counter.load(Ordering::Relaxed).saturating_sub(start_bytes);
+    stop.store(true, Ordering::Relaxed);
+    // Each worker reports whether it was still going when it was stopped; a
+    // thread that panicked counts as dead rather than as load.
+    let alive = workers
+        .into_iter()
+        .filter_map(|w| w.join().ok())
+        .filter(|still_going| *still_going)
+        .count();
+    let mbps = (elapsed > 0.0 && moved > 0).then(|| moved as f64 * 8.0 / elapsed / 1_000_000.0);
+    Loaded { samples, mbps, alive, bytes: counter.load(Ordering::Relaxed) }
+}
+
+/// The upload half, judged against the same idle baseline as the download.
+fn judge_upload(up: Loaded, idle_avg: f64) -> Upload {
+    let mut res = Upload { mbps: up.mbps, bytes: up.bytes, ..Default::default() };
+    if up.alive == 0 {
+        res.note = crate::i18n::bloat_no_upload().into();
+        return res;
+    }
+    let rtts: Vec<f64> = up.samples.iter().flatten().copied().collect();
+    let stats = store::summarise(up.samples.len(), &rtts);
+    res.loaded_loss_pct = stats.loss_pct;
+    if rtts.is_empty() {
+        res.grade = Some(Grade::F);
+        res.note = crate::i18n::bloat_silent_under_load().into();
+        return res;
+    }
+    res.loaded_avg = stats.avg;
+    res.loaded_max = stats.max;
+    let bump = stats.avg.unwrap_or(0.0) - idle_avg;
+    res.bump_ms = Some(bump);
+    res.grade = Some(Grade::from_bump(bump));
+    if up.alive < STREAMS {
+        res.note = crate::i18n::bloat_partial_load(up.alive, STREAMS);
+    }
+    res
+}
+
+/// Measure latency before and during saturation, downloading and then
+/// uploading. `load` is how long each direction is held.
 pub fn run(
     host: Ipv4Addr,
     idle: Duration,
@@ -162,39 +327,12 @@ pub fn run(
     res.idle_avg = idle_stats.avg;
     res.idle_max = idle_stats.max;
 
-    say(crate::i18n::bloat_prog_load(), 0.4);
-    let stop = Arc::new(AtomicBool::new(false));
-    let counter = Arc::new(AtomicU64::new(0));
-    let workers: Vec<_> = (0..STREAMS)
-        .map(|_| {
-            let stop = Arc::clone(&stop);
-            let counter = Arc::clone(&counter);
-            thread::spawn(move || download(stop, counter))
-        })
-        .collect();
-
-    // Let the streams ramp up before the buffers start to matter.
-    thread::sleep(Duration::from_millis(1500));
-    let started = Instant::now();
-    let start_bytes = counter.load(Ordering::Relaxed);
-
-    let loaded_samples = ping_window(host, load, timeout_ms);
-
-    let elapsed = started.elapsed().as_secs_f64();
-    let moved = counter.load(Ordering::Relaxed).saturating_sub(start_bytes);
-    stop.store(true, Ordering::Relaxed);
-    // Each worker reports whether it was still pulling when it was stopped;
-    // a thread that panicked counts as dead rather than as load.
-    res.streams_alive = workers
-        .into_iter()
-        .filter_map(|w| w.join().ok())
-        .filter(|still_pulling| *still_pulling)
-        .count();
-    res.bytes = counter.load(Ordering::Relaxed);
-
-    if elapsed > 0.0 && moved > 0 {
-        res.mbps = Some(moved as f64 * 8.0 / elapsed / 1_000_000.0);
-    }
+    say(crate::i18n::bloat_prog_load(), 0.3);
+    let down = under_load(host, load, timeout_ms, download);
+    res.streams_alive = down.alive;
+    res.bytes = down.bytes;
+    res.mbps = down.mbps;
+    let loaded_samples = down.samples;
 
     // No load means no test. Reporting a grade here would present the absence
     // of a measurement as a pass — and "silent under load" below would blame
@@ -223,6 +361,14 @@ pub fn run(
         res.error = crate::i18n::bloat_partial_load(res.streams_alive, STREAMS);
     }
 
+    say(crate::i18n::bloat_prog_upload(), 0.65);
+    let up =
+        judge_upload(under_load(host, load, timeout_ms, upload), idle_stats.avg.unwrap_or(0.0));
+    if let Some(g) = up.grade.filter(|g| g.rank() > res.grade_or_unknown().rank()) {
+        res.grade = Some(g);
+    }
+    res.upload = Some(up);
+
     say(crate::i18n::bloat_prog_done(), 1.0);
     res
 }
@@ -237,10 +383,21 @@ pub fn advice(res: &BloatResult) -> String {
                 res.error.clone()
             }
         }
-        Grade::A | Grade::B => crate::i18n::bloat_advice_ok().into(),
+        Grade::A | Grade::B => {
+            let mut text = crate::i18n::bloat_advice_ok().to_string();
+            // A good grade is only as good as the load behind it: a server
+            // that tops out at 100 Mbps leaves a gigabit line idle and its
+            // queue empty. The app cannot know the plan, the user does.
+            if let Some(down) = res.mbps {
+                let up = res.upload.as_ref().and_then(|u| u.mbps);
+                text.push_str("\n\n");
+                text.push_str(&crate::i18n::bloat_saturation_caveat(down, up));
+            }
+            text
+        }
         _ => {
             let mut lines = vec![
-                crate::i18n::bloat_advice_intro(res.bump_ms.unwrap_or(0.0)),
+                crate::i18n::bloat_advice_intro(res.worst_bump().unwrap_or(0.0)),
                 String::new(),
                 crate::i18n::bloat_advice_header().into(),
                 crate::i18n::bloat_advice_1().into(),
@@ -289,6 +446,42 @@ mod tests {
         let text = advice(&res);
         assert!(text.contains("SQM"));
         assert!(text.contains("78"), "throughput should feed the cap suggestion");
+    }
+
+    #[test]
+    fn the_worse_direction_sets_the_grade_and_an_unmeasured_one_does_not() {
+        assert!(Grade::F.rank() > Grade::A.rank());
+        assert!(Grade::Unknown.rank() < Grade::A.rank());
+        let idle = 20.0;
+        let loaded = |rtt: f64, alive| Loaded {
+            samples: vec![Some(rtt); 40],
+            mbps: Some(20.0),
+            alive,
+            bytes: 1,
+        };
+        let up = judge_upload(loaded(320.0, STREAMS), idle);
+        assert_eq!(up.grade, Some(Grade::D));
+        assert_eq!(up.bump_ms, Some(300.0));
+        // No stream held: not measured, and not a pass either.
+        let none = judge_upload(loaded(20.0, 0), idle);
+        assert_eq!(none.grade, None);
+        assert!(!none.note.is_empty());
+
+        let res = BloatResult { bump_ms: Some(10.0), upload: Some(up), ..Default::default() };
+        assert_eq!(res.worst_bump(), Some(300.0));
+    }
+
+    #[test]
+    fn a_good_grade_carries_the_load_it_was_measured_at() {
+        let _guard = crate::i18n::test_lock();
+        let res = BloatResult {
+            grade: Some(Grade::A),
+            mbps: Some(94.0),
+            upload: Some(Upload { mbps: Some(11.0), ..Default::default() }),
+            ..Default::default()
+        };
+        let text = advice(&res);
+        assert!(text.contains("94") && text.contains("11"), "{text}");
     }
 
     #[test]

@@ -209,14 +209,36 @@ fn overlap(band: Band, candidate: u32, other: u32) -> f64 {
                 1.0 - d as f64 / 5.0
             }
         }
-        // 5 and 6 GHz channels do not overlap at 20 MHz. A neighbour on the
-        // paired channel still collides whenever either side bonds to 40 MHz,
-        // which most do, so it counts for half.
-        Band::B5 | Band::B6 => match d {
-            0 => 1.0,
-            4 => 0.5,
-            _ => 0.0,
-        },
+        // 5 and 6 GHz channels do not overlap at 20 MHz, but most access
+        // points there run 80 MHz wide: a neighbour on 36 also sits on 40, 44
+        // and 48. The scan does not say how wide each one is, so anything in
+        // the same 80 MHz block counts for half, and only the same channel in
+        // full. Counting only the paired channel called 44 the quietest under
+        // an 80 MHz neighbour on 36.
+        // ponytail: assumes 80 MHz for everyone; read the VHT/HE operation
+        // element from the beacon's IEs if the recommendation needs to be exact.
+        Band::B5 | Band::B6 => {
+            if d == 0 {
+                1.0
+            } else if block_80(band, candidate).is_some()
+                && block_80(band, candidate) == block_80(band, other)
+            {
+                0.5
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
+/// Which 80 MHz block a 5 or 6 GHz channel falls in, for channels that have
+/// one: 36-48, 52-64, ... 132-144 and 149-161 on 5 GHz, 1-13, 17-29, ... on 6.
+fn block_80(band: Band, channel: u32) -> Option<u32> {
+    match (band, channel) {
+        (Band::B5, 36..=144) => Some((channel - 36) / 16),
+        (Band::B5, 149..=161) => Some(100),
+        (Band::B6, 1..=233) => Some((channel - 1) / 16),
+        _ => None,
     }
 }
 
@@ -342,6 +364,24 @@ mod tests {
         let load = load_for(&aps, &CLEAN_24, Band::B24);
         assert_eq!(quietest(&load, &CLEAN_24), Some(11));
         assert!(noise_of(&load, 1).unwrap() > noise_of(&load, 6).unwrap());
+    }
+
+    #[test]
+    fn an_80_mhz_neighbour_on_36_is_not_missed_on_44() {
+        let ap = |channel| Ap {
+            ssid: "x".into(),
+            bssid: "00:00:00:00:00:00".into(),
+            channel,
+            band: Band::B5,
+            rssi_dbm: -50,
+            ours: false,
+        };
+        let load = load_for(&[ap(36)], &NON_DFS_5, Band::B5);
+        assert!(noise_of(&load, 44).is_some(), "44 shares the 80 MHz block with 36");
+        assert!(noise_of(&load, 36).unwrap() > noise_of(&load, 44).unwrap());
+        assert_eq!(quietest(&load, &NON_DFS_5), Some(149), "the empty block wins");
+        // 165 has no 80 MHz block and 161 is not its neighbour.
+        assert_eq!(overlap(Band::B5, 165, 161), 0.0);
     }
 
     #[test]
