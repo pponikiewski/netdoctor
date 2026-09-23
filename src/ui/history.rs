@@ -56,7 +56,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let day = app.store.events_since(24.0 * 3600.0);
 
     if day.is_empty() {
-        ui.label(egui::RichText::new(i18n::hist_none_24h()).size(T_TITLE).strong().color(GREEN));
+        let watched =
+            app.last.observed_from.map_or(0.0, |from| (crate::store::now() - from).max(0.0));
+        let (text, good) = quiet_headline(watched);
+        let colour = if good { GREEN } else { FG_DIM };
+        ui.label(egui::RichText::new(text).size(T_TITLE).strong().color(colour));
     } else {
         // This headline is rebuilt on every frame, so the choice has to be a
         // function of the data alone — see `dominant_scope`.
@@ -263,6 +267,19 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
     }
 
     app.outage_detail = cached;
+}
+
+/// The headline over an empty last day, and whether it is good news.
+///
+/// `watched_s` is the current unbroken stretch of watching, which the monitor
+/// already keeps, so this costs nothing per frame. It can undercount a day
+/// that was watched in pieces; that errs towards saying less.
+fn quiet_headline(watched_s: f64) -> (String, bool) {
+    if watched_s >= 24.0 * 3600.0 * 0.95 {
+        (i18n::hist_none_24h().to_string(), true)
+    } else {
+        (i18n::f_hist_none_partial(&i18n::span(watched_s)), false)
+    }
 }
 
 /// The range picker and the button that writes the report for it: every
@@ -496,4 +513,19 @@ fn join_strs(v: &serde_json::Value) -> String {
     v.as_array()
         .map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", "))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_quiet_day_is_only_good_news_when_it_was_watched() {
+        // Two minutes after a first start the tab said "No outages in the
+        // last 24 hours" in green.
+        let (text, good) = quiet_headline(120.0);
+        assert!(!good);
+        assert!(text.contains("2 min"), "{text}");
+        assert!(quiet_headline(24.0 * 3600.0).1);
+    }
 }
