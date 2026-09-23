@@ -928,6 +928,20 @@ fn ms_text(ms: f64) -> String {
 }
 
 /// Green, amber or red by two thresholds, in the order they are crossed.
+/// The colour of a figure the headline is judged on. Green while it is good,
+/// yellow once it is past the point where the headline says "unstable", and
+/// plain in between. Never red: red means the line is down, and a lossy line
+/// that the headline calls healthy or unstable is neither.
+fn quality_colour(v: f64, good: f64, degraded: f64) -> egui::Color32 {
+    if v <= good {
+        GREEN
+    } else if v > degraded {
+        YELLOW
+    } else {
+        FG
+    }
+}
+
 fn band(v: f64, good: f64, ok: f64) -> egui::Color32 {
     if v < good {
         GREEN
@@ -1033,29 +1047,43 @@ fn collect_stats(app: &App) -> Vec<Stat> {
         },
     });
 
-    out.push(match cf.jitter {
+    // Jitter and loss are the figures the headline was judged on, not a
+    // separate reading: see `monitor::LineQuality`. The window is the
+    // verdict's, a minute or less.
+    let q = app.last.quality;
+    let window = i18n::span(q.window_s);
+    out.push(match q.jitter_ms {
         Some(j) => Stat {
             label: i18n::live_card_jitter(),
             value: ms_text(j),
-            sub: i18n::live_card_jitter_sub().into(),
-            colour: band(j, s.jitter_good_ms, s.jitter_ok_ms),
+            sub: i18n::live_card_jitter_window(&window),
+            colour: quality_colour(j, s.jitter_good_ms, s.jitter_ok_ms * 2.0),
             tip: i18n::live_tip_jitter(),
         },
         None => Stat {
             label: i18n::live_card_jitter(),
             value: "—".into(),
-            sub: i18n::live_card_jitter_sub().into(),
+            sub: i18n::live_card_too_few().into(),
             colour: FG_DIM,
             tip: i18n::live_tip_jitter(),
         },
     });
 
-    out.push(Stat {
-        label: i18n::live_card_loss(),
-        value: format!("{:.1}%", cf.loss_pct),
-        sub: i18n::live_card_loss_sub().into(),
-        colour: band(cf.loss_pct, s.loss_good_pct, s.loss_ok_pct),
-        tip: i18n::live_tip_loss(),
+    out.push(match q.loss_pct {
+        Some(loss) => Stat {
+            label: i18n::live_card_loss(),
+            value: format!("{loss:.1}%"),
+            sub: i18n::live_card_loss_window(&window),
+            colour: quality_colour(loss, s.loss_good_pct, s.loss_ok_pct),
+            tip: i18n::live_tip_loss(),
+        },
+        None => Stat {
+            label: i18n::live_card_loss(),
+            value: "—".into(),
+            sub: i18n::live_card_too_few().into(),
+            colour: FG_DIM,
+            tip: i18n::live_tip_loss(),
+        },
     });
 
     out.push(match gw.avg {
@@ -1465,6 +1493,25 @@ fn help_badge(ui: &mut egui::Ui) {
 mod tests {
     use super::*;
     use crate::settings::Settings;
+
+    #[test]
+    fn a_figure_the_headline_calls_healthy_is_never_red() {
+        // Seen live: "Connection healthy" in green over a red "2.8% loss".
+        // Red is for a line that is down; a figure is yellow only once it is
+        // past what the headline calls unstable.
+        let s = Settings::default();
+        let loss = |v| quality_colour(v, s.loss_good_pct, s.loss_ok_pct);
+        assert_eq!(loss(0.0), GREEN);
+        assert_eq!(loss(1.5), FG, "between good and unstable: no alarm colour");
+        assert_eq!(loss(s.loss_ok_pct + 0.1), YELLOW, "where the headline turns unstable");
+        let jitter = |v| quality_colour(v, s.jitter_good_ms, s.jitter_ok_ms * 2.0);
+        assert_eq!(jitter(20.0), FG, "the headline turns unstable only past twice jitter_ok");
+        assert_eq!(jitter(31.0), YELLOW);
+        for v in [0.0, 5.0, 50.0, 100.0] {
+            assert_ne!(loss(v), RED);
+            assert_ne!(jitter(v), RED);
+        }
+    }
 
     fn series(values: &[f64]) -> Vec<(ChartSeries, egui::Color32)> {
         vec![(

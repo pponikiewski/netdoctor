@@ -128,6 +128,8 @@ pub struct Snapshot {
     /// be opened, so no probe was sent. `status` is then not a verdict, and
     /// whatever shows one has to show this instead.
     pub blind: Option<String>,
+    /// The loss and jitter the verdict was judged on. See [`LineQuality`].
+    pub quality: LineQuality,
 }
 
 impl Default for Snapshot {
@@ -143,6 +145,7 @@ impl Default for Snapshot {
             roamed: false,
             observed_from: None,
             blind: None,
+            quality: LineQuality::default(),
         }
     }
 }
@@ -1237,6 +1240,9 @@ fn run_loop(
             roamed,
             observed_from: Some(observed_from),
             blind: None,
+            // The same read `classify` judged on, repeated for the cards: two
+            // small queries, and the figures cannot drift from the verdict.
+            quality: line_quality(&targets, &store, quality_window),
         };
 
         // The lead-up is recorded on every sweep, good ones included: by the
@@ -1401,33 +1407,52 @@ fn quality_verdict(
     store: &Store,
     window_s: f64,
 ) -> (Status, String) {
-    let public: Vec<&Resolved> = targets
-        .iter()
-        .filter(|t| t.scope == Scope::Internet && crate::diagnose::is_public(t.host))
-        .collect();
-
-    let fastest = public
-        .iter()
+    let fastest = public_internet(targets)
         .filter_map(|t| results.get(&t.key).and_then(|s| s.rtt_ms))
         .fold(f64::NAN, f64::min);
 
-    let judged: Vec<store::Stats> = public
-        .iter()
-        .map(|t| store.stats(&t.key, window_s))
-        .filter(|s| s.count >= MIN_QUALITY_SAMPLES)
-        .collect();
-    let loss = judged.iter().map(|s| s.loss_pct).fold(f64::NAN, f64::min);
-    if loss > settings.loss_ok_pct {
+    let q = line_quality(targets, store, window_s);
+    if let Some(loss) = q.loss_pct.filter(|l| *l > settings.loss_ok_pct) {
         return (Status::Degraded, i18n::mon_loss_detail(loss));
     }
-    let jitter = judged.iter().filter_map(|s| s.jitter).fold(f64::NAN, f64::min);
-    if jitter > settings.jitter_ok_ms * 2.0 {
+    if let Some(jitter) = q.jitter_ms.filter(|j| *j > settings.jitter_ok_ms * 2.0) {
         return (Status::Degraded, i18n::mon_jitter_detail(jitter));
     }
     if fastest > settings.ping_bad_ms {
         return (Status::Degraded, i18n::mon_ping_detail(fastest));
     }
     (Status::Ok, String::new())
+}
+
+fn public_internet(targets: &[Resolved]) -> impl Iterator<Item = &Resolved> {
+    targets.iter().filter(|t| t.scope == Scope::Internet && crate::diagnose::is_public(t.host))
+}
+
+/// The line's loss and jitter as the verdict judges them: the lowest of each
+/// over the public internet targets with enough readings in the window.
+/// Published in the snapshot, so the Live tab's cards show the very figures
+/// the headline was decided on. They used to read 1.1.1.1 alone over five
+/// minutes, and put a red "2.8% loss" beside a green "Connection healthy".
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LineQuality {
+    /// `None` when no target had enough readings to judge.
+    pub loss_pct: Option<f64>,
+    pub jitter_ms: Option<f64>,
+    /// The window they were read over, in seconds.
+    pub window_s: f64,
+}
+
+fn line_quality(targets: &[Resolved], store: &Store, window_s: f64) -> LineQuality {
+    let judged: Vec<store::Stats> = public_internet(targets)
+        .map(|t| store.stats(&t.key, window_s))
+        .filter(|s| s.count >= MIN_QUALITY_SAMPLES)
+        .collect();
+    let lowest = |v: Vec<f64>| v.into_iter().reduce(f64::min);
+    LineQuality {
+        loss_pct: lowest(judged.iter().map(|s| s.loss_pct).collect()),
+        jitter_ms: lowest(judged.iter().filter_map(|s| s.jitter).collect()),
+        window_s,
+    }
 }
 
 #[cfg(test)]
@@ -2144,6 +2169,43 @@ mod tests {
         store2.add_samples(&lossy).unwrap();
         let (status, _) = classify(&r, &targets, &wifi_state(), "", &s, &store2, QUALITY_WINDOW_S);
         assert_eq!(status, Status::Degraded);
+    }
+
+    #[test]
+    fn the_cards_get_the_figures_the_headline_was_judged_on() {
+        // 1.1.1.1 losing a third of its replies, 8.8.8.8 none: the line is
+        // fine, and the loss the cards show must be the 0% the verdict used,
+        // not 1.1.1.1's 33%.
+        let store = Store::open_in_memory().unwrap();
+        let t = store::now();
+        let mut rows = Vec::new();
+        for i in 1..=30 {
+            let ok = i % 3 != 0;
+            let jumpy = if i % 2 == 0 { 12.0 } else { 40.0 };
+            rows.push((t - i as f64, "cloudflare".to_string(), ok.then_some(jumpy), ok));
+            rows.push((t - i as f64, "google".to_string(), Some(14.0 + (i % 2) as f64), true));
+        }
+        store.add_samples(&rows).unwrap();
+        let targets = vec![
+            Resolved {
+                key: "cloudflare".into(),
+                host: Ipv4Addr::new(1, 1, 1, 1),
+                scope: Scope::Internet,
+            },
+            Resolved {
+                key: "google".into(),
+                host: Ipv4Addr::new(8, 8, 8, 8),
+                scope: Scope::Internet,
+            },
+        ];
+        let q = line_quality(&targets, &store, QUALITY_WINDOW_S);
+        assert_eq!(q.loss_pct, Some(0.0));
+        assert_eq!(q.jitter_ms, Some(1.0), "the steadier target's jitter");
+        assert_eq!(q.window_s, QUALITY_WINDOW_S);
+
+        let empty = Store::open_in_memory().unwrap();
+        let none = line_quality(&targets, &empty, QUALITY_WINDOW_S);
+        assert_eq!((none.loss_pct, none.jitter_ms), (None, None), "too few readings is no figure");
     }
 
     #[test]

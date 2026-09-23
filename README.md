@@ -344,7 +344,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-279 tests, covering the failure-blame logic, the statistics, the registry layer,
+281 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

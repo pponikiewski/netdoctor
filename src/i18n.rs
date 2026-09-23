@@ -282,9 +282,8 @@ poprosisz.";
     live_card_latency => "Latency", "Opóźnienie";
     live_card_latency_sub_none => "no data yet", "jeszcze brak danych";
     live_card_jitter => "Jitter", "Jitter";
-    live_card_jitter_sub => "swing, last 5 min", "wahania, ostatnie 5 min";
     live_card_loss => "Packet loss", "Utrata pakietów";
-    live_card_loss_sub => "last 5 minutes", "ostatnie 5 minut";
+    live_card_too_few => "too few readings yet", "jeszcze za mało pomiarów";
     live_card_router => "Router", "Router";
     live_card_router_none => "not answering", "nie odpowiada";
     live_card_dns => "DNS", "DNS";
@@ -322,13 +321,17 @@ Równe 80 ms jest dla rozmowy łatwiejsze niż \
          średnia 40 ms skacząca między 10 a 90, bo druga strona i tak czeka na najwolniejszy \
          pakiet. To ta liczba tłumaczy rwaną rozmowę przy ładnie wyglądającym opóźnieniu.";
     live_tip_loss =>
-        "The share of packets that never came back, over the last five minutes.
+        "The share of packets that never came back over the last minute, from whichever \
+         internet target lost the least: loss on the line shows on every target, loss on one \
+         alone is that target. It is the figure the headline is judged on.
 
 Whatever goes \
          missing has to be sent again, which is why a percent or two can hurt more than a high \
          latency. Steady loss points at the link; loss in short bursts usually means something \
          on the way was briefly overloaded.",
-        "Udział pakietów, które nigdy nie wróciły, z ostatnich pięciu minut.
+        "Udział pakietów, które nigdy nie wróciły, z ostatniej minuty, z tego celu w internecie, \
+         który stracił najmniej: stratę na łączu widać na każdym celu, strata na jednym to sprawa \
+         tego celu. Na tej liczbie opiera się nagłówek.
 
 Co zginie, trzeba wysłać \
          ponownie — dlatego procent czy dwa potrafią zaszkodzić bardziej niż wysokie opóźnienie. \
@@ -1799,6 +1802,22 @@ pub fn rep_watched(watched: &str, window: &str) -> String {
                 "  Obserwowano {watched} z ostatnich {window}; poza tym czasem nic nie wiadomo."
             )
         }
+    }
+}
+
+/// Under the jitter card: the window the verdict judged it over.
+pub fn live_card_jitter_window(window: &str) -> String {
+    match current() {
+        Lang::En => format!("swing, last {window}"),
+        Lang::Pl => format!("wahania, ostatnie {window}"),
+    }
+}
+
+/// Under the loss card: the window the verdict judged it over.
+pub fn live_card_loss_window(window: &str) -> String {
+    match current() {
+        Lang::En => format!("last {window}"),
+        Lang::Pl => format!("ostatnie {window}"),
     }
 }
 
