@@ -1705,7 +1705,20 @@ pub fn rep_channel_line(channel: &str, band: &str, phy: &str) -> String {
     }
 }
 
-pub fn rep_rates_line(rx: u32, tx: u32) -> String {
+/// A measured number, or a dash where nothing was measured, right-aligned in
+/// `width`. A missing reading printed as 0 reads as the best value there is.
+pub fn figure_or_dash(v: Option<f64>, width: usize, precision: usize) -> String {
+    match v {
+        Some(v) => format!("{v:>width$.precision$}"),
+        None => format!("{:>width$}", "-"),
+    }
+}
+
+pub fn rep_rates_line(rx: Option<u32>, tx: Option<u32>) -> String {
+    let (rx, tx) = (
+        rx.map_or_else(|| "?".into(), |v| v.to_string()),
+        tx.map_or_else(|| "?".into(), |v| v.to_string()),
+    );
     match current() {
         Lang::En => format!("{rx} Mbps receive / {tx} Mbps transmit"),
         Lang::Pl => format!("odbiór {rx} Mbps / nadawanie {tx} Mbps"),
@@ -1716,27 +1729,34 @@ pub fn rep_stats_line(
     label: &str,
     count: usize,
     loss: f64,
-    avg: f64,
-    min: f64,
-    max: f64,
-    jitter: f64,
+    avg: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+    jitter: Option<f64>,
 ) -> String {
+    let (avg, min, max, jitter) = (
+        figure_or_dash(avg, 7, 2),
+        figure_or_dash(min, 6, 2),
+        figure_or_dash(max, 7, 2),
+        figure_or_dash(jitter, 6, 2),
+    );
     match current() {
         Lang::En => format!(
-            "  {label:<14} samples {count:>5}, loss {loss:>5.1}%, avg {avg:>7.2} ms, \
-             min {min:>6.2}, max {max:>7.2}, jitter {jitter:>6.2}"
+            "  {label:<14} samples {count:>5}, loss {loss:>5.1}%, avg {avg} ms, \
+             min {min}, max {max}, jitter {jitter}"
         ),
         Lang::Pl => format!(
-            "  {label:<14} próbek {count:>5}, straty {loss:>5.1}%, śr. {avg:>7.2} ms, \
-             min {min:>6.2}, maks {max:>7.2}, jitter {jitter:>6.2}"
+            "  {label:<14} próbek {count:>5}, straty {loss:>5.1}%, śr. {avg} ms, \
+             min {min}, maks {max}, jitter {jitter}"
         ),
     }
 }
 
-pub fn rep_loaded_line(avg: f64, max: f64, loss: f64) -> String {
+pub fn rep_loaded_line(avg: f64, max: Option<f64>, loss: f64) -> String {
+    let max = figure_or_dash(max, 0, 0);
     match current() {
-        Lang::En => format!("{avg:.1} ms (max {max:.0}, loss {loss:.0}%)"),
-        Lang::Pl => format!("{avg:.1} ms (maks {max:.0}, straty {loss:.0}%)"),
+        Lang::En => format!("{avg:.1} ms (max {max}, loss {loss:.0}%)"),
+        Lang::Pl => format!("{avg:.1} ms (maks {max}, straty {loss:.0}%)"),
     }
 }
 
@@ -2243,14 +2263,26 @@ pub fn f_router_silent_detail(gw: &str) -> String {
 }
 
 /// The shared "avg / min / max / jitter / loss" line under a latency finding.
-pub fn f_stats_line(avg: f64, min: f64, max: f64, jitter: f64, loss: f64) -> String {
+pub fn f_stats_line(
+    avg: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+    jitter: Option<f64>,
+    loss: f64,
+) -> String {
+    let (avg, min, max, jitter) = (
+        figure_or_dash(avg, 0, 1),
+        figure_or_dash(min, 0, 1),
+        figure_or_dash(max, 0, 1),
+        figure_or_dash(jitter, 0, 1),
+    );
     match current() {
-        Lang::En => format!(
-            "avg {avg:.1} ms, min {min:.1}, max {max:.1}, jitter {jitter:.1} ms, loss {loss:.0}%"
-        ),
-        Lang::Pl => format!(
-            "śr. {avg:.1} ms, min {min:.1}, maks {max:.1}, jitter {jitter:.1} ms, straty {loss:.0}%"
-        ),
+        Lang::En => {
+            format!("avg {avg} ms, min {min}, max {max}, jitter {jitter} ms, loss {loss:.0}%")
+        }
+        Lang::Pl => {
+            format!("śr. {avg} ms, min {min}, maks {max}, jitter {jitter} ms, straty {loss:.0}%")
+        }
     }
 }
 

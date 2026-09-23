@@ -769,13 +769,7 @@ fn report_dns(net: &NetState, wire: &Wire, m: &mut Measurements) -> Vec<Finding>
 
 /// Formats a `Stats` the way every latency finding shows it.
 fn stats_line(s: &Stats) -> String {
-    i18n::f_stats_line(
-        s.avg.unwrap_or(0.0),
-        s.min.unwrap_or(0.0),
-        s.max.unwrap_or(0.0),
-        s.jitter.unwrap_or(0.0),
-        s.loss_pct,
-    )
+    i18n::f_stats_line(s.avg, s.min, s.max, s.jitter, s.loss_pct)
 }
 
 /// The cadence every segment is measured at. Slow enough that three series

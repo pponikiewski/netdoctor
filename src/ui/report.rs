@@ -9,7 +9,8 @@ use super::App;
 use crate::bandwidth::Grade;
 use crate::diagnose::format_datetime;
 use crate::i18n;
-use crate::probe::netstate::Medium;
+use crate::probe::netstate::{Medium, NetState};
+use crate::store::Stats;
 
 pub fn build(app: &App) -> String {
     let mut out = String::new();
@@ -37,23 +38,12 @@ pub fn build(app: &App) -> String {
     );
     if n.medium == Medium::Wifi {
         let _ = writeln!(out, "  {:<14}: {} (BSSID {})", i18n::rep_ssid(), n.ssid, n.bssid);
-        let _ = writeln!(
-            out,
-            "  {:<14}: {}%{}, {}",
-            i18n::rep_signal(),
-            n.signal_pct.unwrap_or(0),
-            n.rssi_dbm.map(|r| format!(" / {r} dBm")).unwrap_or_default(),
-            i18n::rep_channel_line(
-                &n.channel.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
-                n.band().unwrap_or("?"),
-                &n.phy,
-            )
-        );
+        let _ = writeln!(out, "  {:<14}: {}", i18n::rep_signal(), signal_text(n));
         let _ = writeln!(
             out,
             "  {:<14}: {}",
             i18n::rep_rates(),
-            i18n::rep_rates_line(n.rx_mbps.unwrap_or(0), n.tx_mbps.unwrap_or(0))
+            i18n::rep_rates_line(n.rx_mbps, n.tx_mbps)
         );
     } else {
         let _ = writeln!(out, "  {:<14}: {} Mbps", i18n::rep_link_speed(), n.link_speed_mbps);
@@ -66,19 +56,7 @@ pub fn build(app: &App) -> String {
         if s.count == 0 {
             continue;
         }
-        let _ = writeln!(
-            out,
-            "{}",
-            i18n::rep_stats_line(
-                &t.label,
-                s.count,
-                s.loss_pct,
-                s.avg.unwrap_or(0.0),
-                s.min.unwrap_or(0.0),
-                s.max.unwrap_or(0.0),
-                s.jitter.unwrap_or(0.0),
-            )
-        );
+        let _ = writeln!(out, "{}", measurement_line(&t.label, &s));
     }
 
     // The hop table is the part of this report a provider cannot wave away,
@@ -143,23 +121,23 @@ pub fn build(app: &App) -> String {
         let b = &app.bloat;
         let _ = writeln!(out);
         let _ = writeln!(out, "{}", i18n::rep_sec_bloat());
-        let _ = writeln!(out, "  {:<14}: {:.1} ms", i18n::rep_idle(), b.idle_avg.unwrap_or(0.0));
+        let dash = |v: Option<f64>, p: usize| i18n::figure_or_dash(v, 0, p);
+        let _ = writeln!(out, "  {:<14}: {} ms", i18n::rep_idle(), dash(b.idle_avg, 1));
         match b.loaded_avg {
             Some(v) => {
                 let _ = writeln!(
                     out,
                     "  {:<14}: {}",
                     i18n::rep_loaded(),
-                    i18n::rep_loaded_line(v, b.loaded_max.unwrap_or(0.0), b.loaded_loss_pct)
+                    i18n::rep_loaded_line(v, b.loaded_max, b.loaded_loss_pct)
                 );
             }
             None => {
                 let _ = writeln!(out, "  {:<14}: {}", i18n::rep_loaded(), i18n::rep_no_reply());
             }
         }
-        let _ = writeln!(out, "  {:<14}: {:.0} ms", i18n::rep_increase(), b.bump_ms.unwrap_or(0.0));
-        let _ =
-            writeln!(out, "  {:<14}: {:.0} Mbps", i18n::rep_throughput(), b.mbps.unwrap_or(0.0));
+        let _ = writeln!(out, "  {:<14}: {} ms", i18n::rep_increase(), dash(b.bump_ms, 0));
+        let _ = writeln!(out, "  {:<14}: {} Mbps", i18n::rep_throughput(), dash(b.mbps, 0));
         let _ = writeln!(
             out,
             "  {:<14}: {}, {}",
@@ -226,6 +204,25 @@ pub fn build(app: &App) -> String {
     out
 }
 
+/// One target's line in the measurements section.
+fn measurement_line(label: &str, s: &Stats) -> String {
+    i18n::rep_stats_line(label, s.count, s.loss_pct, s.avg, s.min, s.max, s.jitter)
+}
+
+/// Signal, RSSI and channel of a Wi-Fi link.
+fn signal_text(n: &NetState) -> String {
+    format!(
+        "{}%{}, {}",
+        n.signal_pct.map_or_else(|| "?".into(), |p| p.to_string()),
+        n.rssi_dbm.map(|r| format!(" / {r} dBm")).unwrap_or_default(),
+        i18n::rep_channel_line(
+            &n.channel.map(|c| c.to_string()).unwrap_or_else(|| "?".into()),
+            n.band().unwrap_or("?"),
+            &n.phy,
+        )
+    )
+}
+
 /// Writes the report next to the database and returns the path.
 pub fn save(app: &App) -> Result<String> {
     let dir = crate::settings::data_dir();
@@ -233,4 +230,27 @@ pub fn save(app: &App) -> Result<String> {
     let path = dir.join("netdoctor-report.txt");
     std::fs::write(&path, build(app))?;
     Ok(path.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reading_that_never_came_is_printed_as_missing_not_as_zero() {
+        // A target that lost every packet has no latency. The report printed
+        // "avg 0.00 ms", which reads as the fastest line in the document.
+        let dead = crate::store::summarise(60, &[]);
+        let line = measurement_line("1.1.1.1", &dead);
+        assert!(line.contains("100.0%"), "{line}");
+        assert!(!line.contains("0.00"), "no invented zero: {line}");
+
+        // One reply has no jitter: there is nothing to compare it with.
+        let one = crate::store::summarise(60, &[12.0]);
+        assert!(!measurement_line("x", &one).contains(" 0.00"), "{}", measurement_line("x", &one));
+
+        // A Wi-Fi link whose signal could not be read is not at 0%.
+        let n = NetState { medium: Medium::Wifi, ..Default::default() };
+        assert!(!signal_text(&n).starts_with("0%"), "{}", signal_text(&n));
+    }
 }
