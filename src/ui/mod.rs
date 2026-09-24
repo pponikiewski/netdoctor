@@ -249,6 +249,12 @@ pub struct App {
     pub bloat_running: bool,
     pub bloat_label: String,
     pub bloat_progress: f32,
+    /// When the running load test started, for its countdown.
+    pub bloat_started: Option<std::time::Instant>,
+    /// Stops the running load test. A fresh flag per run, like `scan_cancel`.
+    pub bloat_cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// When the result in `bloat` was measured; `None` before the first run.
+    pub bloat_at: Option<f64>,
 
     pub trace: Vec<String>,
     pub tracing: bool,
@@ -390,6 +396,9 @@ impl App {
             bloat_running: false,
             bloat_label: String::new(),
             bloat_progress: 0.0,
+            bloat_started: None,
+            bloat_cancel: Arc::default(),
+            bloat_at: None,
             trace: Vec::new(),
             tracing: false,
             chart_range_s: 300.0,
@@ -484,7 +493,7 @@ impl App {
         self.toast = Some((text.into(), colour, now + 6.0));
     }
 
-    fn drain_jobs(&mut self) {
+    fn drain_jobs(&mut self, now: f64) {
         while let Ok(job) = self.rx.try_recv() {
             match job {
                 Job::ScanProgress(label, frac) => {
@@ -521,11 +530,18 @@ impl App {
                     self.bloat_progress = frac;
                 }
                 Job::BloatDone(res) => {
-                    self.bloat = *res;
                     self.bloat_running = false;
-                    self.bloat_label = crate::i18n::bloat_test_done().into();
+                    self.bloat_started = None;
                     self.bloat_progress = 1.0;
                     self.monitor.release();
+                    // A stopped test measured nothing worth keeping, and
+                    // showing its half would replace a real result with one.
+                    if res.cancelled {
+                        self.toast(crate::i18n::bloat_cancelled(), FG_DIM, now);
+                    } else {
+                        self.bloat = *res;
+                        self.bloat_at = Some(crate::store::now());
+                    }
                 }
                 Job::AirDone(scan) => {
                     self.air = *scan;
@@ -627,7 +643,7 @@ impl eframe::App for App {
         }
 
         let now = ctx.input(|i| i.time);
-        self.drain_jobs();
+        self.drain_jobs(now);
         match self.report_done.take() {
             Some(Ok(path)) => self.toast(crate::i18n::live_report_saved(&path), GREEN, now),
             Some(Err(e)) => self.toast(crate::i18n::set_save_failed(&e), RED, now),
@@ -1072,7 +1088,6 @@ pub fn is_narrow(ui: &egui::Ui) -> bool {
     ui.available_width() < NARROW
 }
 
-/// Small stat card used on the live and load-test tabs.
 /// How wide a tooltip carrying prose is allowed to get.
 ///
 /// egui lays a tooltip out on one line unless it is told not to, and these
@@ -1121,6 +1136,58 @@ pub fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
         },
     );
     ui.add_space(S_MD);
+}
+
+/// Grid steps for a plot's value axis: four or five labelled lines
+/// over the visible range, each a round 1, 2 or 5 times a power of ten.
+///
+/// egui_plot's own decimal grid only labels a line once the lines are far
+/// enough apart, and on plots this short it often labelled none: a signal
+/// plot with no numbers, and a latency plot showing only its zero once one
+/// spike stretched the range. Shared by the outage lead-up and the load test.
+pub fn y_steps(input: egui_plot::GridInput) -> [f64; 3] {
+    let span = (input.bounds.1 - input.bounds.0).abs().max(1.0);
+    let rough = span / 5.0;
+    let magnitude = 10f64.powf(rough.log10().floor());
+    let step = [1.0, 2.0, 5.0, 10.0]
+        .into_iter()
+        .map(|m| m * magnitude)
+        .find(|s| *s >= rough)
+        .unwrap_or(10.0 * magnitude);
+    [step / 5.0, step, step * 5.0]
+}
+
+/// How a legend entry is drawn, matching the mark it names.
+pub enum Key {
+    Line,
+    Dot,
+    Span,
+}
+
+/// The legend over a plot rather than inside it. Inside, egui's legend sits
+/// on a panel in a corner of the data, and the corner it covers is the
+/// lead-up, which is what the plot is there to show.
+pub fn legend_row(ui: &mut egui::Ui, entries: &[(&str, egui::Color32, Key)]) {
+    ui.horizontal_wrapped(|ui| {
+        for (label, colour, key) in entries {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, T_META), egui::Sense::hover());
+            let painter = ui.painter();
+            match key {
+                Key::Line => {
+                    painter.hline(rect.x_range(), rect.center().y, egui::Stroke::new(2.0, *colour));
+                }
+                Key::Dot => {
+                    painter.circle_filled(rect.center(), 3.0, *colour);
+                }
+                Key::Span => {
+                    painter.rect_filled(rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, *colour);
+                }
+            }
+            ui.label(egui::RichText::new(*label).size(T_META).color(FG_DIM));
+            ui.add_space(S_SM);
+        }
+    });
+    ui.add_space(S_XS);
 }
 
 /// One entry in a list beside a detail pane: a status dot, a title with an
@@ -1204,18 +1271,8 @@ pub fn list_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// The common case: a card sized to its own content, with no explanation.
-pub fn stat_card(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &str,
-    sub: &str,
-    colour: egui::Color32,
-) -> egui::Response {
-    stat_card_ex(ui, label, value, sub, colour, None, "")
-}
-
-/// One headline number, its name, and a line of context under it.
+/// A stat card, used on the live and load-test tabs: one headline number,
+/// its name, and a line of context under it.
 ///
 /// `width` pins the card's inner width, which is what a row of cards laid out
 /// in columns needs: left to size themselves, cards came out different widths

@@ -40,13 +40,18 @@ fn segment_colour(seg: Segment) -> egui::Color32 {
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                !app.scanning,
-                egui::Button::new(i18n::diag_btn_scan()).fill(super::ACCENT),
-            )
-            .clicked()
-        {
+        // Not while the load test runs: a scan beside it measures the test,
+        // and its own load step would saturate the line a second time.
+        let scan = ui.add_enabled(
+            !app.scanning && !app.bloat_running,
+            egui::Button::new(i18n::diag_btn_scan()).fill(super::ACCENT),
+        );
+        let scan = if app.bloat_running {
+            scan.on_disabled_hover_text(i18n::diag_busy_load())
+        } else {
+            scan
+        };
+        if scan.clicked() {
             start_scan(app);
         }
         ui.add_enabled(!app.scanning, egui::Checkbox::new(&mut app.deep_scan, i18n::diag_deep()))

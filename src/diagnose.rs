@@ -1569,6 +1569,8 @@ fn check_load(
         Duration::from_secs(8),
         cfg.ping_timeout_ms,
         progress,
+        // The scan has no stop for this step; the tab's test has one.
+        &std::sync::atomic::AtomicBool::new(false),
     );
 
     if !res.error.is_empty() && res.grade.is_none() {

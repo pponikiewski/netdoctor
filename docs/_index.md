@@ -2,7 +2,7 @@
 type: project
 project: netdoc
 status: active
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 # 🧠 netdoc
@@ -32,6 +32,7 @@ zgadywanka.
 
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
+- 2026-09-25: Test obciążeniowy od nowa: ocena najpierw, wykres przebiegu każdego pingu, przerwanie testu i blokada przed równoczesnym skanem; opisy Optymalizacji i Historii przepisane na styl aplikacji.
 - 2026-09-24: Optymalizacja jako karty z przełącznikami (kliknięcie rozwija opis, ryzykowne zmiany pytają) i czytelna karta kanału Wi-Fi z werdyktem, co ustawić w routerze.
 - 2026-09-24: Historia awarii w nowym układzie: lista obok szczegółów, przebieg awarii na dwóch wykresach (czas odpowiedzi i sygnał) na wspólnej osi czasu, oraz czyszczenie historii z potwierdzeniem.
 - 2026-09-24: pierwszy krok porządkowania wyglądu: Ustawienia podzielone na strony, z przypiętym paskiem zapisu i widocznym stanem niezapisanych zmian, zamiast jednej długiej kolumny z przyciskiem Zapisz na samym dole.

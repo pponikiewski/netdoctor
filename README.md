@@ -236,7 +236,10 @@ one English label that would silently fail everywhere else.
   one. Grade A–F from the worse direction, and specific advice. A good grade
   names the speeds it was measured at: if your plan is clearly faster, the
   test did not fill the line. This is usually the answer to
-  "good ping, still lagging". **It costs data**: saturating the link is the
+  "good ping, still lagging". A chart shows every ping of the test against
+  time, so a spike the averages hide is visible, and a running test can be
+  stopped without losing the previous result. It will not run beside a scan
+  that loads the line too. **It costs data**: saturating the link is the
   measurement, so it moves data to and from `speed.cloudflare.com` on four
   streams for about 13 seconds each way, and a faster line therefore pays
   more. Roughly 130 MB of download on 100 Mbit/s, roughly 1.3 GB on gigabit,
@@ -460,7 +463,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-371 tests, covering the failure-blame logic, the statistics, the registry layer,
+374 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

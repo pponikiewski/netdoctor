@@ -1,8 +1,8 @@
 //! Bufferbloat test: latency while the link is saturated.
 //!
 //! An idle ping of 12 ms means nothing if it jumps to 300 ms the moment
-//! somebody starts a download. That jump is bufferbloat — oversized buffers in
-//! the router or at the ISP queueing packets instead of dropping them — and it
+//! somebody starts a download. That jump is bufferbloat (oversized buffers in
+//! the router or at the ISP queueing packets instead of dropping them), and it
 //! is the usual reason a game lags "even though the ping is fine".
 //!
 //! Both directions are loaded in turn. On an asymmetric line the upload
@@ -27,6 +27,13 @@ const UP_URL: &str = "https://speed.cloudflare.com/__up";
 /// download pulls one 25 MB payload after another.
 const UP_CHUNK: u64 = 10_000_000;
 const STREAMS: usize = 4;
+/// How long the streams get to ramp up before latency is read under them.
+const RAMP: Duration = Duration::from_millis(1500);
+
+/// Where [`run`]'s progress stands when each phase starts, so a caller can
+/// tell the phases apart without matching on the label.
+pub const PROGRESS_DOWN: f32 = 0.3;
+pub const PROGRESS_UP: f32 = 0.65;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Grade {
@@ -39,6 +46,9 @@ pub enum Grade {
 }
 
 impl Grade {
+    /// Every grade a test can end in, best first.
+    pub const SCALE: [Grade; 5] = [Grade::A, Grade::B, Grade::C, Grade::D, Grade::F];
+
     pub fn letter(&self) -> &'static str {
         match self {
             Grade::A => "A",
@@ -61,6 +71,18 @@ impl Grade {
         }
     }
 
+    /// The rise, in ms, a grade ends at, for showing the scale. `None` for
+    /// the last one, which has no ceiling.
+    pub fn ceiling_ms(&self) -> Option<f64> {
+        match self {
+            Grade::A => Some(25.0),
+            Grade::B => Some(60.0),
+            Grade::C => Some(150.0),
+            Grade::D => Some(400.0),
+            Grade::F | Grade::Unknown => None,
+        }
+    }
+
     /// How bad, for picking the worse of two directions. `Unknown` ranks
     /// below `A`: a direction that was not measured cannot make the other
     /// one look worse.
@@ -76,14 +98,33 @@ impl Grade {
     }
 
     fn from_bump(bump_ms: f64) -> Grade {
-        match bump_ms {
-            b if b < 25.0 => Grade::A,
-            b if b < 60.0 => Grade::B,
-            b if b < 150.0 => Grade::C,
-            b if b < 400.0 => Grade::D,
-            _ => Grade::F,
-        }
+        Grade::SCALE
+            .into_iter()
+            .find(|g| g.ceiling_ms().is_none_or(|c| bump_ms < c))
+            .unwrap_or(Grade::F)
     }
+}
+
+/// What the line was doing when a ping was taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Idle,
+    Down,
+    Up,
+}
+
+/// One ping of the test, for drawing its course rather than only its average.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sample {
+    /// Seconds since the test started.
+    pub t: f64,
+    /// `None` when the ping went unanswered.
+    pub rtt: Option<f64>,
+    pub phase: Phase,
+}
+
+fn answered(samples: &[Sample]) -> Vec<f64> {
+    samples.iter().filter_map(|s| s.rtt).collect()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -108,6 +149,10 @@ pub struct BloatResult {
     /// the test never got that far. The fields above are the download, and
     /// `grade` is the worse of the two directions.
     pub upload: Option<Upload>,
+    /// Every ping the test took, all three phases, in order.
+    pub samples: Vec<Sample>,
+    /// The test was stopped before it finished. Nothing in it is a result.
+    pub cancelled: bool,
 }
 
 /// Latency while this machine sends as fast as it can.
@@ -147,14 +192,23 @@ impl BloatResult {
 
 pub type Progress = Arc<dyn Fn(&str, f32) + Send + Sync>;
 
-fn ping_window(host: Ipv4Addr, duration: Duration, timeout_ms: u32) -> Vec<Option<f64>> {
+/// Pings `host` for `duration`, or until `cancel` is set.
+fn ping_window(
+    host: Ipv4Addr,
+    duration: Duration,
+    timeout_ms: u32,
+    started: Instant,
+    phase: Phase,
+    cancel: &AtomicBool,
+) -> Vec<Sample> {
     let Ok(pinger) = Pinger::new() else {
         return Vec::new();
     };
     let deadline = Instant::now() + duration;
     let mut out = Vec::new();
-    while Instant::now() < deadline {
-        out.push(pinger.ping(host, timeout_ms).rtt_ms);
+    while Instant::now() < deadline && !cancel.load(Ordering::Relaxed) {
+        let t = started.elapsed().as_secs_f64();
+        out.push(Sample { t, rtt: pinger.ping(host, timeout_ms).rtt_ms, phase });
         // Without a gap the probes themselves become the load.
         thread::sleep(Duration::from_millis(50));
     }
@@ -165,7 +219,7 @@ fn ping_window(host: Ipv4Addr, duration: Duration, timeout_ms: u32) -> Vec<Optio
 ///
 /// Returns true if it was still pulling when it was asked to stop. A stream
 /// that died early leaves the line less than saturated, and a bufferbloat
-/// grade measured under partial load flatters the connection — so the caller
+/// grade measured under partial load flatters the connection. So the caller
 /// needs to know, rather than reading a confident A off a quarter of the
 /// intended traffic.
 fn download(stop: Arc<AtomicBool>, counter: Arc<AtomicU64>) -> bool {
@@ -231,16 +285,24 @@ fn upload(stop: Arc<AtomicBool>, counter: Arc<AtomicU64>) -> bool {
 
 /// One direction of load: the pings taken while `work` ran on every stream.
 struct Loaded {
-    samples: Vec<Option<f64>>,
+    samples: Vec<Sample>,
     mbps: Option<f64>,
     alive: usize,
     bytes: u64,
 }
 
+/// Where a load window starts and how long it is held.
+struct Window {
+    load: Duration,
+    started: Instant,
+    phase: Phase,
+}
+
 fn under_load(
     host: Ipv4Addr,
-    load: Duration,
+    win: Window,
     timeout_ms: u32,
+    cancel: &AtomicBool,
     work: fn(Arc<AtomicBool>, Arc<AtomicU64>) -> bool,
 ) -> Loaded {
     let stop = Arc::new(AtomicBool::new(false));
@@ -254,11 +316,11 @@ fn under_load(
         .collect();
 
     // Let the streams ramp up before the buffers start to matter.
-    thread::sleep(Duration::from_millis(1500));
+    thread::sleep(RAMP);
     let started = Instant::now();
     let start_bytes = counter.load(Ordering::Relaxed);
 
-    let samples = ping_window(host, load, timeout_ms);
+    let samples = ping_window(host, win.load, timeout_ms, win.started, win.phase, cancel);
 
     let elapsed = started.elapsed().as_secs_f64();
     let moved = counter.load(Ordering::Relaxed).saturating_sub(start_bytes);
@@ -275,13 +337,13 @@ fn under_load(
 }
 
 /// The upload half, judged against the same idle baseline as the download.
-fn judge_upload(up: Loaded, idle_avg: f64) -> Upload {
+fn judge_upload(up: &Loaded, idle_avg: f64) -> Upload {
     let mut res = Upload { mbps: up.mbps, bytes: up.bytes, ..Default::default() };
     if up.alive == 0 {
         res.note = crate::i18n::bloat_no_upload().into();
         return res;
     }
-    let rtts: Vec<f64> = up.samples.iter().flatten().copied().collect();
+    let rtts = answered(&up.samples);
     let stats = store::summarise(up.samples.len(), &rtts);
     res.loaded_loss_pct = stats.loss_pct;
     if rtts.is_empty() {
@@ -295,19 +357,27 @@ fn judge_upload(up: Loaded, idle_avg: f64) -> Upload {
     res.bump_ms = Some(bump);
     res.grade = Some(Grade::from_bump(bump));
     if up.alive < STREAMS {
-        res.note = crate::i18n::bloat_partial_load(up.alive, STREAMS);
+        res.note = crate::i18n::bloat_partial_load(up.alive, STREAMS, true);
     }
     res
 }
 
+/// How long [`run`] takes with these windows, for a countdown. The joins at
+/// the end of each load can add a second or two on a slow link.
+pub fn expected_secs(idle: Duration, load: Duration) -> f64 {
+    (idle + (RAMP + load) * 2).as_secs_f64()
+}
+
 /// Measure latency before and during saturation, downloading and then
-/// uploading. `load` is how long each direction is held.
+/// uploading. `load` is how long each direction is held. Setting `cancel`
+/// ends the test at the next ping, with `cancelled` set on what comes back.
 pub fn run(
     host: Ipv4Addr,
     idle: Duration,
     load: Duration,
     timeout_ms: u32,
     progress: Option<Progress>,
+    cancel: &AtomicBool,
 ) -> BloatResult {
     let mut res = BloatResult::default();
     let say = |text: &str, frac: f32| {
@@ -315,27 +385,43 @@ pub fn run(
             p(text, frac);
         }
     };
+    let started = Instant::now();
+    let stopped = |res: &mut BloatResult| {
+        let yes = cancel.load(Ordering::Relaxed);
+        res.cancelled |= yes;
+        yes
+    };
 
     say(crate::i18n::bloat_prog_idle(), 0.05);
-    let idle_samples = ping_window(host, idle, timeout_ms);
-    let idle_rtts: Vec<f64> = idle_samples.iter().flatten().copied().collect();
+    let idle_samples = ping_window(host, idle, timeout_ms, started, Phase::Idle, cancel);
+    let idle_rtts = answered(&idle_samples);
+    res.samples = idle_samples;
+    if stopped(&mut res) {
+        return res;
+    }
     if idle_rtts.is_empty() {
         res.error = crate::i18n::bloat_no_reply(&host.to_string());
         return res;
     }
-    let idle_stats = store::summarise(idle_samples.len(), &idle_rtts);
+    let idle_stats = store::summarise(res.samples.len(), &idle_rtts);
     res.idle_avg = idle_stats.avg;
     res.idle_max = idle_stats.max;
 
-    say(crate::i18n::bloat_prog_load(), 0.3);
-    let down = under_load(host, load, timeout_ms, download);
+    say(crate::i18n::bloat_prog_load(), PROGRESS_DOWN);
+    let win = Window { load, started, phase: Phase::Down };
+    let down = under_load(host, win, timeout_ms, cancel, download);
     res.streams_alive = down.alive;
     res.bytes = down.bytes;
     res.mbps = down.mbps;
-    let loaded_samples = down.samples;
+    let loaded_rtts = answered(&down.samples);
+    let loaded_stats = store::summarise(down.samples.len(), &loaded_rtts);
+    res.samples.extend(down.samples);
+    if stopped(&mut res) {
+        return res;
+    }
 
     // No load means no test. Reporting a grade here would present the absence
-    // of a measurement as a pass — and "silent under load" below would blame
+    // of a measurement as a pass, and "silent under load" below would blame
     // the line for going quiet under traffic that never arrived.
     if res.streams_alive == 0 {
         res.grade = Some(Grade::Unknown);
@@ -343,8 +429,6 @@ pub fn run(
         return res;
     }
 
-    let loaded_rtts: Vec<f64> = loaded_samples.iter().flatten().copied().collect();
-    let loaded_stats = store::summarise(loaded_samples.len(), &loaded_rtts);
     res.loaded_loss_pct = loaded_stats.loss_pct;
 
     if loaded_rtts.is_empty() {
@@ -358,12 +442,17 @@ pub fn run(
     res.bump_ms = Some(loaded_stats.avg.unwrap_or(0.0) - idle_stats.avg.unwrap_or(0.0));
     res.grade = Some(Grade::from_bump(res.bump_ms.unwrap_or(0.0)));
     if res.streams_alive < STREAMS {
-        res.error = crate::i18n::bloat_partial_load(res.streams_alive, STREAMS);
+        res.error = crate::i18n::bloat_partial_load(res.streams_alive, STREAMS, false);
     }
 
-    say(crate::i18n::bloat_prog_upload(), 0.65);
-    let up =
-        judge_upload(under_load(host, load, timeout_ms, upload), idle_stats.avg.unwrap_or(0.0));
+    say(crate::i18n::bloat_prog_upload(), PROGRESS_UP);
+    let win = Window { load, started, phase: Phase::Up };
+    let loaded = under_load(host, win, timeout_ms, cancel, upload);
+    let up = judge_upload(&loaded, idle_stats.avg.unwrap_or(0.0));
+    res.samples.extend(loaded.samples);
+    if stopped(&mut res) {
+        return res;
+    }
     if let Some(g) = up.grade.filter(|g| g.rank() > res.grade_or_unknown().rank()) {
         res.grade = Some(g);
     }
@@ -373,43 +462,57 @@ pub fn run(
     res
 }
 
-/// What to actually do about the result.
-pub fn advice(res: &BloatResult) -> String {
+/// What to do about a result: a lead paragraph, the fixes in the order worth
+/// trying them, and a closing note. Kept apart so the tab can set the fixes
+/// as a list rather than as lines of one paragraph.
+#[derive(Debug, Default)]
+pub struct Advice {
+    pub lead: String,
+    pub steps: Vec<&'static str>,
+    pub note: Option<String>,
+}
+
+impl Advice {
+    /// All of it as one text, for tests and for anywhere without a layout.
+    #[cfg(test)]
+    fn text(&self) -> String {
+        let mut parts = vec![self.lead.clone()];
+        parts.extend(self.steps.iter().map(|s| s.to_string()));
+        parts.extend(self.note.clone());
+        parts.join("\n")
+    }
+}
+
+pub fn advice(res: &BloatResult) -> Advice {
     match res.grade_or_unknown() {
-        Grade::Unknown => {
-            if res.error.is_empty() {
+        Grade::Unknown => Advice {
+            lead: if res.error.is_empty() {
                 crate::i18n::bloat_advice_run().into()
             } else {
                 res.error.clone()
-            }
-        }
-        Grade::A | Grade::B => {
-            let mut text = crate::i18n::bloat_advice_ok().to_string();
+            },
+            ..Default::default()
+        },
+        Grade::A | Grade::B => Advice {
+            lead: crate::i18n::bloat_advice_ok().into(),
+            steps: Vec::new(),
             // A good grade is only as good as the load behind it: a server
             // that tops out at 100 Mbps leaves a gigabit line idle and its
             // queue empty. The app cannot know the plan, the user does.
-            if let Some(down) = res.mbps {
+            note: res.mbps.map(|down| {
                 let up = res.upload.as_ref().and_then(|u| u.mbps);
-                text.push_str("\n\n");
-                text.push_str(&crate::i18n::bloat_saturation_caveat(down, up));
-            }
-            text
-        }
-        _ => {
-            let mut lines = vec![
-                crate::i18n::bloat_advice_intro(res.worst_bump().unwrap_or(0.0)),
-                String::new(),
-                crate::i18n::bloat_advice_header().into(),
-                crate::i18n::bloat_advice_1().into(),
-                crate::i18n::bloat_advice_2().into(),
-                crate::i18n::bloat_advice_3().into(),
-            ];
-            if let Some(mbps) = res.mbps {
-                lines.push(String::new());
-                lines.push(crate::i18n::bloat_advice_throughput(mbps));
-            }
-            lines.join("\n")
-        }
+                crate::i18n::bloat_saturation_caveat(down, up)
+            }),
+        },
+        _ => Advice {
+            lead: crate::i18n::bloat_advice_intro(res.worst_bump().unwrap_or(0.0)),
+            steps: vec![
+                crate::i18n::bloat_advice_1(),
+                crate::i18n::bloat_advice_2(),
+                crate::i18n::bloat_advice_3(),
+            ],
+            note: res.mbps.map(crate::i18n::bloat_advice_throughput),
+        },
     }
 }
 
@@ -419,7 +522,9 @@ mod tests {
 
     #[test]
     fn grades_follow_the_latency_bump() {
+        assert_eq!(Grade::from_bump(-5.0), Grade::A);
         assert_eq!(Grade::from_bump(10.0), Grade::A);
+        assert_eq!(Grade::from_bump(25.0), Grade::B);
         assert_eq!(Grade::from_bump(40.0), Grade::B);
         assert_eq!(Grade::from_bump(100.0), Grade::C);
         assert_eq!(Grade::from_bump(300.0), Grade::D);
@@ -430,20 +535,22 @@ mod tests {
     fn good_grades_do_not_produce_a_wall_of_advice() {
         let _guard = crate::i18n::test_lock();
         let res = BloatResult { grade: Some(Grade::A), ..Default::default() };
-        let text = advice(&res);
-        assert_eq!(text, crate::i18n::bloat_advice_ok());
-        assert!(!text.contains("SQM"));
+        let advice = advice(&res);
+        assert_eq!(advice.lead, crate::i18n::bloat_advice_ok());
+        assert!(advice.steps.is_empty() && advice.note.is_none());
+        assert!(!advice.text().contains("SQM"));
     }
 
     #[test]
     fn bad_grades_name_the_actual_fix() {
+        let _guard = crate::i18n::test_lock();
         let res = BloatResult {
             grade: Some(Grade::F),
             bump_ms: Some(500.0),
             mbps: Some(78.0),
             ..Default::default()
         };
-        let text = advice(&res);
+        let text = advice(&res).text();
         assert!(text.contains("SQM"));
         assert!(text.contains("78"), "throughput should feed the cap suggestion");
     }
@@ -454,16 +561,16 @@ mod tests {
         assert!(Grade::Unknown.rank() < Grade::A.rank());
         let idle = 20.0;
         let loaded = |rtt: f64, alive| Loaded {
-            samples: vec![Some(rtt); 40],
+            samples: vec![Sample { t: 0.0, rtt: Some(rtt), phase: Phase::Up }; 40],
             mbps: Some(20.0),
             alive,
             bytes: 1,
         };
-        let up = judge_upload(loaded(320.0, STREAMS), idle);
+        let up = judge_upload(&loaded(320.0, STREAMS), idle);
         assert_eq!(up.grade, Some(Grade::D));
         assert_eq!(up.bump_ms, Some(300.0));
         // No stream held: not measured, and not a pass either.
-        let none = judge_upload(loaded(20.0, 0), idle);
+        let none = judge_upload(&loaded(20.0, 0), idle);
         assert_eq!(none.grade, None);
         assert!(!none.note.is_empty());
 
@@ -480,7 +587,7 @@ mod tests {
             upload: Some(Upload { mbps: Some(11.0), ..Default::default() }),
             ..Default::default()
         };
-        let text = advice(&res);
+        let text = advice(&res).text();
         assert!(text.contains("94") && text.contains("11"), "{text}");
     }
 
@@ -489,6 +596,21 @@ mod tests {
         let res = BloatResult::default();
         assert_eq!(res.grade_or_unknown(), Grade::Unknown);
         let _guard = crate::i18n::test_lock();
-        assert_eq!(advice(&res), crate::i18n::bloat_advice_run());
+        assert_eq!(advice(&res).lead, crate::i18n::bloat_advice_run());
+    }
+
+    #[test]
+    fn a_test_stopped_before_it_starts_is_cancelled_and_has_no_grade() {
+        let cancel = AtomicBool::new(true);
+        let res = run(
+            Ipv4Addr::LOCALHOST,
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            100,
+            None,
+            &cancel,
+        );
+        assert!(res.cancelled);
+        assert!(res.grade.is_none() && res.samples.is_empty());
     }
 }

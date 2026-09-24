@@ -143,8 +143,8 @@ strings! {
     opt_less => "Click to fold it away", "Kliknij, żeby zwinąć";
     opt_btn_apply_anyway => "Apply anyway", "Zastosuj mimo to";
     opt_confirm_risky =>
-        "This one is high risk or cannot be undone. Read what it does before you go ahead.",
-        "Ta zmiana jest ryzykowna albo nieodwracalna. Przeczytaj, co robi, zanim przejdziesz dalej.";
+        "This change is high risk or cannot be undone. Check the description before applying it.",
+        "Ta zmiana jest ryzykowna albo nieodwracalna. Sprawdź opis przed zastosowaniem.";
     opt_headline_done => "Everything here is already set.", "Wszystko tu jest już ustawione.";
 
     word_none => "none", "brak";
@@ -501,12 +501,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     hist_where_dns => "in DNS", "w DNS";
     hist_where_other => "as degraded quality", "jako pogorszenie jakości";
     hist_blurb =>
-        "Each entry records the connection state at that moment: signal, channel, access point \
-         and whether the router was still answering. That last detail is what decides whether it \
-         was your laptop or your provider.",
-        "Każdy wpis zapisuje stan połączenia z danej chwili: sygnał, kanał, access point oraz \
-         to, czy router jeszcze odpowiadał. Ten ostatni szczegół rozstrzyga, czy zawinił Twój \
-         komputer, czy dostawca.";
+        "Each entry keeps the connection state at the moment of the outage: signal, channel, \
+         access point, and whether the router was still answering. That last one tells a fault on \
+         this computer from a fault at the provider.",
+        "Każdy wpis zawiera stan połączenia z chwili awarii: sygnał, kanał, access point i to, \
+         czy router nadal odpowiadał. To ostatnie odróżnia usterkę po stronie komputera od \
+         usterki u dostawcy.";
     hist_nothing_logged => "Nothing logged yet.", "Nic jeszcze nie zapisano.";
     hist_ongoing => "ongoing", "trwa";
 
@@ -527,13 +527,13 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     hist_btn_clear_confirm => "Delete outages", "Usuń awarie";
     hist_btn_cancel => "Cancel", "Anuluj";
     hist_clear_confirm =>
-        "Delete every recorded outage? This cannot be undone. If you may need them for your \
+        "Delete every recorded outage? This cannot be undone. To keep them as evidence for the \
          provider, save a report first.",
-        "Usunąć wszystkie zapisane awarie? Tego nie da się cofnąć. Jeśli mogą się przydać przy \
-         rozmowie z dostawcą, najpierw zapisz raport.";
+        "Usunąć wszystkie zapisane awarie? Tej operacji nie można cofnąć. Aby zachować je jako \
+         dowód dla dostawcy, najpierw zapisz raport.";
     hist_clear_keeps_running =>
-        "The outage still in progress is kept, so its end is still recorded.",
-        "Trwająca awaria zostaje, żeby dało się zapisać jej koniec.";
+        "An outage still in progress is kept, so its end can be recorded.",
+        "Trwająca awaria zostaje zachowana, żeby zapisać jej koniec.";
     hist_list_heading => "Recorded outages", "Zapisane awarie";
     hist_conn_heading => "Connection", "Połączenie";
     st_signal => "Signal", "Sygnał";
@@ -541,8 +541,8 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     st_band => "Band", "Pasmo";
     st_gateway => "Gateway", "Brama";
     hist_no_leadup =>
-        "No lead-up was recorded for this outage. It was logged by an earlier version.",
-        "Dla tej awarii nie zapisano przebiegu. Wpis pochodzi z wcześniejszej wersji.";
+        "No lead-up recorded for this outage: the entry comes from an earlier version.",
+        "Brak zapisanego przebiegu dla tej awarii: wpis pochodzi z wcześniejszej wersji.";
     hist_no_state =>
         "No connection state was stored for this entry.",
         "Dla tego wpisu nie zapisano stanu połączenia.";
@@ -555,14 +555,14 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Round trip (ms). Red dots: pings that got no reply; the shaded span is the outage.",
         "Czas odpowiedzi (ms). Czerwone kropki: pingi bez odpowiedzi; zacieniony pas to awaria.";
     hist_leadup_rssi_caption =>
-        "Wi-Fi signal (dBm), recorded up to the moment it broke. Closer to zero is stronger.",
-        "Sygnał Wi-Fi (dBm), zapisany do chwili zerwania. Bliżej zera znaczy mocniej.";
+        "Wi-Fi signal (dBm) up to the moment of the outage. Closer to zero is stronger.",
+        "Sygnał Wi-Fi (dBm) do chwili awarii. Im bliżej zera, tym mocniejszy.";
     hist_leadup_weak => "Weak below -70 dBm", "Słaby poniżej -70 dBm";
     hist_leadup_no_signal =>
-        "No Wi-Fi signal was recorded for this outage: a wired link, or an entry from an earlier \
-         version.",
-        "Dla tej awarii nie zapisano sygnału Wi-Fi: połączenie kablem albo wpis z wcześniejszej \
-         wersji.";
+        "No Wi-Fi signal recorded for this outage: a wired connection, or an entry from an \
+         earlier version.",
+        "Brak zapisanego sygnału Wi-Fi dla tej awarii: połączenie kablowe albo wpis z \
+         wcześniejszej wersji.";
     hist_tweaks_heading => "Changes applied shortly before", "Zmiany zastosowane krótko przed";
     // -----------------------------------------------------------------------
     // the per-hop path
@@ -695,12 +695,14 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     path_owner_internet => "beyond the provider", "za dostawcą";
 
     hist_log_heading => "What Windows wrote down", "Co zapisał Windows";
-    hist_log_loading => "Reading the event log…", "Czytam dziennik zdarzeń…";
+    hist_log_loading =>
+        "Reading the event log…",
+        "Odczyt dziennika zdarzeń…";
     hist_log_none =>
-        "The Windows event log has nothing from this period. Either nothing on this machine \
-         faulted, or the channels that would have said so are turned off.",
-        "Dziennik zdarzeń Windows nie ma nic z tego okresu. Albo nic w tym komputerze nie \
-         zawiodło, albo kanały, które by to zgłosiły, są wyłączone.";
+        "No Windows event log entries from this period. Either nothing failed on this computer, \
+         or the relevant log channels are turned off.",
+        "Brak wpisów w dzienniku zdarzeń Windows z tego okresu. Albo nic nie zawiodło na tym \
+         komputerze, albo odpowiednie kanały dziennika są wyłączone.";
     hist_leadup_axis =>
         "seconds relative to the start of the outage",
         "sekundy względem początku awarii";
@@ -1384,27 +1386,83 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // -----------------------------------------------------------------------
     // load test tab
     // -----------------------------------------------------------------------
-    bloat_test_done => "Test complete.", "Test zakończony.";
-    bloat_starting => "Starting…", "Uruchamianie…";
     bloat_title => "Latency under load", "Opóźnienie pod obciążeniem";
     bloat_blurb =>
         "Idle latency says little. What matters is what happens to it when somebody in the house \
-         starts a download. This test saturates the link and measures the rise.\n\n\
-         It downloads from Cloudflare and then uploads to it, and takes about 35 seconds. Skip \
-         it on a metered connection.",
-        "Opóźnienie na bezczynnym łączu mówi niewiele. Liczy się to, co się z nim dzieje, gdy \
-         ktoś w domu zaczyna pobierać plik. Ten test wysyca łącze i mierzy wzrost.\n\n\
-         Pobiera dane z Cloudflare, a potem je tam wysyła, i trwa około 35 sekund. Pomiń go na \
-         połączeniu z limitem transferu.";
+         starts a download or an upload. This test fills the line both ways and measures how far \
+         the ping climbs.",
+        "Ping na bezczynnym łączu mówi niewiele. Liczy się to, co się z nim dzieje, gdy ktoś w \
+         domu zaczyna coś pobierać albo wysyłać. Ten test zapycha łącze w obie strony i mierzy, \
+         o ile rośnie ping.";
     bloat_btn_run => "Run test", "Uruchom test";
-    bloat_card_idle => "Idle latency", "Opóźnienie bezczynne";
+    bloat_btn_rerun => "Run again", "Uruchom ponownie";
+    bloat_btn_stop => "Stop", "Przerwij";
+    bloat_cancelled =>
+        "Test stopped. The previous result is unchanged.",
+        "Test przerwany. Poprzedni wynik został bez zmian.";
+    bloat_busy_scan =>
+        "Wait for the scan in Diagnose to finish: both of them load the line.",
+        "Poczekaj, aż skończy się skanowanie w Diagnostyce: oba obciążają łącze.";
+
+    diag_busy_load =>
+        "A load test is running. The scan becomes available once it ends.",
+        "Trwa test obciążeniowy. Skanowanie będzie dostępne po jego zakończeniu.";
+
+    bloat_card_idle => "Idle", "Bez obciążenia";
     bloat_card_loaded => "Downloading", "Przy pobieraniu";
-    bloat_card_increase => "Increase", "Wzrost";
-    bloat_card_throughput => "Download", "Pobieranie";
     bloat_card_loaded_up => "Uploading", "Przy wysyłaniu";
-    bloat_card_throughput_up => "Upload", "Wysyłanie";
-    bloat_card_throughput_sub => "during the test", "w trakcie testu";
-    bloat_card_grade => "Grade", "Ocena";
+    bloat_no_answer => "no reply", "brak odpowiedzi";
+    bloat_tip_idle =>
+        "The ping to 1.1.1.1 while nothing loads the line.\n\n\
+         The baseline: the other two cards are read against it.",
+        "Ping do 1.1.1.1, gdy nic nie obciąża łącza.\n\n\
+         To punkt odniesienia: pozostałe dwie karty są liczone względem niego.";
+    bloat_tip_loaded =>
+        "The average ping while the test downloads as fast as the line allows.\n\n\
+         The rise over the idle ping is what the grade is read from. The speed is what the test \
+         managed to pull, not necessarily what your plan allows.",
+        "Średni ping, gdy test pobiera dane z pełną prędkością łącza.\n\n\
+         Z wzrostu względem pingu bez obciążenia wynika ocena. Prędkość to tyle, ile test zdołał \
+         pobrać, niekoniecznie tyle, ile daje Twój pakiet.";
+    bloat_tip_loaded_up =>
+        "The average ping while the test uploads as fast as the line allows.\n\n\
+         On most home lines this is the worse direction: the upload is slower, and its queue fills \
+         sooner. A video call or a cloud backup fills it.",
+        "Średni ping, gdy test wysyła dane z pełną prędkością łącza.\n\n\
+         Na większości domowych łączy to gorszy kierunek: wysyłanie jest wolniejsze i jego kolejka \
+         szybciej się zapycha. Zapycha ją rozmowa wideo albo kopia zapasowa w chmurze.";
+
+    bloat_running_title => "Test in progress", "Trwa test";
+    bloat_step_idle => "Idle", "Bez obciążenia";
+    bloat_step_down => "Downloading", "Pobieranie";
+    bloat_step_up => "Uploading", "Wysyłanie";
+    bloat_finishing => "finishing…", "kończenie…";
+    bloat_monitor_paused =>
+        "Background monitoring is paused for the test, so its own pings do not count as load.",
+        "Monitorowanie w tle jest wstrzymane na czas testu, żeby jego pingi nie liczyły się do \
+         obciążenia.";
+
+    bloat_empty_title => "How the test goes", "Jak przebiega test";
+    bloat_empty_1 =>
+        "For 6 seconds it pings 1.1.1.1 with nothing else on the line.",
+        "Przez 6 sekund pinguje 1.1.1.1, gdy nic innego nie obciąża łącza.";
+    bloat_empty_2 =>
+        "For about 14 seconds it downloads from Cloudflare as fast as the line allows, and keeps \
+         pinging.",
+        "Przez około 14 sekund pobiera dane z Cloudflare z pełną prędkością łącza i dalej pinguje.";
+    bloat_empty_3 =>
+        "For about 14 more it uploads the same way.",
+        "Przez kolejne około 14 sekund tak samo wysyła dane.";
+    bloat_empty_grade =>
+        "The grade is how far the ping rises under load, in the worse of the two directions:",
+        "Ocena zależy od tego, o ile rośnie ping pod obciążeniem, w gorszym z dwóch kierunków:";
+
+    bloat_chart_title => "Course of the test", "Przebieg testu";
+    bloat_chart_caption =>
+        "The ping to 1.1.1.1 at every moment of the test, in ms",
+        "Ping do 1.1.1.1 w każdej chwili testu, w ms";
+    bloat_chart_lost => "no reply", "bez odpowiedzi";
+    bloat_chart_axis => "seconds since the test started", "sekundy od startu testu";
 
     bloat_prog_idle => "Measuring idle latency…", "Pomiar opóźnienia bezczynnego…";
     bloat_prog_load =>
@@ -1431,27 +1489,28 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     bloat_silent_under_load =>
         "Under load the host stopped replying entirely. That is itself the result.",
         "Pod obciążeniem host przestał odpowiadać całkowicie. To już jest wynik.";
+    bloat_advice_title => "What to do about it", "Co z tym zrobić";
     bloat_advice_run => "Run the test to get a result.", "Uruchom test, żeby zobaczyć wynik.";
     bloat_advice_ok =>
-        "Nothing to do — the link copes with load. If you still get lag, the cause is elsewhere \
+        "Nothing to do: the link copes with load. If you still get lag, the cause is elsewhere \
          (Wi-Fi, driver, or the route to that particular server).",
-        "Nie ma co poprawiać — łącze radzi sobie z obciążeniem. Jeśli mimo to masz lagi, \
+        "Nie ma co poprawiać: łącze radzi sobie z obciążeniem. Jeśli mimo to masz lagi, \
          przyczyna leży gdzie indziej (Wi-Fi, sterownik albo trasa do konkretnego serwera).";
     bloat_advice_header => "What helps, most effective first:", "Co pomaga, od najskuteczniejszego:";
     bloat_advice_1 =>
-        "1. Enable SQM / Smart Queue / QoS on the router (look for \"cake\" or \"fq_codel\") and \
+        "Enable SQM / Smart Queue / QoS on the router (look for \"cake\" or \"fq_codel\") and \
          cap it at about 90% of the real line speed.",
-        "1. Włącz SQM / Smart Queue / QoS na routerze (szukaj „cake” albo „fq_codel”) i ustaw \
+        "Włącz SQM / Smart Queue / QoS na routerze (szukaj „cake” albo „fq_codel”) i ustaw \
          limit na około 90% rzeczywistej prędkości łącza.";
     bloat_advice_2 =>
-        "2. If the router has no such option, that is the best possible reason to replace it. No \
+        "If the router has no such option, that is the best possible reason to replace it. No \
          Windows setting can fix this.",
-        "2. Jeśli router nie ma takiej opcji, to najlepszy możliwy powód, żeby go wymienić. Żadne \
+        "Jeśli router nie ma takiej opcji, to najlepszy możliwy powód, żeby go wymienić. Żadne \
          ustawienie Windowsa tego nie naprawi.";
     bloat_advice_3 =>
-        "3. As a stopgap, throttle whatever saturates the link (Steam, torrents, updates) to \
+        "As a stopgap, throttle whatever saturates the link (Steam, torrents, updates) to \
          about 80% of capacity.",
-        "3. Doraźnie ogranicz to, co wysyca łącze (Steam, torrenty, aktualizacje) do około 80% \
+        "Doraźnie ogranicz to, co wysyca łącze (Steam, torrenty, aktualizacje) do około 80% \
          przepustowości.";
 
     // -----------------------------------------------------------------------
@@ -1477,7 +1536,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Ścieżka w chwili rozpoczęcia: niezapisana (starsza wersja aplikacji albo trasa jeszcze nie zbadana).";
     rep_ongoing => "still going", "trwa";
     hist_report_range => "Report covers", "Raport obejmuje";
-    hist_report_saving => "Saving the report…", "Zapisuję raport…";
+    hist_report_saving =>
+        "Saving the report…",
+        "Zapisywanie raportu…";
     rep_sec_path => "PATH, HOP BY HOP", "ŚCIEŻKA, SKOK PO SKOKU";
     rep_sec_bloat => "LATENCY UNDER LOAD (bufferbloat)", "OPÓŹNIENIE POD OBCIĄŻENIEM (bufferbloat)";
     rep_sec_diagnosis => "DIAGNOSIS", "DIAGNOZA";
@@ -1533,10 +1594,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Odznacza „Zezwalaj komputerowi na wyłączanie tego urządzenia w celu oszczędzania \
          energii” dla karty.";
     tw_power_why =>
-        "The most common cause of connections dropping \"for no reason\" on laptops. Windows \
-         suspends the card when idle and waking it takes long enough for sessions to die.",
-        "Najczęstsza przyczyna zrywania połączeń „bez powodu” na laptopach. Windows usypia kartę \
-         w bezczynności, a jej wybudzenie trwa na tyle długo, że sesje się rozpadają.";
+        "The most common cause of drops on laptops. Windows switches the card off when idle, and \
+         waking it takes long enough for connections to break.",
+        "Najczęstsza przyczyna zrywania połączeń na laptopach. Windows usypia kartę w \
+         bezczynności, a wybudzenie trwa na tyle długo, że połączenia się zrywają.";
     tw_power_no_adapter =>
         "adapter not found in the registry",
         "nie znaleziono karty w rejestrze";
@@ -1563,10 +1624,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Ustawia Ustawienia karty bezprzewodowej → Tryb oszczędzania energii na Maksymalna \
          wydajność, zarówno na zasilaniu sieciowym, jak i na baterii.";
     tw_wlan_why =>
-        "A second, independent throttle. Even with driver power management off, the power plan \
-         can still cut transmit power and cause drops.",
-        "Drugi, niezależny dławik. Nawet przy wyłączonym zarządzaniu energią w sterowniku plan \
-         zasilania nadal może obciąć moc nadawania i powodować zrywy.";
+        "An independent power setting. Even with the driver's power management off, the power \
+         plan can lower transmit power and cause drops.",
+        "Niezależne ustawienie zasilania. Nawet przy wyłączonym zarządzaniu energią w sterowniku \
+         plan zasilania może obniżać moc nadawania i powodować zrywanie połączenia.";
     tw_wlan_absent =>
         "setting not present in this power plan",
         "ustawienie nieobecne w tym planie zasilania";
@@ -1587,16 +1648,14 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Sets 1.1.1.1 and 8.8.8.8 on the active adapter instead of the DHCP-supplied servers.",
         "Ustawia 1.1.1.1 i 8.8.8.8 na aktywnej karcie zamiast serwerów z DHCP.";
     tw_dns_why =>
-        "When the router is the only resolver, its hiccup looks exactly like \"the internet is \
-         down\": pings by IP work, but nothing loads. In exchange every name you look up goes to \
-         Cloudflare and Google instead of your ISP, and on a company network or a VPN the \
-         internal names stop resolving. This only changes IPv4, so anything reaching a resolver \
-         over IPv6 keeps using the old one.",
-        "Gdy router jest jedynym resolverem, jego zadyszka wygląda dokładnie jak „nie ma \
-         internetu”: ping po IP działa, ale nic się nie ładuje. W zamian każda rozwiązywana nazwa \
-         trafia do Cloudflare i Google zamiast do dostawcy, a w sieci firmowej lub na VPN \
-         przestaną działać nazwy wewnętrzne. Zmiana dotyczy wyłącznie IPv4, więc ruch idący do \
-         resolvera po IPv6 zostaje przy starym.";
+        "When the router is the only DNS server, its failure looks like no internet: ping by IP \
+         works, but pages do not load. Downside: lookups go to Cloudflare and Google instead of \
+         your ISP, and on a company network or a VPN internal names stop resolving. Affects IPv4 \
+         only.",
+        "Gdy router jest jedynym serwerem DNS, jego awaria wygląda jak brak internetu: ping po IP \
+         działa, ale strony się nie ładują. Minus: zapytania trafiają do Cloudflare i Google \
+         zamiast do dostawcy, a w sieci firmowej lub przez VPN przestają działać nazwy \
+         wewnętrzne. Dotyczy tylko IPv4.";
     tw_dns_none => "none / from DHCP", "brak / z DHCP";
     tw_dns_own_note =>
         "  (your own DNS server: left as it is)",
@@ -1613,10 +1672,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "TCP receive window auto-tuning = normal",
         "TCP auto-tuning okna odbiorczego = normal";
     tw_autotune_why =>
-        "\"Ping boost\" guides tell people to disable this, which cripples throughput on any \
-         fast link. Normal is the correct value; this undoes that damage.",
-        "Poradniki „na lepszy ping” każą to wyłączać, co rujnuje przepustowość na każdym szybkim \
-         łączu. Normal to wartość poprawna; to cofa tamtą szkodę.";
+        "Some \"ping boost\" guides recommend disabling it, which limits throughput on fast \
+         connections. Normal is the Windows default.",
+        "Niektóre poradniki „na lepszy ping” zalecają wyłączenie tej funkcji, co ogranicza \
+         przepustowość na szybkich łączach. Normal to domyślna wartość Windows.";
     tw_autotune_applied => "Auto-tuning set to normal.", "Auto-tuning ustawiony na normal.";
 
     // Nagle
@@ -1625,14 +1684,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Writes TcpAckFrequency=1 and TCPNoDelay=1 for the active interface.",
         "Zapisuje TcpAckFrequency=1 i TCPNoDelay=1 dla aktywnego interfejsu.";
     tw_nagle_why =>
-        "Windows buffers small TCP packets and delays acknowledgements, which can add a few \
-         milliseconds to a game that talks over TCP. League of Legends, Counter-Strike 2 and \
-         VALORANT use UDP, which this does not touch, so it gains them nothing. It makes no \
-         difference to downloads.",
-        "Windows buforuje małe pakiety TCP i opóźnia potwierdzenia, co może dodać kilka \
-         milisekund grze, która komunikuje się przez TCP. League of Legends, Counter-Strike 2 \
-         i VALORANT używają UDP, którego to nie dotyczy, więc nic im nie daje. Na pobieranie \
-         nie ma wpływu.";
+        "Windows groups small TCP packets and delays acknowledgements, which can add a few ms in \
+         games that use TCP. No effect on games that use UDP (League of Legends, Counter-Strike \
+         2, VALORANT) or on downloads.",
+        "Windows grupuje małe pakiety TCP i opóźnia potwierdzenia, co może dodać kilka ms w grach \
+         korzystających z TCP. Nie wpływa na gry używające UDP (League of Legends, Counter-Strike \
+         2, VALORANT) ani na pobieranie.";
     tw_nagle_no_guid => "adapter GUID unknown", "nieznany GUID karty";
     tw_no_adapter_key => "adapter key not found", "nie znaleziono klucza karty";
     tw_snapshot_no_key => "snapshot has no key", "zrzut nie zawiera klucza";
@@ -1644,10 +1701,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // multimedia throttle
     tw_throttle_title => "Lift the multimedia packet throttle", "Zdejmij ograniczenie pakietów multimedialnych";
     tw_throttle_why =>
-        "Windows caps network traffic at roughly 10k packets/s while any multimedia playback is \
-         running. Gaming with a stream or music on shows this up as lag.",
-        "Windows ogranicza ruch sieciowy do około 10 tys. pakietów/s, gdy cokolwiek odtwarza \
-         multimedia. Granie przy włączonym streamie albo muzyce objawia się wtedy lagami.";
+        "While media is playing, Windows limits network traffic to about 10,000 packets/s. Gaming \
+         with music or a stream on can lag as a result.",
+        "Podczas odtwarzania multimediów Windows ogranicza ruch sieciowy do ok. 10 tys. \
+         pakietów/s. Granie z włączoną muzyką lub streamem może przez to lagować.";
     tw_throttle_default_10 => "default (10)", "domyślne (10)";
     tw_throttle_default_20 => "default (20)", "domyślne (20)";
     tw_throttle_applied => "Throttle lifted. Requires a restart.", "Ograniczenie zdjęte. Wymaga ponownego uruchomienia.";
@@ -1663,10 +1720,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Ustawia MTU na największy rozmiar, który przechodzi test fragmentacji (zwykle 1500, a \
          na PPPoE 1492).";
     tw_mtu_why =>
-        "An MTU that is too large means packets get dropped somewhere along the path. The \
-         symptom is pages that never finish loading while ping works fine.",
-        "Zbyt duże MTU oznacza, że pakiety są gdzieś po drodze odrzucane. Objaw: strony, które \
-         nigdy się nie doładowują, mimo że ping działa bez zarzutu.";
+        "Too large an MTU makes packets get dropped along the way. Symptom: pages that never \
+         finish loading while ping works.",
+        "Zbyt duże MTU powoduje odrzucanie pakietów po drodze. Objaw: strony nie doładowują się \
+         do końca, choć ping działa.";
     tw_mtu_unknown => "MTU unknown", "MTU nieznane";
     tw_mtu_probe_failed =>
         "MTU probe produced no result (is DF-flagged ICMP blocked?)",
@@ -1675,10 +1732,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // stack reset
     tw_reset_title => "Reset the network stack (repair action)", "Zresetuj stos sieciowy (akcja naprawcza)";
     tw_reset_why =>
-        "For when the connection has already died and will not come back. Clears broken \
-         Winsock/IP state that otherwise persists until a reboot.",
-        "Na wypadek, gdy połączenie już padło i nie wraca. Czyści zepsuty stan Winsock/IP, który \
-         inaczej utrzymuje się aż do restartu.";
+        "For a connection that stopped working and does not come back. Clears damaged Winsock and \
+         IP settings that would otherwise last until a restart.",
+        "Dla połączenia, które przestało działać i nie wraca. Czyści uszkodzone ustawienia \
+         Winsock i IP, które inaczej zostają do restartu.";
     tw_reset_state =>
         "one-off action, nothing is permanently changed",
         "akcja jednorazowa, nic nie zmienia się na stałe";
@@ -1701,10 +1758,8 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // optimise tab
     // -----------------------------------------------------------------------
     opt_blurb =>
-        "Every change records the previous value first, so each one can be reverted individually, \
-         including after a reboot.",
-        "Każda zmiana najpierw zapisuje poprzednią wartość, więc da się ją cofnąć pojedynczo, \
-         również po ponownym uruchomieniu komputera.";
+        "Each change can be reverted on its own, also after a restart.",
+        "Każdą zmianę można cofnąć osobno, także po restarcie komputera.";
     opt_btn_apply_all => "Apply all safe changes", "Zastosuj wszystkie bezpieczne zmiany";
     opt_needs_admin => "Requires administrator rights", "Wymaga uprawnień administratora";
     opt_read_only =>
@@ -1713,7 +1768,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     opt_nothing_to_revert => "Nothing saved to revert to", "Nie zapisano nic, do czego można wrócić";
     opt_needs_reboot => "needs a restart", "wymaga restartu";
     opt_irreversible => "cannot be undone", "nie da się cofnąć";
-    opt_reading => "reading the current state…", "odczytuję bieżący stan…";
+    opt_reading =>
+        "reading the current state…",
+        "odczyt bieżącego stanu…";
     opt_all_ok =>
         "Everything safe is already set correctly.",
         "Wszystko, co bezpieczne, jest już ustawione poprawnie.";
@@ -1736,12 +1793,11 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Ustawia właściwość Transmit Power karty na najwyższy poziom oferowany przez \
          sterownik.";
     tw_tx_why =>
-        "Laptops ship this below maximum to save battery, which shortens the range in the \
-         direction that matters: the router hears the laptop less well than the laptop hears \
-         the router, so uploads and acknowledgements fail first at the edge of the flat.",
-        "Laptopy mają to fabrycznie poniżej maksimum, żeby oszczędzać baterię, co skraca \
-         zasięg w tę stronę, która boli: router słyszy laptopa gorzej niż laptop routera, \
-         więc na krańcu mieszkania pierwsze sypią się wysyłki i potwierdzenia.";
+        "Laptops ship with reduced power to save battery. The router then hears the laptop worse \
+         than the other way round, so uploads fail first at the edge of the range.",
+        "Laptopy mają fabrycznie obniżoną moc, żeby oszczędzać baterię. Router słyszy wtedy \
+         laptopa gorzej niż laptop router, więc na skraju zasięgu jako pierwsze zawodzi \
+         wysyłanie.";
 
     tw_roam_title =>
         "Let the card switch to a stronger access point sooner",
@@ -1750,15 +1806,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Sets roaming aggressiveness to the highest level the driver offers.",
         "Ustawia agresywność roamingu na najwyższy poziom oferowany przez sterownik.";
     tw_roam_why =>
-        "With a mesh or a second access point, a cautious card clings to the one it joined \
-         first until the signal is nearly gone, and everything is slow in the meantime. This \
-         makes it hand over while there is still a good signal to hand over from. On a single \
-         access point it does nothing, and in a noisy block of flats it can make the card hop \
-         about. Revert it if the connection starts stuttering.",
-        "Przy mesh lub drugim access poincie ostrożna karta trzyma się tego, z którym się \
-         połączyła, aż sygnał prawie zniknie, a w międzyczasie wszystko muli. To sprawia, że \
-         przełącza się, póki jest jeszcze z czego. Przy jednym access poincie nic nie zmienia, \
-         a w zagęszczonym bloku karta może zacząć skakać. Wtedy cofnij.";
+        "Helps with a mesh or several access points: the card moves to a stronger one before the \
+         signal fades. No effect with a single access point. Among many nearby networks the card \
+         can switch too often; revert it if the connection starts stuttering.",
+        "Pomaga przy sieci mesh lub kilku access pointach: karta przechodzi na mocniejszy, zanim \
+         sygnał osłabnie. Przy jednym access poincie nie ma wpływu. Przy wielu sieciach w pobliżu \
+         karta może przełączać się zbyt często; wtedy cofnij zmianę.";
 
     tw_psm_title =>
         "Stop the Wi-Fi radio going to sleep between packets",
@@ -1767,14 +1820,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Sets the adapter's power save mode to maximum performance.",
         "Ustawia tryb oszczędzania energii karty na maksymalną wydajność.";
     tw_psm_why =>
-        "Power save parks the radio between beacons, so the first packet after a quiet moment \
-         waits for it to wake. That is the tens of milliseconds that show up as a stutter at \
-         the start of every call and every click, and it is separate from the Windows device \
-         setting: the driver has its own.",
-        "Oszczędzanie energii parkuje radio między beaconami, więc pierwszy pakiet po chwili \
-         ciszy czeka na wybudzenie. To te kilkadziesiąt milisekund, które widać jako zacięcie \
-         na starcie każdej rozmowy i każdego kliknięcia. To coś innego niż ustawienie \
-         urządzenia w Windows, sterownik ma własne.";
+        "In power save the radio sleeps between beacons, so the first packet after a pause waits \
+         tens of ms for it to wake. This is a driver setting, separate from the Windows device \
+         option.",
+        "W trybie oszczędzania radio śpi między beaconami, więc pierwszy pakiet po przerwie czeka \
+         kilkadziesiąt ms na wybudzenie. To ustawienie sterownika, niezależne od opcji urządzenia \
+         w Windows.";
 
     tw_mimo_title =>
         "Keep every antenna listening (no MIMO power save)",
@@ -1785,12 +1836,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Wyłącza spatial multiplexing power save, żeby karta nie wyłączała dodatkowych torów \
          odbiorczych w bezczynności.";
     tw_mimo_why =>
-        "A two-antenna card that has powered one down hears a weak router roughly 3 dB worse, \
-         and 3 dB is the difference between a usable link and a dropping one at the far end of \
-         the flat.",
-        "Karta z dwiema antenami, która wyłączyła jedną, słyszy słaby router o jakieś 3 dB \
-         gorzej, a 3 dB to różnica między łączem używalnym a zrywającym się na drugim końcu \
-         mieszkania.";
+        "With one antenna switched off, the card receives a weak signal about 3 dB worse, which \
+         at the edge of the range is often enough to break the connection.",
+        "Z jedną wyłączoną anteną karta odbiera słaby sygnał o ok. 3 dB gorzej, co na skraju \
+         zasięgu często wystarcza do zerwania połączenia.";
 
     tw_w24_title =>
         "Use 20 MHz channels on 2.4 GHz",
@@ -1799,12 +1848,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Stops the card bonding two 2.4 GHz channels into one 40 MHz channel.",
         "Przestaje łączyć dwa kanały 2,4 GHz w jeden 40 MHz.";
     tw_w24_why =>
-        "2.4 GHz has room for three non-overlapping channels. A 40 MHz link takes two of them, \
-         so it collides with every neighbour and gets retried to death; the narrower channel is \
-         slower on paper and faster in a block of flats, and it reaches further.",
-        "Na 2,4 GHz mieszczą się trzy nienachodzące na siebie kanały. Łącze 40 MHz zabiera dwa \
-         z nich, więc zderza się z każdym sąsiadem i zajezdza się retransmisjami; węższy kanał \
-         jest wolniejszy na papierze, a szybszy w bloku, i do tego sięga dalej.";
+        "2.4 GHz has only three non-overlapping channels, and a 40 MHz link takes two of them. \
+         Among neighbouring networks that means collisions and retransmissions; 20 MHz is usually \
+         faster in practice and has better range.",
+        "Na 2,4 GHz są tylko trzy nienachodzące na siebie kanały, a łącze 40 MHz zajmuje dwa z \
+         nich. Przy sieciach sąsiadów oznacza to kolizje i retransmisje; 20 MHz jest w praktyce \
+         zwykle szybsze i ma lepszy zasięg.";
 
     tw_band_title =>
         "Prefer 5 GHz when the signal allows",
@@ -1813,12 +1862,11 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Tells the card to pick the 5 GHz radio of a network that broadcasts on both bands.",
         "Każe karcie wybierać radio 5 GHz w sieci nadającej na obu pasmach.";
     tw_band_why =>
-        "5 GHz is nearly empty compared with 2.4 and carries several times the throughput, but \
-         it goes through walls far worse. Worth it in the same room as the router, wrong at the \
-         other end of the flat. If the signal is already weak where you sit, leave this alone.",
-        "5 GHz jest w porównaniu z 2,4 prawie puste i niesie kilka razy większą przepustowość, \
-         ale znacznie gorzej przechodzi przez ściany. Opłaca się w tym samym pokoju co router, \
-         szkodzi na drugim końcu mieszkania. Jeśli sygnał u ciebie jest już słaby, zostaw to.";
+        "5 GHz is less crowded and faster, but passes through walls much worse. Best in the same \
+         room as the router; with a weak signal leave this off.",
+        "5 GHz jest mniej zatłoczone i szybsze, ale znacznie gorzej przechodzi przez ściany. \
+         Najlepsze w tym samym pomieszczeniu co router; przy słabym sygnale lepiej tego nie \
+         włączać.";
 
     tw_intmod_title =>
         "Turn off interrupt moderation on the wired card",
@@ -1827,11 +1875,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Makes the adapter raise an interrupt per packet instead of batching them.",
         "Karta zgłasza przerwanie na każdy pakiet, zamiast zbierać je w paczki.";
     tw_intmod_why =>
-        "Batching saves CPU by holding packets back for a fraction of a millisecond. That is \
-         invisible on a download and measurable on a game or a call. It costs a few percent of \
-         one core.",
-        "Zbieranie w paczki oszczędza CPU, przetrzymując pakiety przez ułamek milisekundy. \
-         Przy pobieraniu tego nie widać, przy grze albo rozmowie widać. Kosztuje kilka procent \
+        "Batching saves CPU but holds packets for a fraction of a millisecond. Not noticeable in \
+         downloads, noticeable in games and calls. Costs a few percent of one CPU core.",
+        "Grupowanie oszczędza procesor, ale przetrzymuje pakiety przez ułamek milisekundy. \
+         Niezauważalne przy pobieraniu, odczuwalne w grach i rozmowach. Kosztuje kilka procent \
          jednego rdzenia.";
 
     tw_green_title =>
@@ -1843,12 +1890,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Karta przewodowa przestaje zmniejszać moc przy krótkim kablu i usypiać łącze między \
          ramkami.";
     tw_green_why =>
-        "Both features renegotiate the link, and a renegotiation is a short disconnect. On a \
-         worn cable or a cheap switch they cause exactly the kind of dropout that looks like \
-         the internet failing.",
-        "Obie funkcje renegocjują łącze, a renegocjacja to krótkie rozłączenie. Na zużytym \
-         kablu albo tanim switchu wywołują dokładnie taki zanik, jaki wygląda jak awaria \
-         internetu.";
+        "Both features renegotiate the link, which is a brief disconnect. With a worn cable or a \
+         cheap switch this causes drops that look like an internet outage.",
+        "Obie funkcje renegocjują łącze, co oznacza krótkie rozłączenie. Przy zużytym kablu lub \
+         tanim switchu powoduje to zaniki wyglądające jak awaria internetu.";
 
     // -----------------------------------------------------------------------
     // tweaks: the stack
@@ -1862,26 +1907,16 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Przełącza szablon TCP internet z CUBIC na BBR2, a na Windows 10, gdzie BBR2 nie ma, \
          na CTCP.";
     tw_cong_why =>
-        "CUBIC reads a lost packet as a full queue and halves its rate. On a cable that is \
-         correct; on Wi-Fi, where packets are lost to interference, it throws away throughput \
-         for congestion that was never there. BBR2 paces against measured bandwidth and \
-         round-trip time instead. The cost falls on the other half of the traffic: game \
-         launchers like Battle.net and the Riot client open hundreds of short TLS \
-         connections that finish before BBR2 has done measuring, and on a lost packet BBR2 \
-         waits out a full timeout where CUBIC retransmits at once. A launcher that gives up \
-         after a few seconds then sits on a spinner while the browser beside it is fine. It \
-         is a real change to how every connection behaves, so measure before and after in \
-         the load test, and revert if it does not help, or if something stops loading.",
-        "CUBIC czyta zgubiony pakiet jako pełną kolejkę i tnie tempo o połowę. Na kablu to \
-         słuszne; na Wi-Fi, gdzie pakiety giną przez zakłócenia, wyrzuca przepustowość za \
-         przeciążenie, którego nie było. BBR2 zamiast tego dostraja się do zmierzonej \
-         przepustowości i czasu obiegu. Koszt spada na drugą połowę ruchu: launchery gier \
-         jak Battle.net czy klient Riot otwierają setki krótkich połączeń TLS, które kończą \
-         się, zanim BBR2 skończy mierzyć, a po zgubionym pakiecie BBR2 czeka cały timeout \
-         tam, gdzie CUBIC retransmituje od razu. Launcher, który poddaje się po kilku \
-         sekundach, wisi wtedy na kręciołku, choć przeglądarka obok działa. To realna zmiana \
-         zachowania wszystkich połączeń, więc zmierz test obciążeniowy przed i po, i cofnij, \
-         jeśli nie pomaga albo jeśli coś przestało się ładować.";
+        "CUBIC treats every lost packet as congestion and halves its speed, which on Wi-Fi wastes \
+         throughput. BBR2 adjusts to the measured bandwidth and latency instead. Downside: game \
+         launchers such as Battle.net or the Riot client can hang while loading, because they \
+         open many short connections. Compare the load test before and after, and revert if it \
+         does not help or something stops loading.",
+        "CUBIC traktuje każdy zgubiony pakiet jak przeciążenie i zmniejsza prędkość o połowę, co \
+         na Wi-Fi marnuje przepustowość. BBR2 dostosowuje się do zmierzonej przepustowości i \
+         opóźnienia. Minus: launchery gier, np. Battle.net czy klient Riot, mogą zawieszać się na \
+         ładowaniu, bo otwierają wiele krótkich połączeń. Porównaj test obciążeniowy przed i po \
+         zmianie i cofnij ją, jeśli nie pomaga albo coś przestało się ładować.";
     tw_cong_unreadable =>
         "netsh did not report an algorithm",
         "netsh nie podał algorytmu";
@@ -1893,14 +1928,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Sets the negative DNS cache lifetime to zero.",
         "Ustawia czas życia negatywnego cache DNS na zero.";
     tw_negdns_why =>
-        "By default a lookup that failed is remembered as failed for five minutes. So the \
-         connection comes back, and the browser still says the site does not exist: the \
-         resolver is not asking. This is the reason a working link can still look broken for \
-         minutes after an outage.",
-        "Domyślnie nieudane zapytanie jest pamiętane jako nieudane przez pięć minut. Czyli \
-         połączenie wraca, a przeglądarka dalej twierdzi, że strony nie ma, bo resolver w ogóle \
-         nie pyta. To dlatego działające łącze potrafi jeszcze przez kilka minut po awarii \
-         wyglądać na zepsute.";
+        "By default Windows remembers a failed lookup for 5 minutes. After an outage the \
+         connection is back, but sites still do not open until that time passes.",
+        "Domyślnie Windows pamięta nieudane zapytanie przez 5 minut. Po awarii łącze już działa, \
+         ale strony nie otwierają się, dopóki ten czas nie minie.";
 
     tw_do_title =>
         "Stop Windows Update uploading to other machines",
@@ -1911,12 +1942,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Ustawia Delivery Optimization na pobieranie wyłącznie od Microsoftu, bez wymiany \
          peer-to-peer.";
     tw_do_why =>
-        "Delivery Optimization seeds updates to strangers over the same uplink you are using. \
-         A saturated upload is the classic invisible cause of latency: the download still looks \
-         fine, and every acknowledgement is stuck behind the queue.",
-        "Delivery Optimization rozsiewa aktualizacje obcym komputerom tym samym łączem, z \
-         którego korzystasz. Zapchany upload to klasyczna niewidoczna przyczyna opóźnień: \
-         pobieranie dalej wygląda dobrze, a każde potwierdzenie stoi w kolejce.";
+        "Delivery Optimization sends updates to other computers over your upload. A full upload \
+         raises latency even though downloads look normal.",
+        "Delivery Optimization wysyła aktualizacje innym komputerom przez Twoje łącze. Zapchane \
+         wysyłanie podnosi opóźnienia, nawet gdy pobieranie wygląda normalnie.";
 
     tw_hotspot_title =>
         "Stop connecting automatically to open hotspots",
@@ -1926,12 +1955,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Wyłącza ustawienie pozwalające Windows samodzielnie dołączać do proponowanych \
          otwartych sieci.";
     tw_hotspot_why =>
-        "Windows will leave a working network for an operator hotspot it recognises, and the \
-         hotspot wants a login before anything works. The outage that follows has no cause \
-         visible from inside the machine, which is what makes it maddening.",
-        "Windows potrafi porzucić działającą sieć na rzecz rozpoznanego hotspotu operatora, a \
-         hotspot chce logowania, zanim cokolwiek zadziała. Powstała awaria nie ma przyczyny \
-         widocznej z wnętrza komputera i właśnie dlatego doprowadza do szału.";
+        "Windows may leave a working network for a recognised operator hotspot that requires \
+         signing in. The result is an outage with no visible cause.",
+        "Windows może porzucić działającą sieć na rzecz rozpoznanego hotspotu operatora, który \
+         wymaga logowania. Skutkiem jest przerwa bez widocznej przyczyny.";
 
     tw_ipv4_title =>
         "Prefer IPv4 over IPv6",
@@ -1941,14 +1968,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Zmienia kolejność w tablicy preferencji adresów, żeby IPv4 był próbowany pierwszy. \
          IPv6 zostaje włączone.";
     tw_ipv4_why =>
-        "Where an ISP hands out IPv6 that does not actually route, every connection tries it \
-         first and waits out the timeout before falling back. Pages take seconds to start and \
-         nothing in Windows says why. Wrong on a network that is genuinely IPv6-first, so \
-         revert it if things get worse rather than better.",
-        "Gdy operator daje IPv6, które faktycznie nie routuje, każde połączenie próbuje go \
-         najpierw i odczekuje timeout, zanim zejdzie na IPv4. Strony ruszają po kilku \
-         sekundach, a Windows nic nie tłumaczy. Szkodliwe w sieci naprawdę opartej na IPv6, \
-         więc jeśli będzie gorzej zamiast lepiej, cofnij.";
+        "If the ISP provides IPv6 that does not work, every connection first waits for an IPv6 \
+         timeout and pages start seconds late. On a network that relies on IPv6 this makes things \
+         worse; revert it then.",
+        "Jeśli operator udostępnia niedziałające IPv6, każde połączenie najpierw czeka na timeout \
+         IPv6 i strony ruszają z kilkusekundowym opóźnieniem. W sieci opartej na IPv6 zmiana \
+         pogarsza działanie; wtedy ją cofnij.";
 
     // -----------------------------------------------------------------------
     // the air scan
@@ -1961,22 +1986,24 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "brak karty Wi-Fi, którą można skanować";
     air_title => "Wi-Fi channel on your router", "Kanał Wi-Fi w routerze";
     air_blurb =>
-        "Checks which channels your neighbours' networks use and suggests the one to set on your \
-         router. Nothing is changed here: the channel is set in the router itself.",
-        "Sprawdza, na których kanałach nadają sieci sąsiadów, i podpowiada, który kanał ustawić \
-         w routerze. Tu niczego nie zmieniam: kanał ustawia się w samym routerze.";
+        "Shows which channels nearby networks use and which channel to set on the router. The \
+         channel itself is changed in the router's settings.",
+        "Pokazuje, na których kanałach nadają sieci w pobliżu i który kanał ustawić w routerze. \
+         Sam kanał zmienia się w ustawieniach routera.";
     air_btn_scan => "Check the channels", "Sprawdź kanały";
     air_btn_rescan => "Check again", "Sprawdź ponownie";
     air_scan_cost =>
-        "takes about four seconds; the Wi-Fi drops for a moment while the card listens",
-        "trwa około czterech sekund; Wi-Fi na chwilę się rozłącza, bo karta nasłuchuje";
-    air_scanning => "checking, about four seconds…", "sprawdzam, około czterech sekund…";
+        "takes about 4 s; Wi-Fi disconnects briefly during the scan",
+        "trwa ok. 4 s; Wi-Fi na chwilę się rozłącza podczas skanowania";
+    air_scanning =>
+        "scanning, about 4 s…",
+        "skanowanie, ok. 4 s…";
     air_verdict_fine_why =>
-        "Your channel is no busier than the alternatives. Nothing needs changing on the router.",
-        "Twój kanał nie jest bardziej zatłoczony niż pozostałe. W routerze nie trzeba nic zmieniać.";
+        "The current channel is no busier than the alternatives. No change needed.",
+        "Obecny kanał nie jest bardziej zatłoczony niż pozostałe. Zmiana nie jest potrzebna.";
     air_verdict_unknown =>
-        "Scanned, but the channel you are on could not be read.",
-        "Sprawdzone, ale nie udało się odczytać, na jakim kanale jesteś.";
+        "Scan finished, but the current channel could not be read.",
+        "Skanowanie zakończone, ale nie udało się odczytać bieżącego kanału.";
     air_bars_heading =>
         "How crowded the 2.4 GHz channels are (longer is busier)",
         "Jak zatłoczone są kanały 2,4 GHz (dłuższy pasek to większy tłok)";
@@ -1986,45 +2013,44 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     air_tag_yours => "your channel", "twój kanał";
     air_tag_best => "recommended", "polecany";
     air_router_note =>
-        "Change this on the router's settings page, under the 2.4 GHz wireless channel. Set a \
-         fixed channel rather than auto: auto picks at boot and then never reconsiders.",
-        "Zmień to na stronie ustawień routera, przy kanale bezprzewodowym 2,4 GHz. Ustaw kanał \
-         na stałe zamiast auto: auto wybiera przy starcie i potem już nigdy tego nie rozważa.";
+        "Set it in the router's settings, under the 2.4 GHz wireless channel. Choose a fixed \
+         channel instead of Auto: Auto picks a channel only when the router starts.",
+        "Kanał ustawia się w ustawieniach routera, w polu kanału sieci 2,4 GHz. Wybierz stały \
+         kanał zamiast Auto: tryb Auto wybiera kanał tylko przy starcie routera.";
     air_dfs_move =>
-        "Move off it: pick 36, 40, 44 or 48 for range, or 149 and up for the least \
-         crowded air. Both groups are radar-free and never go quiet on their own.",
-        "Zejdź z niego: wybierz 36, 40, 44 albo 48 dla zasięgu, albo 149 i wyżej dla \
-         najmniej zatłoczonego eteru. Obie grupy są wolne od radaru i nigdy nie milkną \
-         same z siebie.";
+        "Recommended: 36, 40, 44 or 48 for range, or 149 and above for less crowded air. These \
+         channels need no radar detection and do not switch off on their own.",
+        "Zalecane: 36, 40, 44 lub 48 dla zasięgu albo 149 i wyżej dla mniejszego tłoku. Te kanały \
+         nie wymagają wykrywania radaru i nie wyłączają się same.";
     // -----------------------------------------------------------------------
     // the optimise list: sections and status
     // -----------------------------------------------------------------------
     cat_power => "Power and sleep", "Zasilanie i uśpienie";
     cat_power_blurb =>
-        "Windows and the driver switching hardware off underneath you. Most drops \
-         \"for no reason\" start here.",
-        "Windows i sterownik wyłączają sprzęt pod tobą. Tu zaczyna się większość zrywów \
-         „bez powodu”.";
+        "Power saving that switches the network card off. The most common cause of drops with no \
+         visible reason.",
+        "Oszczędzanie energii, które wyłącza kartę sieciową. Najczęstsza przyczyna zrywania \
+         połączenia bez widocznego powodu.";
     cat_reach => "Radio and range", "Radio i zasięg";
     cat_reach_blurb =>
-        "How far the card reaches, and which access point it holds on to.",
-        "Jak daleko sięga karta i którego access pointa się trzyma.";
+        "Range of the Wi-Fi card and the choice of access point.",
+        "Zasięg karty Wi-Fi i wybór access pointa.";
     cat_naming => "Names and addresses", "Nazwy i adresy";
     cat_naming_blurb =>
-        "Turning names into addresses, and which version of IP wins.",
-        "Zamiana nazw na adresy i to, która wersja IP wygrywa.";
+        "DNS, and the choice between IPv4 and IPv6.",
+        "DNS oraz wybór między IPv4 a IPv6.";
     cat_throughput => "Throughput and latency", "Przepustowość i opóźnienia";
     cat_throughput_blurb =>
-        "How fast bytes move once the link is up.",
-        "Jak szybko lecą bajty, kiedy łącze już stoi.";
+        "Transfer speed and latency on a working connection.",
+        "Prędkość transferu i opóźnienia na działającym łączu.";
     cat_neighbours => "What else uses the link", "Kto jeszcze zużywa łącze";
     cat_neighbours_blurb =>
-        "Things on this machine helping themselves to the uplink.",
-        "Rzeczy na tym komputerze, które biorą pasmo bez pytania.";
+        "Background services on this computer that use the connection.",
+        "Usługi w tle na tym komputerze, które korzystają z łącza.";
     cat_last_resort => "Last resort", "Ostateczność";
     cat_last_resort_blurb =>
-        "Blunt instruments for when the link is already broken.",
-        "Narzędzia na sytuację, w której łącze jest już popsute.";
+        "Repair actions for a connection that has stopped working.",
+        "Akcje naprawcze dla połączenia, które przestało działać.";
 
     st_set => "set", "ustawione";
     st_todo => "worth changing", "do poprawy";
@@ -2386,12 +2412,63 @@ pub fn rep_loaded_line(avg: f64, max: Option<f64>, loss: f64) -> String {
 /// metered or mobile connection.
 pub fn bloat_cost_warning() -> &'static str {
     match current() {
-        Lang::En => "The test downloads, then uploads, as fast as the line allows for about 14 seconds each. On a fast connection that is well over a gigabyte — avoid it on a metered or mobile link.",
-        Lang::Pl => "Test pobiera, a potem wysyła dane z pełną prędkością łącza, po około 14 sekund w każdą stronę. Na szybkim łączu to grubo ponad gigabajt — nie uruchamiaj go na połączeniu taryfowym ani na telefonie.",
+        Lang::En => "The test downloads, then uploads, as fast as the line allows. On a fast connection that is well over a gigabyte, so avoid it on a metered or mobile link.",
+        Lang::Pl => "Test pobiera, a potem wysyła dane z pełną prędkością łącza. Na szybkim łączu to grubo ponad gigabajt, więc nie uruchamiaj go na połączeniu taryfowym ani na telefonie.",
     }
 }
 
 /// How much the test actually cost, shown next to the result.
+/// The line under a loaded card: how far the ping rose, and the speed the
+/// test reached that way.
+pub fn bloat_card_sub(rise: Option<f64>, mbps: Option<f64>) -> String {
+    // A ping lower under load than idle is noise, not a negative rise.
+    let rise = rise.map(|r| format!("+{:.0} ms", r.max(0.0)));
+    let mbps = mbps.map(|m| format!("{m:.0} Mbps"));
+    match (current(), rise, mbps) {
+        (Lang::En, Some(r), Some(m)) => format!("{r} rise · {m}"),
+        (Lang::Pl, Some(r), Some(m)) => format!("wzrost {r} · {m}"),
+        (Lang::En, Some(r), None) => format!("{r} rise"),
+        (Lang::Pl, Some(r), None) => format!("wzrost {r}"),
+        (_, None, Some(m)) => m,
+        (_, None, None) => String::new(),
+    }
+}
+
+/// The line under the verdict: where the ping went, and in which direction
+/// it went furthest.
+pub fn bloat_summary(idle: f64, loaded: f64, upload: bool) -> String {
+    match (current(), upload) {
+        (Lang::En, false) => format!(
+            "The ping goes from {idle:.0} ms to {loaded:.0} ms when the line is busy, most while downloading."
+        ),
+        (Lang::En, true) => format!(
+            "The ping goes from {idle:.0} ms to {loaded:.0} ms when the line is busy, most while uploading."
+        ),
+        (Lang::Pl, false) => format!(
+            "Ping rośnie z {idle:.0} ms do {loaded:.0} ms, gdy łącze jest zajęte, najbardziej przy pobieraniu."
+        ),
+        (Lang::Pl, true) => format!(
+            "Ping rośnie z {idle:.0} ms do {loaded:.0} ms, gdy łącze jest zajęte, najbardziej przy wysyłaniu."
+        ),
+    }
+}
+
+/// How long the running test has left.
+pub fn bloat_remaining(secs: f64) -> String {
+    match current() {
+        Lang::En => format!("about {secs:.0} s left"),
+        Lang::Pl => format!("zostało ok. {secs:.0} s"),
+    }
+}
+
+/// When the result on screen was measured.
+pub fn bloat_measured_at(clock: &str) -> String {
+    match current() {
+        Lang::En => format!("Measured at {clock}"),
+        Lang::Pl => format!("Zmierzono o {clock}"),
+    }
+}
+
 pub fn bloat_data_used(mib: f64) -> String {
     match current() {
         Lang::En => format!("Data used by this test: {mib:.0} MB"),
@@ -2434,13 +2511,19 @@ pub fn bloat_no_load_str() -> &'static str {
 }
 
 /// Some streams died, so the grade was read under less than full load.
-pub fn bloat_partial_load(alive: usize, total: usize) -> String {
-    match current() {
-        Lang::En => format!(
-            "Only {alive} of {total} download streams held up, so the line was not fully loaded — the grade is optimistic."
+pub fn bloat_partial_load(alive: usize, total: usize, upload: bool) -> String {
+    match (current(), upload) {
+        (Lang::En, false) => format!(
+            "Only {alive} of {total} download streams held up, so the line was not fully loaded and the grade is optimistic."
         ),
-        Lang::Pl => format!(
-            "Utrzymało się tylko {alive} z {total} strumieni, więc łącze nie było w pełni obciążone — ocena jest zawyżona."
+        (Lang::En, true) => format!(
+            "Only {alive} of {total} upload streams held up, so the line was not fully loaded and the grade is optimistic."
+        ),
+        (Lang::Pl, false) => format!(
+            "Przy pobieraniu utrzymało się tylko {alive} z {total} strumieni, więc łącze nie było w pełni obciążone i ocena jest zawyżona."
+        ),
+        (Lang::Pl, true) => format!(
+            "Przy wysyłaniu utrzymało się tylko {alive} z {total} strumieni, więc łącze nie było w pełni obciążone i ocena jest zawyżona."
         ),
     }
 }
@@ -3386,11 +3469,11 @@ pub fn bloat_advice_intro(bump: f64) -> String {
     match current() {
         Lang::En => format!(
             "Latency rises by {bump:.0} ms when the link is busy, which means packets are \
-             queueing — either in your router or at the ISP."
+             queueing, either in your router or at the ISP."
         ),
         Lang::Pl => format!(
             "Opóźnienie rośnie o {bump:.0} ms, gdy łącze jest zajęte, czyli pakiety ustawiają się \
-             w kolejce — w Twoim routerze albo u dostawcy."
+             w kolejce: w Twoim routerze albo u dostawcy."
         ),
     }
 }
@@ -3535,237 +3618,216 @@ pub fn cause_title(code: &str) -> String {
 pub fn cause_advice(code: &str) -> String {
     let (en, pl) = match code {
         "after_tweak" => (
-            "Revert that change and watch whether the outages stop. If they do, the change is the \
-             cause; if they carry on, put it back and look further down this list.",
-            "Cofnij tę zmianę i sprawdź, czy awarie ustaną. Jeśli tak, to ona jest przyczyną; \
-             jeśli nie, przywróć ją i szukaj niżej na tej liście.",
+            "Revert that change and check whether the outages stop. If they do, it was the cause; \
+             if not, apply it again and check the next cause.",
+            "Cofnij tę zmianę i sprawdź, czy awarie ustaną. Jeśli tak, to ona była przyczyną; \
+             jeśli nie, zastosuj ją ponownie i sprawdź kolejną przyczynę.",
         ),
         "adapter_powered_down" => (
-            "Turn off power saving on the adapter. This is the most common cause of a connection \
-             that drops while the computer is idle and comes back the moment you touch it.",
-            "Wyłącz oszczędzanie energii na karcie. To najczęstsza przyczyna zrywania połączenia, \
-             gdy komputer stoi bezczynnie, a wraca ono, gdy tylko go dotkniesz.",
+            "Turn off power saving for the network card (Optimise tab). This is the most common \
+             cause of a connection that drops while the computer is idle.",
+            "Wyłącz oszczędzanie energii karty sieciowej (zakładka Optymalizacja). To najczęstsza \
+             przyczyna zrywania połączenia, gdy komputer jest bezczynny.",
         ),
         "adapter_power_plan" => (
-            "Set the wireless adapter to maximum performance in the active power plan. It is a \
-             separate setting from the adapter's own power saving and both have to be off.",
-            "Ustaw kartę bezprzewodową na maksymalną wydajność w aktywnym planie zasilania. To \
-             osobne ustawienie od oszczędzania energii samej karty: oba muszą być wyłączone.",
+            "Set the wireless adapter to maximum performance in the power plan (Optimise tab). \
+             This is separate from the card's own power saving; both need to be off.",
+            "Ustaw kartę bezprzewodową na maksymalną wydajność w planie zasilania (zakładka \
+             Optymalizacja). To ustawienie niezależne od oszczędzania energii samej karty; oba \
+             muszą być wyłączone.",
         ),
         "out_of_range" | "weak_signal" => (
-            "Move closer to the access point or add one. Below about -75 dBm a link stops being \
-             usable no matter how fast the router is.",
-            "Zbliż się do access pointa albo dodaj kolejny. Poniżej mniej więcej -75 dBm łącze \
-             przestaje być używalne, niezależnie od tego, jak szybki jest router.",
+            "Move closer to the access point or add another one. Below about -75 dBm the \
+             connection is unreliable regardless of the router.",
+            "Przenieś komputer bliżej access pointa albo dodaj kolejny. Poniżej ok. -75 dBm \
+             połączenie jest niestabilne niezależnie od routera.",
         ),
         "adapter_or_driver" => (
-            "Reinstall or roll back the adapter driver. If the adapter also vanishes from Device \
-             Manager, suspect the hardware or its power supply.",
-            "Przeinstaluj albo cofnij sterownik karty. Jeśli karta znika też z Menedżera \
-             urządzeń, podejrzewaj sprzęt albo jego zasilanie.",
+            "Reinstall or roll back the network card driver. If the card also disappears from \
+             Device Manager, the hardware or its power supply is the likely cause.",
+            "Przeinstaluj albo przywróć poprzedni sterownik karty sieciowej. Jeśli karta znika \
+             też z Menedżera urządzeń, prawdopodobną przyczyną jest sprzęt lub jego zasilanie.",
         ),
         "roaming" => (
-            "The computer changed access point and the handover cost it the connection. If you \
-             have several APs, giving each a distinct channel and matching their power usually \
-             cures it; a single AP means the router itself switched band.",
-            "Komputer zmienił access point i przełączenie kosztowało go połączenie. Jeśli masz \
-             kilka AP, zwykle pomaga nadanie każdemu osobnego kanału i wyrównanie mocy; przy \
-             jednym AP oznacza to, że router sam przełączył pasmo.",
+            "The connection broke while switching to another access point. With several access \
+             points, give each its own channel and similar transmit power. With a single one, the \
+             router switched band by itself.",
+            "Połączenie zerwało się podczas przełączania na inny access point. Przy kilku access \
+             pointach ustaw każdemu osobny kanał i podobną moc nadawania. Przy jednym oznacza to, \
+             że router sam zmienił pasmo.",
         ),
         "signal_fade" => (
-            "The signal was dropping steadily before the connection broke, so the computer or the \
-             access point moved, or something came between them. This is not a router fault.",
-            "Sygnał spadał miarowo, zanim połączenie padło, więc komputer albo access point \
-             zmienił położenie, albo coś stanęło między nimi. To nie jest wina routera.",
+            "The signal was falling steadily before the outage: the computer moved away or \
+             something blocked the signal. Not a router fault.",
+            "Sygnał spadał stopniowo przed awarią: komputer się oddalił albo coś zasłoniło \
+             sygnał. To nie jest usterka routera.",
         ),
         "airtime_24ghz" => (
-            "How busy the channel was is not measured here; the air scan in Optimise shows the \
-             networks around you. 2.4 GHz is shared with every neighbour, microwave and \
-             Bluetooth device around. Move to 5 GHz if the adapter supports it, or pick channel \
-             1, 6 or 11, whichever is least used nearby.",
-            "Obciążenia kanału tu nie mierzono; skan Wi-Fi w zakładce Optymalizacja pokaże sieci \
-             wokół ciebie. 2.4 GHz dzielisz z każdym sąsiadem, mikrofalówką i urządzeniem \
-             Bluetooth w okolicy. Przejdź na 5 GHz, jeśli karta to obsługuje, albo wybierz kanał \
-             1, 6 lub 11, ten najmniej obciążony w pobliżu.",
+            "2.4 GHz is shared with neighbouring networks, microwaves and Bluetooth. Switch to 5 \
+             GHz if the card supports it, or set channel 1, 6 or 11. The Wi-Fi channel check in \
+             Optimise shows which is least crowded.",
+            "Pasmo 2,4 GHz jest współdzielone z sieciami sąsiadów, mikrofalówkami i Bluetooth. \
+             Przejdź na 5 GHz, jeśli karta to obsługuje, albo ustaw kanał 1, 6 lub 11. \
+             Sprawdzenie kanałów w zakładce Optymalizacja pokazuje, który jest najmniej \
+             zatłoczony.",
         ),
         "router_side" => (
-            "The signal was strong and steady right up to the drop, so the radio link was not the \
-             problem. Look at the router: its uptime, its temperature, its firmware, and whether \
-             it drops other devices at the same moment.",
-            "Sygnał był mocny i stabilny aż do zerwania, więc łącze radiowe nie było problemem. \
-             Sprawdź router: czas pracy, temperaturę, firmware oraz to, czy zrywa w tym samym \
-             momencie także innym urządzeniom.",
+            "The signal was strong and steady until the outage, so the Wi-Fi link was fine. Check \
+             the router: uptime, temperature, firmware, and whether other devices lose the \
+             connection at the same time.",
+            "Sygnał był mocny i stabilny aż do awarii, więc łącze Wi-Fi działało poprawnie. \
+             Sprawdź router: czas pracy, temperaturę, firmware i to, czy inne urządzenia tracą \
+             połączenie w tym samym czasie.",
         ),
         "marginal_link" => (
-            "It failed on a weak signal and recovered on a much stronger one, so the link sits \
-             right at the edge of usable. Anything that nudges it (a door, a body, a microwave) \
-             will keep breaking it.",
-            "Zerwało się przy słabym sygnale, a wróciło przy znacznie mocniejszym, więc łącze \
-             działa na samej granicy używalności. Cokolwiek je poruszy (drzwi, człowiek, \
-             mikrofalówka), będzie je zrywać dalej.",
+            "The connection broke on a weak signal and came back on a much stronger one, so it \
+             works at the edge of range. Small changes (a closed door, a person nearby) can keep \
+             breaking it.",
+            "Połączenie zerwało się przy słabym sygnale i wróciło przy znacznie mocniejszym, więc \
+             działa na granicy zasięgu. Drobne zmiany (zamknięte drzwi, osoba w pobliżu) mogą je \
+             dalej zrywać.",
         ),
         "cable_or_router" => (
-            "This is a wired link, so start with the cable and the port: reseat both ends, try \
-             another port, try another cable. A failing cable looks exactly like a failing router.",
-            "To łącze przewodowe, więc zacznij od kabla i portu: przepnij oba końce, spróbuj \
-             innego portu, innego kabla. Psujący się kabel wygląda dokładnie jak psujący się \
-             router.",
+            "Wired connection: check the cable and the port first. Reconnect both ends, then try \
+             another port and another cable. A faulty cable looks the same as a faulty router.",
+            "Połączenie kablowe: najpierw sprawdź kabel i port. Podłącz ponownie oba końce, potem \
+             spróbuj innego portu i innego kabla. Uszkodzony kabel wygląda tak samo jak \
+             uszkodzony router.",
         ),
         "isp_sustained" | "isp_brief" => (
-            "The router was answering the whole time, so the break was beyond it. Nothing on this \
-             computer will fix that, but this log is the evidence to put in front of the \
-             provider.",
-            "Router odpowiadał przez cały czas, więc zerwanie było za nim. Nic na tym komputerze \
-             tego nie naprawi, ale ten dziennik jest dowodem, który możesz przedstawić dostawcy.",
+            "The router kept answering, so the break was past it, on the provider side. Nothing \
+             on this computer will fix it; save a report as evidence for the provider.",
+            "Router cały czas odpowiadał, więc przerwa była za nim, po stronie dostawcy. Nic na \
+             tym komputerze tego nie naprawi; zapisz raport jako dowód dla dostawcy.",
         ),
         "isp_pattern" => (
-            "Repeated WAN drops are a service fault, not bad luck. Export the report and quote the \
-             timestamps; a provider will engage with a list of dated outages and will not engage \
-             with \"my internet is bad\".",
-            "Powtarzające się zrywy WAN to usterka usługi, a nie pech. Wyeksportuj raport i podaj \
-             znaczniki czasu: dostawca podejmie rozmowę o liście awarii z datami, a nie o \
-             stwierdzeniu „internet mi nie działa”.",
+            "Repeated WAN outages point to a fault in the service. Save a report with the dates \
+             and times of the outages and send it to the provider.",
+            "Powtarzające się awarie WAN wskazują na usterkę usługi. Zapisz raport z datami i \
+             godzinami awarii i przekaż go dostawcy.",
         ),
         "dns_router_only" => (
-            "Every name lookup goes through the router, so when its resolver stalls the internet \
-             looks dead while it is in fact reachable. Add a public resolver alongside it.",
-            "Każde zapytanie o nazwę idzie przez router, więc gdy jego resolver się zatnie, \
-             internet wygląda na martwy, choć jest osiągalny. Dodaj obok publiczny resolver.",
+            "All name lookups go through the router, so when its DNS stalls, the internet looks \
+             down even though it is reachable. Add a public DNS server (Optimise tab).",
+            "Wszystkie zapytania o nazwy przechodzą przez router, więc gdy jego DNS się zatnie, \
+             internet wygląda na niedostępny, choć działa. Dodaj publiczny serwer DNS (zakładka \
+             Optymalizacja).",
         ),
         "dns_resolver" => (
-            "Names stopped resolving while the network itself was up. Switching to a public \
-             resolver is the quickest way to tell a resolver fault from a connection fault.",
+            "Names stopped resolving while the network was up. Switching to a public DNS server \
+             tells a DNS fault from a connection fault.",
             "Nazwy przestały się rozwiązywać, choć sieć działała. Przełączenie na publiczny \
-             resolver to najszybszy sposób, żeby odróżnić awarię resolvera od awarii połączenia.",
+             serwer DNS pozwala odróżnić awarię DNS od awarii połączenia.",
         ),
         "local_saturation" => (
-            "Latency to the router climbed before the quality dropped, so something on this side \
-             filled the link: an upload, a backup, an update. Run the load test to confirm it and \
-             to find the rate the link actually holds.",
-            "Opóźnienie do routera rosło, zanim jakość spadła, więc coś po tej stronie zapchało \
-             łącze: wysyłka, backup, aktualizacja. Uruchom test obciążeniowy, żeby to \
-             potwierdzić i znaleźć przepustowość, którą łącze naprawdę utrzymuje.",
+            "Latency to the router rose before the quality dropped, so something on this side \
+             filled the connection: an upload, a backup or an update. The load test confirms it.",
+            "Opóźnienie do routera rosło, zanim spadła jakość, więc coś po tej stronie zapchało \
+             łącze: wysyłanie, kopia zapasowa albo aktualizacja. Test obciążeniowy pozwala to \
+             potwierdzić.",
         ),
         "rate_collapse" => (
-            "The negotiated Wi-Fi rate fell away before the quality did. That is interference or \
-             distance, not the router's capacity, so a faster router will not change it.",
-            "Wynegocjowana prędkość Wi-Fi spadła, zanim spadła jakość. To zakłócenia albo \
-             odległość, a nie wydajność routera, więc szybszy router tego nie zmieni.",
+            "The Wi-Fi link rate dropped before the quality did. The cause is interference or \
+             distance, not router performance, so a faster router will not help.",
+            "Prędkość łącza Wi-Fi spadła, zanim spadła jakość. Przyczyną są zakłócenia albo \
+             odległość, a nie wydajność routera, więc szybszy router nie pomoże.",
         ),
         "time_pattern" => (
-            "Outages clustered at one hour of the day have a schedule behind them: a neighbour's \
-             appliance, the router's nightly resync, a backup job, a provider maintenance window.",
-            "Awarie skupione o jednej godzinie mają za sobą harmonogram: urządzenie sąsiada, \
-             nocny resync routera, zadanie backupu, okno serwisowe dostawcy.",
+            "Outages at the same hour usually follow a schedule: a device nearby, the router's \
+             nightly restart, a backup job, or provider maintenance.",
+            "Awarie o tej samej godzinie zwykle wynikają z harmonogramu: urządzenie w pobliżu, \
+             nocny restart routera, kopia zapasowa albo prace serwisowe dostawcy.",
         ),
         "no_evidence" => (
-            "This outage was logged before the app kept the state that led up to it. Newer entries \
-             carry it, so the next occurrence will be explainable.",
-            "Ta awaria została zapisana, zanim aplikacja zachowywała stan ją poprzedzający. Nowsze \
-             wpisy już go mają, więc następne wystąpienie da się wyjaśnić.",
+            "This entry comes from a version that did not record the state before an outage. New \
+             entries include it.",
+            "Ten wpis pochodzi z wersji, która nie zapisywała stanu przed awarią. Nowe wpisy go \
+             zawierają.",
         ),
         "unclear" => (
-            "The recorded state does not single out one cause. If it repeats, the lead-up below is \
-             the place to look for what changes each time.",
-            "Zapisany stan nie wskazuje jednej przyczyny. Jeśli się powtórzy, przebieg poniżej \
-             jest miejscem, w którym warto szukać tego, co za każdym razem się zmienia.",
+            "The recorded state does not point to a single cause. If the outage repeats, compare \
+             the lead-up charts to see what changes each time.",
+            "Zapisany stan nie wskazuje jednej przyczyny. Jeśli awaria się powtórzy, porównaj \
+             wykresy przebiegu, żeby zobaczyć, co zmienia się za każdym razem.",
         ),
-
         "log_sleep" => (
-            "Nothing was wrong with the network: the computer suspended and the monitor kept \
-             counting. If you did not expect it to sleep, the sleep timer in the power plan is the \
-             setting to look at, not anything in here.",
-            "Z siecią nie było nic nie tak: komputer się uśpił, a monitor dalej liczył. Jeśli nie \
-             spodziewałeś się uśpienia, popatrz na licznik uśpienia w planie zasilania, a nie na \
-             cokolwiek tutaj.",
+            "The network was fine: the computer went to sleep. If it should not sleep, change the \
+             sleep time in the Windows power settings.",
+            "Sieć działała poprawnie: komputer przeszedł w stan uśpienia. Jeśli nie powinien się \
+             usypiać, zmień czas uśpienia w ustawieniach zasilania Windows.",
         ),
         "log_resume" => (
-            "After waking, the radio has to re-associate and the DHCP lease has to be confirmed, \
-             and that takes a few seconds during which nothing answers. An outage that fills \
-             exactly that gap is the resume sequence working, not failing.",
-            "Po wybudzeniu radio musi się ponownie powiązać, a dzierżawa DHCP potwierdzić. To \
-             kilka sekund, w których nic nie odpowiada. Awaria wypełniająca dokładnie tę lukę to \
-             działająca sekwencja wybudzenia, a nie jej błąd.",
+            "After waking, the card has to reconnect and renew its address, which takes a few \
+             seconds. An outage of that length is normal behaviour, not a fault.",
+            "Po wybudzeniu karta musi ponownie się połączyć i odnowić adres, co trwa kilka \
+             sekund. Przerwa tej długości to normalne działanie, a nie usterka.",
         ),
         "log_driver_fault" => (
-            "The driver failed on its own and Windows wrote it down, so this is not a router or a \
-             provider problem. Update the adapter driver from the vendor rather than through \
-             Windows Update, which usually keeps an older one. Resetting the network stack clears \
-             the state a fault leaves behind.",
-            "Sterownik zawiódł sam z siebie i Windows to zapisał, więc to nie problem routera ani \
-             dostawcy. Zaktualizuj sterownik karty od producenta, a nie przez Windows Update, \
-             który zwykle trzyma starszy. Reset stosu sieciowego czyści stan, który zostaje po \
-             takiej usterce.",
+            "The network card driver reported an error, so this is not a router or provider \
+             problem. Update the driver from the manufacturer's site (Windows Update often has an \
+             older one). Resetting the network stack (Optimise tab) clears the leftover state.",
+            "Sterownik karty sieciowej zgłosił błąd, więc to nie jest problem routera ani \
+             dostawcy. Zaktualizuj sterownik ze strony producenta (Windows Update często ma \
+             starszy). Reset stosu sieciowego (zakładka Optymalizacja) czyści pozostały stan.",
         ),
         "log_wlan_inactivity" => (
-            "The access point stopped hearing from a card that Windows had quietly powered down, \
-             so it disassociated it. This is the textbook cause of a link that dies while the \
-             machine sits idle and revives the moment you touch it. Turn off the adapter's power \
-             saving and the power plan's, both.",
-            "Access point przestał słyszeć kartę, którą Windows po cichu wyłączył, więc ją \
-             rozłączył. To podręcznikowa przyczyna łącza, które umiera, gdy komputer stoi \
-             bezczynnie, i ożywa, gdy tylko go dotkniesz. Wyłącz oszczędzanie energii karty i \
-             planu zasilania, oba.",
+            "The access point disconnected the card after Windows put it into power saving. This \
+             is a typical cause of drops while the computer is idle. Turn off power saving for \
+             the card and in the power plan (Optimise tab).",
+            "Access point rozłączył kartę, gdy Windows przełączył ją w oszczędzanie energii. To \
+             typowa przyczyna zrywania połączenia, gdy komputer jest bezczynny. Wyłącz \
+             oszczędzanie energii karty i w planie zasilania (zakładka Optymalizacja).",
         ),
         "log_wlan_auth" => (
-            "The card reached the access point and was not let in. That is the key or the \
-             credentials, not the signal: a changed Wi-Fi password, a profile holding the old one, \
-             or a router rotating keys faster than the card follows. Forget the network and \
-             reconnect to rebuild the profile.",
-            "Karta dotarła do access pointa i nie została wpuszczona. To klucz albo poświadczenia, \
-             nie sygnał: zmienione hasło Wi-Fi, profil trzymający stare, albo router rotujący \
-             klucze szybciej, niż karta nadąża. Zapomnij sieć i połącz się ponownie, żeby \
-             odbudować profil.",
+            "The card reached the access point but was not let in. The cause is the password or \
+             credentials, not the signal. Forget the network in Windows and connect again.",
+            "Karta dotarła do access pointa, ale nie została wpuszczona. Przyczyną jest hasło \
+             albo dane logowania, a nie sygnał. Usuń sieć w Windows (Zapomnij) i połącz się \
+             ponownie.",
         ),
         "log_wlan_ap_rejected" => (
-            "The access point refused the card rather than losing it, usually because it had no \
-             capacity left. Check how many devices are associated, and whether a guest network or \
-             a mesh node is holding slots it does not need.",
-            "Access point odmówił karcie, zamiast ją zgubić, zwykle dlatego, że nie miał wolnych \
-             miejsc. Sprawdź, ile urządzeń jest powiązanych i czy sieć gościnna albo węzeł mesh \
-             nie trzyma miejsc, których nie potrzebuje.",
+            "The access point refused the connection, usually because it has no free slots. Check \
+             how many devices are connected to it and whether a guest network or mesh node takes \
+             up slots.",
+            "Access point odrzucił połączenie, zwykle z powodu braku wolnych miejsc. Sprawdź, ile \
+             urządzeń jest do niego podłączonych i czy sieć gościnna albo węzeł mesh nie zajmuje \
+             miejsc.",
         ),
         "log_wlan_deauth" => (
-            "Windows recorded the disconnect itself, so the link really was torn down rather than \
-             merely going quiet. The reason code above is what to quote if you take this to the \
-             router's vendor or your provider.",
-            "Windows sam zapisał rozłączenie, więc łącze naprawdę zostało zerwane, a nie tylko \
-             ucichło. Kod przyczyny powyżej jest tym, co warto zacytować, idąc z tym do \
-             producenta routera albo do dostawcy.",
+            "Windows recorded the disconnect, so the connection was actually broken, not just \
+             silent. Quote the reason code above when reporting it to the router manufacturer or \
+             the provider.",
+            "Windows zapisał rozłączenie, więc połączenie zostało faktycznie zerwane, a nie tylko \
+             ucichło. Podaj kod przyczyny powyżej, zgłaszając problem producentowi routera albo \
+             dostawcy.",
         ),
         "log_dhcp" => (
-            "The adapter could not get an address from the router. Until it has one, nothing \
-             routes, however good the signal is. Restart the router's DHCP server or check that \
-             its address pool is not exhausted: a full pool fails exactly like this, and only for \
-             whichever device asks last.",
-            "Karta nie mogła dostać adresu od routera. Dopóki go nie ma, nic się nie routuje, \
-             niezależnie od jakości sygnału. Zrestartuj serwer DHCP routera albo sprawdź, czy jego \
-             pula adresów się nie wyczerpała: pełna pula zawodzi dokładnie w ten sposób i tylko \
-             dla tego urządzenia, które pyta jako ostatnie.",
+            "The card could not get an address from the router, and without one nothing works \
+             regardless of the signal. Restart the router or check that its DHCP address pool is \
+             not full.",
+            "Karta nie otrzymała adresu od routera, a bez niego nic nie działa niezależnie od \
+             sygnału. Uruchom router ponownie albo sprawdź, czy pula adresów DHCP nie jest pełna.",
         ),
         "log_duplicate_ip" => (
-            "Two devices are claiming one address, so replies go to whichever answers first. It is \
-             almost always a static address set by hand inside the router's DHCP range. Move it \
-             outside the pool, or hand it out as a reservation instead.",
-            "Dwa urządzenia zgłaszają jeden adres, więc odpowiedzi trafiają do tego, które \
-             odpowie pierwsze. Prawie zawsze to adres statyczny ustawiony ręcznie wewnątrz zakresu \
-             DHCP routera. Przenieś go poza pulę albo rozdawaj jako rezerwację.",
+            "Two devices use the same IP address. Usually one has a static address set inside the \
+             router's DHCP range. Move it outside the range or use a DHCP reservation instead.",
+            "Dwa urządzenia używają tego samego adresu IP. Zwykle jedno ma adres statyczny \
+             ustawiony w zakresie DHCP routera. Przenieś go poza ten zakres albo użyj rezerwacji \
+             DHCP.",
         ),
         "log_link_down" => (
-            "The interface itself went down and the OS saw it, so this is the adapter, its driver, \
-             its cable or its power state, and not anything beyond the router.",
-            "Sam interfejs padł i system to zobaczył, więc chodzi o kartę, jej sterownik, kabel \
-             albo stan zasilania, a nie o cokolwiek za routerem.",
+            "Windows recorded the network interface going down. The cause is on this computer: \
+             the card, its driver, the cable or power saving, not past the router.",
+            "Windows zapisał wyłączenie interfejsu sieciowego. Przyczyna leży po stronie \
+             komputera: karta, sterownik, kabel albo oszczędzanie energii, a nie za routerem.",
         ),
         "log_clean_isp" => (
-            "The Windows log has entries from this period and none of them is a fault here: no \
-             sleep, no driver error, no disconnect, no DHCP failure. Together with the router \
-             answering throughout, that puts the outage past your own equipment, which is exactly \
-             the case a provider has to answer.",
-            "Dziennik Windows ma wpisy z tego okresu i żaden z nich nie jest usterką tutaj: brak \
-             uśpienia, brak błędu sterownika, brak rozłączenia, brak awarii DHCP. Razem z \
-             routerem odpowiadającym przez cały czas stawia to awarię za twoim sprzętem, a to \
-             dokładnie ten przypadek, na który dostawca musi odpowiedzieć.",
+            "The Windows log shows no fault on this computer in this period: no sleep, driver \
+             error, disconnect or DHCP failure. With the router answering throughout, the outage \
+             was past your equipment, on the provider side.",
+            "Dziennik Windows nie wykazuje w tym okresie usterki na tym komputerze: brak \
+             uśpienia, błędu sterownika, rozłączenia i awarii DHCP. Router cały czas odpowiadał, \
+             więc awaria była poza Twoim sprzętem, po stronie dostawcy.",
         ),
         _ => ("", ""),
     };
@@ -3796,8 +3858,8 @@ pub fn ev_adapter_powered_down(rssi: Option<i32>) -> String {
 
 pub fn ev_adapter_power_plan() -> String {
     pick(
-        "the active power plan is a second, independent way Windows parks the radio",
-        "aktywny plan zasilania to drugi, niezależny sposób, w jaki Windows wyłącza radio",
+        "the active power plan can switch the radio off independently of the card's own setting",
+        "aktywny plan zasilania może wyłączać radio niezależnie od ustawienia samej karty",
     )
 }
 
@@ -3832,9 +3894,9 @@ pub fn ev_roam_flag() -> String {
 pub fn ev_rssi_fade(from: i32, to: i32) -> String {
     let drop = from - to;
     match current() {
-        Lang::En => format!("signal slid from {from} to {to} dBm, {drop} dB lost before the drop"),
+        Lang::En => format!("signal fell from {from} to {to} dBm ({drop} dB) before the drop"),
         Lang::Pl => {
-            format!("sygnał osunął się z {from} do {to} dBm, {drop} dB straty przed zerwaniem")
+            format!("sygnał spadł z {from} do {to} dBm ({drop} dB) przed zerwaniem")
         }
     }
 }
@@ -3898,9 +3960,9 @@ pub fn ev_isp_pattern(count: usize) -> String {
 
 pub fn ev_dns_router_only() -> String {
     pick(
-        "the router is the only configured resolver, so its stall takes every lookup with it",
-        "router jest jedynym skonfigurowanym resolverem, więc jego zacięcie zabiera wszystkie \
-         zapytania",
+        "the router is the only configured DNS server, so when it stalls every lookup fails",
+        "router jest jedynym skonfigurowanym serwerem DNS, więc gdy się zatnie, zawodzą \
+         wszystkie zapytania",
     )
 }
 
@@ -4267,11 +4329,11 @@ pub fn ev_log_link_down(at: &str) -> String {
 
 pub fn ev_log_clean(lines: usize) -> String {
     match current() {
-        Lang::En => format!(
-            "{lines} log entries around this outage and not one of them a fault on this machine"
-        ),
+        Lang::En => {
+            format!("{lines} log entries around this outage, none of them a fault on this computer")
+        }
         Lang::Pl => format!(
-            "{lines} wpisów w dzienniku wokół tej awarii i ani jeden z nich to usterka tego komputera"
+            "wpisy w dzienniku wokół tej awarii: {lines}, żaden nie wskazuje usterki tego komputera"
         ),
     }
 }
@@ -4641,14 +4703,14 @@ pub fn air_seen(networks: usize, co_channel: usize) -> String {
 pub fn air_on_dfs(channel: u32) -> String {
     match current() {
         Lang::En => format!(
-            "Channel {channel} is a radar channel. The router has to vacate it within \
-             ten seconds of thinking it heard radar, and stay off for thirty minutes: \
-             an outage with no cause visible from here."
+            "Channel {channel} is a radar (DFS) channel. When the router detects radar it \
+             must leave the channel within 10 s and stay off it for 30 min, which shows up \
+             as an outage with no visible cause."
         ),
         Lang::Pl => format!(
-            "Kanał {channel} to kanał radarowy. Router musi go opuścić w ciągu dziesięciu \
-             sekund od chwili, gdy wyda mu się, że usłyszał radar, i nie wraca przez pół \
-             godziny. To awaria bez przyczyny widocznej z tej strony."
+            "Kanał {channel} to kanał radarowy (DFS). Po wykryciu radaru router musi \
+             opuścić kanał w ciągu 10 s i nie wraca na niego przez 30 min. Objawia się to \
+             przerwą bez widocznej przyczyny."
         ),
     }
 }
@@ -4694,12 +4756,10 @@ pub fn air_verdict_move(channel: u32) -> String {
 pub fn air_verdict_move_why(current_channel: u32, gain: f64) -> String {
     match current() {
         Lang::En => {
-            format!(
-                "It is {gain:.0} dB quieter than channel {current_channel}, the one you are on."
-            )
+            format!("{gain:.0} dB quieter than the current channel {current_channel}.")
         }
         Lang::Pl => {
-            format!("Jest o {gain:.0} dB ciszej niż na kanale {current_channel}, na którym jesteś.")
+            format!("O {gain:.0} dB ciszej niż na obecnym kanale {current_channel}.")
         }
     }
 }

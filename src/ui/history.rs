@@ -10,8 +10,9 @@ use eframe::egui;
 use egui_plot::{HLine, Line, Plot, PlotPoints, Points, Polygon, VLine};
 
 use super::{
-    button, button_ex, card, figure, App, Emphasis, Tab, BG2, BG3, FG, FG_DIM, GREEN, RED,
-    SERIES_COLOURS, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE, YELLOW,
+    button, button_ex, card, figure, legend_row, y_steps, App, Emphasis, Key, Tab, BG2, BG3, FG,
+    FG_DIM, GREEN, RED, SERIES_COLOURS, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE,
+    YELLOW,
 };
 use crate::cause::{self, Cause, Confidence, Evidence};
 use crate::diagnose::format_datetime;
@@ -788,58 +789,6 @@ fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event, evidence: Option<&Eviden
     if lead.is_empty() {
         ui.label(egui::RichText::new(i18n::hist_no_leadup()).size(T_META).color(FG_DIM));
     }
-}
-
-/// Grid steps for a lead-up plot's value axis: four or five labelled lines
-/// over the visible range, each a round 1, 2 or 5 times a power of ten.
-///
-/// egui_plot's own decimal grid only labels a line once the lines are far
-/// enough apart, and on plots this short it often labelled none: a signal
-/// plot with no numbers, and a latency plot showing only its zero once one
-/// spike stretched the range.
-fn y_steps(input: egui_plot::GridInput) -> [f64; 3] {
-    let span = (input.bounds.1 - input.bounds.0).abs().max(1.0);
-    let rough = span / 5.0;
-    let magnitude = 10f64.powf(rough.log10().floor());
-    let step = [1.0, 2.0, 5.0, 10.0]
-        .into_iter()
-        .map(|m| m * magnitude)
-        .find(|s| *s >= rough)
-        .unwrap_or(10.0 * magnitude);
-    [step / 5.0, step, step * 5.0]
-}
-
-/// How a legend entry is drawn, matching the mark it names.
-enum Key {
-    Line,
-    Dot,
-    Span,
-}
-
-/// The legend over a plot rather than inside it. Inside, egui's legend sits
-/// on a panel in a corner of the data, and the corner it covers is the
-/// lead-up, which is what the plot is there to show.
-fn legend_row(ui: &mut egui::Ui, entries: &[(&str, egui::Color32, Key)]) {
-    ui.horizontal_wrapped(|ui| {
-        for (label, colour, key) in entries {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, T_META), egui::Sense::hover());
-            let painter = ui.painter();
-            match key {
-                Key::Line => {
-                    painter.hline(rect.x_range(), rect.center().y, egui::Stroke::new(2.0, *colour));
-                }
-                Key::Dot => {
-                    painter.circle_filled(rect.center(), 3.0, *colour);
-                }
-                Key::Span => {
-                    painter.rect_filled(rect.shrink2(egui::vec2(2.0, 1.0)), 2.0, *colour);
-                }
-            }
-            ui.label(egui::RichText::new(*label).size(T_META).color(FG_DIM));
-            ui.add_space(S_SM);
-        }
-    });
-    ui.add_space(S_XS);
 }
 
 /// The stored state, rendered as the fields that mean something to a person.

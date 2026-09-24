@@ -979,9 +979,13 @@ mod tests {
         let mut row_h = 0.0_f32;
         let mut drawn = Vec::new();
         for _ in 0..3 {
-            let mut input = egui::RawInput::default();
-            input.screen_rect =
-                Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0)));
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 800.0),
+                )),
+                ..Default::default()
+            };
             drawn.clear();
             let mut wanted = 0.0_f32;
             let _ = ctx.run(input, |ctx| {
