@@ -354,6 +354,18 @@ impl Store {
         Ok(())
     }
 
+    /// Deletes every finished outage, at the user's request. Returns how many
+    /// went.
+    ///
+    /// An outage still open is kept: the monitor holds its id and will close
+    /// it, and a row it cannot find would lose the end of an outage that is
+    /// happening now. The samples stay too; they are the live chart and the
+    /// record of how long the line was watched, not the outage history.
+    pub fn clear_events(&self) -> Result<usize> {
+        let conn = self.held();
+        Ok(conn.execute("DELETE FROM events WHERE ts_end IS NOT NULL", [])?)
+    }
+
     pub fn open_event(&self, kind: &str, scope: &str, detail: &str, context: &str) -> Result<i64> {
         let conn = self.held();
         conn.execute(
@@ -1185,6 +1197,27 @@ mod tests {
         let left = store.recent_events(10);
         assert_eq!(left.len(), 1, "the closed one goes, the open one stays");
         assert_eq!(left[0].id, still_open);
+    }
+
+    #[test]
+    fn clearing_the_history_spares_the_outage_still_running_and_the_samples() {
+        let store = Store::open_in_memory().unwrap();
+        for _ in 0..3 {
+            let id = store.open_event("outage", "isp", "", "{}").unwrap();
+            store.close_event(id, "{}").unwrap();
+        }
+        let running = store.open_event("outage", "lan", "", "{}").unwrap();
+        store.add_samples(&[(now(), "gateway".into(), Some(3.0), true)]).unwrap();
+
+        assert_eq!(store.clear_events().unwrap(), 3);
+
+        let left = store.recent_events(10);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, running);
+        // The monitor can still close the one it holds.
+        store.close_event(running, "{}").unwrap();
+        assert!(store.recent_events(10)[0].ts_end.is_some());
+        assert_eq!(store.samples_between(now() - 60.0, now() + 1.0).len(), 1);
     }
 
     /// A context the size the monitor really writes: 180 lead-up sweeps plus

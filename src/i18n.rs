@@ -493,17 +493,13 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     hist_where_dns => "in DNS", "w DNS";
     hist_where_other => "as degraded quality", "jako pogorszenie jakości";
     hist_blurb =>
-        "Each entry records the connection state at that moment — signal, channel, access point \
+        "Each entry records the connection state at that moment: signal, channel, access point \
          and whether the router was still answering. That last detail is what decides whether it \
          was your laptop or your provider.",
-        "Każdy wpis zapisuje stan połączenia z danej chwili — sygnał, kanał, access point oraz \
+        "Każdy wpis zapisuje stan połączenia z danej chwili: sygnał, kanał, access point oraz \
          to, czy router jeszcze odpowiadał. Ten ostatni szczegół rozstrzyga, czy zawinił Twój \
          komputer, czy dostawca.";
     hist_nothing_logged => "Nothing logged yet.", "Nic jeszcze nie zapisano.";
-    hist_col_started => "Started", "Początek";
-    hist_col_duration => "Duration", "Czas trwania";
-    hist_col_kind => "Kind", "Rodzaj";
-    hist_col_detail => "Detail", "Szczegóły";
     hist_ongoing => "ongoing", "trwa";
 
     // -----------------------------------------------------------------------
@@ -518,15 +514,47 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     hist_recovery_heading => "Connection when it came back", "Połączenie po powrocie";
     hist_no_recovery => "It has not come back yet.", "Jeszcze nie wróciło.";
     hist_btn_fix => "Open the fix", "Otwórz poprawkę";
-    hist_btn_close => "Close", "Zamknij";
+    hist_btn_back => "Back to the list", "Wróć do listy";
+    hist_btn_clear => "Clear history…", "Wyczyść historię…";
+    hist_btn_clear_confirm => "Delete outages", "Usuń awarie";
+    hist_btn_cancel => "Cancel", "Anuluj";
+    hist_clear_confirm =>
+        "Delete every recorded outage? This cannot be undone. If you may need them for your \
+         provider, save a report first.",
+        "Usunąć wszystkie zapisane awarie? Tego nie da się cofnąć. Jeśli mogą się przydać przy \
+         rozmowie z dostawcą, najpierw zapisz raport.";
+    hist_clear_keeps_running =>
+        "The outage still in progress is kept, so its end is still recorded.",
+        "Trwająca awaria zostaje, żeby dało się zapisać jej koniec.";
+    hist_list_heading => "Recorded outages", "Zapisane awarie";
+    hist_conn_heading => "Connection", "Połączenie";
+    st_signal => "Signal", "Sygnał";
+    st_channel => "Channel", "Kanał";
+    st_band => "Band", "Pasmo";
+    st_gateway => "Gateway", "Brama";
     hist_no_leadup =>
         "No lead-up was recorded for this outage. It was logged by an earlier version.",
         "Dla tej awarii nie zapisano przebiegu. Wpis pochodzi z wcześniejszej wersji.";
     hist_no_state =>
         "No connection state was stored for this entry.",
         "Dla tego wpisu nie zapisano stanu połączenia.";
-    hist_leadup_rssi => "Signal (dBm)", "Sygnał (dBm)";
-    hist_leadup_rtt => "Router (ms)", "Router (ms)";
+    hist_leadup_rssi => "Signal", "Sygnał";
+    hist_leadup_rtt => "Router", "Router";
+    hist_leadup_net => "Internet", "Internet";
+    hist_leadup_lost => "No reply", "Brak odpowiedzi";
+    hist_leadup_outage => "Outage", "Awaria";
+    hist_leadup_rtt_caption =>
+        "Round trip (ms). Red dots: pings that got no reply; the shaded span is the outage.",
+        "Czas odpowiedzi (ms). Czerwone kropki: pingi bez odpowiedzi; zacieniony pas to awaria.";
+    hist_leadup_rssi_caption =>
+        "Wi-Fi signal (dBm), recorded up to the moment it broke. Closer to zero is stronger.",
+        "Sygnał Wi-Fi (dBm), zapisany do chwili zerwania. Bliżej zera znaczy mocniej.";
+    hist_leadup_weak => "Weak below -70 dBm", "Słaby poniżej -70 dBm";
+    hist_leadup_no_signal =>
+        "No Wi-Fi signal was recorded for this outage: a wired link, or an entry from an earlier \
+         version.",
+        "Dla tej awarii nie zapisano sygnału Wi-Fi: połączenie kablem albo wpis z wcześniejszej \
+         wersji.";
     hist_tweaks_heading => "Changes applied shortly before", "Zmiany zastosowane krótko przed";
     // -----------------------------------------------------------------------
     // the per-hop path
@@ -4272,6 +4300,21 @@ pub fn log_kind(kind: crate::probe::eventlog::Kind) -> &'static str {
 }
 
 /// Heading over the cause panel, naming the outage being explained.
+/// After the outage history was cleared.
+pub fn hist_cleared(count: usize) -> String {
+    match current() {
+        Lang::En => format!("Outage history cleared ({count} deleted)."),
+        Lang::Pl => format!("Historia awarii wyczyszczona (usunięto: {count})."),
+    }
+}
+
+pub fn hist_clear_failed(detail: &str) -> String {
+    match current() {
+        Lang::En => format!("Could not clear the history: {detail}"),
+        Lang::Pl => format!("Nie udało się wyczyścić historii: {detail}"),
+    }
+}
+
 pub fn hist_cause_for(when: &str) -> String {
     match current() {
         Lang::En => format!("Outage of {when}"),
@@ -4397,7 +4440,16 @@ pub fn opt_applied_partial(applied: usize, failed: usize) -> String {
 pub fn hist_summary(count: usize, where_text: &str) -> String {
     match current() {
         Lang::En => format!("{count} outage(s) in the last 24 hours, mostly {where_text}."),
-        Lang::Pl => format!("{count} awarii w ciągu ostatnich 24 godzin, głównie {where_text}."),
+        Lang::Pl => {
+            // Polish counts in three forms: 1 awaria, 2-4 awarie (but 12-14
+            // awarii), everything else awarii.
+            let noun = match (count % 10, count % 100) {
+                _ if count == 1 => "awaria",
+                (2..=4, r) if !(12..=14).contains(&r) => "awarie",
+                _ => "awarii",
+            };
+            format!("{count} {noun} w ciągu ostatnich 24 godzin, głównie {where_text}.")
+        }
     }
 }
 

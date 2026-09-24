@@ -275,9 +275,17 @@ one English label that would silently fail everywhere else.
   and the evidence behind it, the Windows log around it, the path hop by hop
   as it was when it began, and the minute before it. Outages recorded before
   the app started storing the path with them have none, and say so.
+  The list and the selected outage sit side by side. Its lead-up is two
+  plots on one time axis: round trip to the router and to the internet in
+  ms, with unanswered pings marked, and the Wi-Fi signal in dBm, with the
+  outage shaded on both. **Clear history** deletes every finished outage
+  after asking, and names the report as the way to keep a copy; an outage
+  still in progress and the measurements behind the live chart are kept.
 - **Settings** — probe cadence (300 ms to 30 s; slower and a sleeping machine
   could not be told from an outage), thresholds, extra ping targets (your game
-  server, for instance), autostart, updates.
+  server, for instance), autostart, updates. Split into pages, with the save
+  bar pinned under every page: it says when something is not saved yet, and
+  Ctrl+S saves.
 
 ## Running in the background
 
@@ -449,7 +457,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-368 tests, covering the failure-blame logic, the statistics, the registry layer,
+370 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

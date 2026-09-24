@@ -9,8 +9,8 @@
 use eframe::egui;
 
 use super::{
-    button, button_ex, App, Emphasis, ACCENT, BG, BG2, FG, FG_DIM, GREEN, RED, S_LG, S_MD, S_SM,
-    S_XS, T_BODY, T_HEAD, T_META, YELLOW,
+    button, button_ex, card, App, Emphasis, ACCENT, BG, BG2, FG, FG_DIM, GREEN, RED, S_LG, S_MD,
+    S_SM, S_XS, T_BODY, T_META, YELLOW,
 };
 use crate::i18n;
 use crate::settings::Settings;
@@ -182,16 +182,14 @@ fn page_body(app: &mut App, ui: &mut egui::Ui, page: Page) {
             Page::Overlay => overlay_page(app, ui),
             Page::General => general_page(app, ui),
             Page::Ai => ai_page(app, ui),
-            Page::Updates => {
-                section(ui, i18n::upd_section(), |ui| super::update_ui::section(app, ui))
-            }
+            Page::Updates => card(ui, i18n::upd_section(), |ui| super::update_ui::section(app, ui)),
         }
     });
 }
 
 fn measure_page(app: &mut App, ui: &mut egui::Ui) {
     let d = &mut app.draft;
-    section(ui, i18n::set_sec_probing(), |ui| {
+    card(ui, i18n::set_sec_probing(), |ui| {
         row(ui, i18n::set_interval(), |ui| {
             ui.add(
                 egui::DragValue::new(&mut d.probe_interval_ms)
@@ -220,7 +218,7 @@ fn measure_page(app: &mut App, ui: &mut egui::Ui) {
         });
     });
 
-    section(ui, i18n::set_sec_thresholds(), |ui| {
+    card(ui, i18n::set_sec_thresholds(), |ui| {
         ms_row(ui, i18n::set_lat_good(), &mut d.ping_ok_ms);
         gap(ui);
         ms_row(ui, i18n::set_lat_bad(), &mut d.ping_bad_ms);
@@ -238,7 +236,7 @@ fn measure_page(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn targets_page(app: &mut App, ui: &mut egui::Ui) {
-    section(ui, i18n::set_sec_targets(), |ui| {
+    card(ui, i18n::set_sec_targets(), |ui| {
         hint(ui, i18n::set_targets_hint());
         ui.add(
             egui::TextEdit::multiline(&mut app.draft_targets)
@@ -252,7 +250,7 @@ fn targets_page(app: &mut App, ui: &mut egui::Ui) {
 
 fn overlay_page(app: &mut App, ui: &mut egui::Ui) {
     instant_note(ui);
-    section(ui, i18n::set_page_overlay(), |ui| {
+    card(ui, i18n::set_page_overlay(), |ui| {
         let d = &mut app.draft;
         ui.checkbox(
             &mut d.game_overlay,
@@ -322,7 +320,7 @@ fn apply_overlay(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn general_page(app: &mut App, ui: &mut egui::Ui) {
-    section(ui, i18n::set_language(), |ui| {
+    card(ui, i18n::set_language(), |ui| {
         // Applied on click rather than on save: a language picker that needs
         // a second confirmation is hard to undo once the labels are in a
         // language you cannot read.
@@ -345,7 +343,7 @@ fn general_page(app: &mut App, ui: &mut egui::Ui) {
         hint(ui, i18n::set_language_hint());
     });
 
-    section(ui, i18n::set_sec_behaviour(), |ui| {
+    card(ui, i18n::set_sec_behaviour(), |ui| {
         ui.checkbox(
             &mut app.draft.notify_on_outage,
             egui::RichText::new(i18n::set_notify()).size(T_BODY),
@@ -377,7 +375,7 @@ fn general_page(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn ai_page(app: &mut App, ui: &mut egui::Ui) {
-    section(ui, i18n::set_sec_ai(), |ui| {
+    card(ui, i18n::set_sec_ai(), |ui| {
         hint(ui, i18n::set_ai_hint());
         ui.add_space(S_XS);
         row(ui, i18n::set_ai_key(), |ui| {
@@ -535,19 +533,6 @@ fn save_draft(app: &mut App, ui: &mut egui::Ui) {
 // ---------------------------------------------------------------------------
 // Layout pieces
 // ---------------------------------------------------------------------------
-
-fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::none().fill(BG2).rounding(6.0).inner_margin(egui::Margin::same(S_LG)).show(
-        ui,
-        |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.label(egui::RichText::new(title).size(T_HEAD).strong().color(FG));
-            ui.add_space(S_MD);
-            body(ui);
-        },
-    );
-    ui.add_space(S_MD);
-}
 
 /// A line above a page whose changes need no save, so the save bar under it
 /// is not mistaken for part of the deal.

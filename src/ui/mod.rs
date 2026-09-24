@@ -1107,6 +1107,22 @@ pub fn tip_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(S_SM);
 }
 
+/// A titled panel spanning the width it is given: the one container the
+/// settings pages and the outage detail are built from, so a section looks
+/// the same wherever it appears.
+pub fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::none().fill(BG2).rounding(6.0).inner_margin(egui::Margin::same(S_LG)).show(
+        ui,
+        |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(egui::RichText::new(title).size(T_HEAD).strong().color(FG));
+            ui.add_space(S_MD);
+            body(ui);
+        },
+    );
+    ui.add_space(S_MD);
+}
+
 /// The common case: a card sized to its own content, with no explanation.
 pub fn stat_card(
     ui: &mut egui::Ui,
@@ -1212,9 +1228,6 @@ pub enum Emphasis {
     Ghost,
     /// Changes the machine, or cannot be taken back. Outlined rather than
     /// filled: it should be findable, not inviting.
-    // Unused until the optimise tab is moved over — that is where the buttons
-    // that write to the registry live.
-    #[allow(dead_code)]
     Danger,
 }
 
