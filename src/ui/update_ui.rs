@@ -7,7 +7,7 @@
 use eframe::egui;
 
 use super::{
-    button, App, Emphasis, Job, ACCENT, FG, FG_DIM, GREEN, RED, S_MD, S_SM, T_BODY, T_META,
+    button, App, Emphasis, Job, ACCENT, FG, FG_DIM, GREEN, RED, S_MD, S_SM, S_XS, T_BODY, T_META,
 };
 use crate::i18n;
 use crate::update::{self, State};
@@ -134,13 +134,13 @@ pub fn banner(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// The settings tab's update section: what is running, and a way to check.
+///
+/// What is running and what was found come first, the buttons that act on
+/// it next, and the standing preference last: it is the part of the section
+/// that is set once and then left alone.
 pub fn section(app: &mut App, ui: &mut egui::Ui) {
-    ui.checkbox(&mut app.draft.check_updates, i18n::upd_auto_check());
-    ui.label(egui::RichText::new(i18n::upd_auto_check_hint()).size(T_META).color(FG_DIM));
-    ui.add_space(S_SM);
-
-    ui.label(egui::RichText::new(i18n::upd_running(crate::VERSION)).size(T_BODY).color(FG_DIM));
-    ui.add_space(S_SM);
+    ui.label(egui::RichText::new(i18n::upd_running(crate::VERSION)).size(T_BODY).color(FG));
+    ui.add_space(S_XS);
 
     match app.update.clone() {
         State::Checking => {
@@ -225,4 +225,13 @@ pub fn section(app: &mut App, ui: &mut egui::Ui) {
             update::open_in_browser(&url);
         }
     });
+
+    ui.add_space(S_MD);
+    ui.separator();
+    ui.add_space(S_MD);
+    ui.checkbox(
+        &mut app.draft.check_updates,
+        egui::RichText::new(i18n::upd_auto_check()).size(T_BODY),
+    );
+    ui.label(egui::RichText::new(i18n::upd_auto_check_hint()).size(T_META).color(FG_DIM));
 }

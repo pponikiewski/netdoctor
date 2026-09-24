@@ -664,6 +664,14 @@ impl eframe::App for App {
                         (Tab::Settings, crate::i18n::tab_settings()),
                     ] {
                         let selected = self.tab == tab;
+                        // Settings edited and not saved follow the user to
+                        // the other tabs, so leaving them behind is a choice
+                        // rather than an accident.
+                        let label = if tab == Tab::Settings && settings_tab::is_dirty(self) {
+                            format!("{label} •")
+                        } else {
+                            label.to_string()
+                        };
                         // Weight and colour carry the selection, and an
                         // underline anchors it to the rule below. The tinted
                         // pill egui gives a selected `selectable_label` reads

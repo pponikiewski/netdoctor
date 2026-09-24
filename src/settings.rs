@@ -119,7 +119,7 @@ pub struct Target {
     pub scope: Scope,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub probe_interval_ms: u64,

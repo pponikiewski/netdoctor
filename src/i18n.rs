@@ -117,13 +117,13 @@ strings! {
     set_game_overlay =>
         "Show the ping overlay while a game runs",
         "Pokazuj nakładkę z pingiem podczas gry";
-    set_overlay_corner => "Overlay corner:", "Róg nakładki:";
+    set_overlay_corner => "Corner", "Róg ekranu";
     set_overlay_opacity => "Visibility", "Widoczność";
-    set_overlay_size => "Size:", "Rozmiar:";
+    set_overlay_size => "Size", "Rozmiar";
     size_small => "small", "mały";
     size_medium => "medium", "średni";
     size_large => "large", "duży";
-    set_overlay_content => "Show:", "Pokazuj:";
+    set_overlay_content => "Shows", "Pokazuje";
     content_full => "ping and verdict", "ping i ocenę";
     content_ping => "router and internet", "router i internet";
     content_internet => "internet only", "sam internet";
@@ -235,16 +235,16 @@ poprosisz.";
     set_sec_thresholds => "Thresholds", "Progi";
     set_sec_behaviour => "Behaviour", "Zachowanie";
 
-    set_interval => "Interval between sweeps (ms)", "Odstęp między seriami (ms)";
+    set_interval => "Interval between sweeps", "Odstęp między seriami";
     set_interval_hint =>
         "Lower is more detailed but adds traffic. Between 300 ms and 30 s.",
         "Mniej znaczy dokładniej, ale więcej ruchu. Od 300 ms do 30 s.";
-    set_ping_timeout => "Ping timeout (ms)", "Limit czasu pingu (ms)";
+    set_ping_timeout => "Ping timeout", "Limit czasu pingu";
     set_fails_before_alarm => "Failed sweeps before an alarm", "Nieudane serie przed alarmem";
     set_fails_hint =>
         "Guards against logging a single dropped packet as an outage.",
         "Chroni przed zapisaniem pojedynczego zgubionego pakietu jako awarii.";
-    set_keep_days => "Days of measurements to keep", "Ile dni pomiarów przechowywać";
+    set_keep_days => "Keep measurements for", "Przechowuj pomiary przez";
 
     set_targets_hint =>
         "One host per line — for example the game server you play on. Names are resolved when \
@@ -252,11 +252,11 @@ poprosisz.";
         "Jeden host w linii — na przykład serwer gry, na którym grasz. Nazwy są rozwiązywane \
          przy zapisie ustawień.";
 
-    set_lat_good => "Latency still good up to (ms)", "Opóźnienie jeszcze dobre do (ms)";
-    set_lat_bad => "Latency bad above (ms)", "Opóźnienie złe powyżej (ms)";
-    set_jitter_good => "Jitter good up to (ms)", "Jitter dobry do (ms)";
-    set_jitter_ok => "Jitter acceptable up to (ms)", "Jitter akceptowalny do (ms)";
-    set_loss_ok => "Acceptable packet loss (%)", "Akceptowalna utrata pakietów (%)";
+    set_lat_good => "Latency still good up to", "Opóźnienie jeszcze dobre do";
+    set_lat_bad => "Latency bad above", "Opóźnienie złe powyżej";
+    set_jitter_good => "Jitter good up to", "Jitter dobry do";
+    set_jitter_ok => "Jitter acceptable up to", "Jitter akceptowalny do";
+    set_loss_ok => "Acceptable packet loss", "Akceptowalna utrata pakietów";
 
     set_notify => "Announce outages in the app", "Zgłaszaj awarie w aplikacji";
     set_start_min => "Start minimised", "Uruchamiaj zminimalizowany";
@@ -274,6 +274,22 @@ poprosisz.";
 
     set_btn_save => "Save settings", "Zapisz ustawienia";
     set_btn_defaults => "Restore defaults", "Przywróć domyślne";
+    set_btn_discard => "Discard changes", "Odrzuć zmiany";
+    set_unsaved => "Unsaved changes", "Niezapisane zmiany";
+    set_all_saved => "All changes saved", "Wszystko zapisane";
+    set_defaults_loaded =>
+        "Default values filled in. Save to keep them, or discard to go back.",
+        "Wpisano wartości domyślne. Zapisz, żeby je zachować, albo odrzuć, żeby wrócić.";
+    set_instant_hint =>
+        "Changes on this page take effect immediately, without saving.",
+        "Zmiany na tej stronie działają od razu, bez zapisywania.";
+    set_unit_days => "days", "dni";
+
+    set_page_measure => "Measurement", "Pomiar";
+    set_page_targets => "Ping targets", "Cele pingowania";
+    set_page_overlay => "Game overlay", "Nakładka w grze";
+    set_page_general => "General", "Ogólne";
+    set_page_ai => "AI explanation", "Wyjaśnienie AI";
 
     // -----------------------------------------------------------------------
     // updates
@@ -844,7 +860,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          this PC's settings file. Nothing is sent until you press the button on the Diagnose tab.",
         "Wyłączone, dopóki klucz jest pusty. Klucz jest Twój (openrouter.ai/keys) i zostaje w \
          pliku ustawień na tym komputerze. Nic nie jest wysyłane, dopóki nie naciśniesz przycisku \
-         w zakładce Diagnoza.";
+         w zakładce Diagnostyka.";
     verdict_none =>
         "Too little was measured to point at a segment.",
         "Zmierzono za mało, żeby wskazać odcinek.";
