@@ -192,23 +192,55 @@ impl BloatResult {
 
 pub type Progress = Arc<dyn Fn(&str, f32) + Send + Sync>;
 
-/// Pings `host` for `duration`, or until `cancel` is set.
-fn ping_window(
-    host: Ipv4Addr,
-    duration: Duration,
-    timeout_ms: u32,
+/// Each ping as it is taken, with the speed the streams are moving at when
+/// the line is loaded: what the screen draws while the test runs, the way a
+/// speed test's figure climbs rather than appearing at the end.
+pub type Live = Arc<dyn Fn(Sample, Option<f64>) + Send + Sync>;
+
+/// Bytes moved since a point in time, read as a rate.
+struct Meter<'a> {
+    counter: &'a AtomicU64,
+    since: Instant,
+    base: u64,
+}
+
+impl Meter<'_> {
+    fn mbps(&self) -> Option<f64> {
+        let secs = self.since.elapsed().as_secs_f64();
+        let moved = self.counter.load(Ordering::Relaxed).saturating_sub(self.base);
+        (secs > 0.2 && moved > 0).then(|| moved as f64 * 8.0 / secs / 1_000_000.0)
+    }
+}
+
+/// A stretch of pinging: how long, measured from when, and what the line
+/// was doing meanwhile.
+struct Window {
+    length: Duration,
     started: Instant,
     phase: Phase,
+}
+
+/// Pings `host` for the window's length, or until `cancel` is set.
+fn ping_window(
+    host: Ipv4Addr,
+    win: &Window,
+    timeout_ms: u32,
     cancel: &AtomicBool,
+    live: Option<&Live>,
+    meter: Option<&Meter>,
 ) -> Vec<Sample> {
     let Ok(pinger) = Pinger::new() else {
         return Vec::new();
     };
-    let deadline = Instant::now() + duration;
+    let deadline = Instant::now() + win.length;
     let mut out = Vec::new();
     while Instant::now() < deadline && !cancel.load(Ordering::Relaxed) {
-        let t = started.elapsed().as_secs_f64();
-        out.push(Sample { t, rtt: pinger.ping(host, timeout_ms).rtt_ms, phase });
+        let t = win.started.elapsed().as_secs_f64();
+        let sample = Sample { t, rtt: pinger.ping(host, timeout_ms).rtt_ms, phase: win.phase };
+        if let Some(live) = live {
+            live(sample, meter.and_then(Meter::mbps));
+        }
+        out.push(sample);
         // Without a gap the probes themselves become the load.
         thread::sleep(Duration::from_millis(50));
     }
@@ -291,18 +323,12 @@ struct Loaded {
     bytes: u64,
 }
 
-/// Where a load window starts and how long it is held.
-struct Window {
-    load: Duration,
-    started: Instant,
-    phase: Phase,
-}
-
 fn under_load(
     host: Ipv4Addr,
-    win: Window,
+    win: &Window,
     timeout_ms: u32,
     cancel: &AtomicBool,
+    live: Option<&Live>,
     work: fn(Arc<AtomicBool>, Arc<AtomicU64>) -> bool,
 ) -> Loaded {
     let stop = Arc::new(AtomicBool::new(false));
@@ -320,7 +346,8 @@ fn under_load(
     let started = Instant::now();
     let start_bytes = counter.load(Ordering::Relaxed);
 
-    let samples = ping_window(host, win.load, timeout_ms, win.started, win.phase, cancel);
+    let meter = Meter { counter: &counter, since: started, base: start_bytes };
+    let samples = ping_window(host, win, timeout_ms, cancel, live, Some(&meter));
 
     let elapsed = started.elapsed().as_secs_f64();
     let moved = counter.load(Ordering::Relaxed).saturating_sub(start_bytes);
@@ -378,6 +405,7 @@ pub fn run(
     timeout_ms: u32,
     progress: Option<Progress>,
     cancel: &AtomicBool,
+    live: Option<Live>,
 ) -> BloatResult {
     let mut res = BloatResult::default();
     let say = |text: &str, frac: f32| {
@@ -393,7 +421,9 @@ pub fn run(
     };
 
     say(crate::i18n::bloat_prog_idle(), 0.05);
-    let idle_samples = ping_window(host, idle, timeout_ms, started, Phase::Idle, cancel);
+    let live = live.as_ref();
+    let win = Window { length: idle, started, phase: Phase::Idle };
+    let idle_samples = ping_window(host, &win, timeout_ms, cancel, live, None);
     let idle_rtts = answered(&idle_samples);
     res.samples = idle_samples;
     if stopped(&mut res) {
@@ -408,8 +438,8 @@ pub fn run(
     res.idle_max = idle_stats.max;
 
     say(crate::i18n::bloat_prog_load(), PROGRESS_DOWN);
-    let win = Window { load, started, phase: Phase::Down };
-    let down = under_load(host, win, timeout_ms, cancel, download);
+    let win = Window { length: load, started, phase: Phase::Down };
+    let down = under_load(host, &win, timeout_ms, cancel, live, download);
     res.streams_alive = down.alive;
     res.bytes = down.bytes;
     res.mbps = down.mbps;
@@ -446,8 +476,8 @@ pub fn run(
     }
 
     say(crate::i18n::bloat_prog_upload(), PROGRESS_UP);
-    let win = Window { load, started, phase: Phase::Up };
-    let loaded = under_load(host, win, timeout_ms, cancel, upload);
+    let win = Window { length: load, started, phase: Phase::Up };
+    let loaded = under_load(host, &win, timeout_ms, cancel, live, upload);
     let up = judge_upload(&loaded, idle_stats.avg.unwrap_or(0.0));
     res.samples.extend(loaded.samples);
     if stopped(&mut res) {
@@ -609,6 +639,7 @@ mod tests {
             100,
             None,
             &cancel,
+            None,
         );
         assert!(res.cancelled);
         assert!(res.grade.is_none() && res.samples.is_empty());

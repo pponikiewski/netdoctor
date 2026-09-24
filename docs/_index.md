@@ -32,6 +32,7 @@ zgadywanka.
 
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
+- 2026-09-25: Test prędkości: pobieranie i wysyłanie w Mbps jak w speedteście, wypełniane na żywo w trakcie testu, obok oceny opóźnienia pod obciążeniem.
 - 2026-09-25: Test obciążeniowy od nowa: ocena najpierw, wykres przebiegu każdego pingu, przerwanie testu i blokada przed równoczesnym skanem; opisy Optymalizacji i Historii przepisane na styl aplikacji.
 - 2026-09-24: Optymalizacja jako karty z przełącznikami (kliknięcie rozwija opis, ryzykowne zmiany pytają) i czytelna karta kanału Wi-Fi z werdyktem, co ustawić w routerze.
 - 2026-09-24: Historia awarii w nowym układzie: lista obok szczegółów, przebieg awarii na dwóch wykresach (czas odpowiedzi i sygnał) na wspólnej osi czasu, oraz czyszczenie historii z potwierdzeniem.

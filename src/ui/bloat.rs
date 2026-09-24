@@ -13,19 +13,17 @@ use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints, Points, Polygon};
 
 use super::{
-    button, button_ex, card, legend_row, stat_card_ex, status_dot, y_steps, App, Emphasis, Job,
-    Key, ACCENT, BG, BG2, BG3, FG, FG_DIM, GREEN, LINE, RED, SERIES_COLOURS, S_LG, S_MD, S_SM,
+    button, button_ex, card, figure, legend_row, status_dot, tip_prose, y_steps, App, Emphasis,
+    Job, Key, ACCENT, BG, BG2, BG3, FG, FG_DIM, GREEN, LINE, RED, SERIES_COLOURS, S_LG, S_MD, S_SM,
     S_XS, T_BODY, T_LEAD, T_META, T_METRIC, T_TITLE, YELLOW,
 };
-use crate::bandwidth::{self, BloatResult, Grade, Phase};
+use crate::bandwidth::{self, BloatResult, Grade, Phase, Sample};
 use crate::i18n;
 
 /// How long the tab's test holds each phase. Longer than the scan's, which
 /// only needs the grade; here the course of the ping is the point.
 const IDLE: Duration = Duration::from_secs(6);
 const LOAD: Duration = Duration::from_secs(12);
-/// Below this the three result cards stack instead of sharing a row.
-const CARDS_MIN_W: f32 = 560.0;
 
 fn grade_colour(g: Grade) -> egui::Color32 {
     match g {
@@ -122,6 +120,16 @@ fn running(app: &App, ui: &mut egui::Ui) {
     let frac = ((elapsed / total) as f32).max(app.bloat_progress).min(0.98);
     let left = total - elapsed;
 
+    let phase = [Phase::Idle, Phase::Down, Phase::Up][phase_index(app.bloat_progress)];
+    let live = &app.bloat_live;
+    let dir = |i: usize, p: Phase| Dir {
+        mbps: app.bloat_speed[i],
+        ping: mean(live, p),
+        ..Dir::default()
+    };
+    speed_row(ui, mean(live, Phase::Idle), dir(0, Phase::Down), dir(1, Phase::Up), Some(phase));
+    ui.add_space(S_MD);
+
     card(ui, i18n::bloat_running_title(), |ui| {
         stepper(ui, phase_index(app.bloat_progress));
         ui.add_space(S_MD);
@@ -140,7 +148,106 @@ fn running(app: &App, ui: &mut egui::Ui) {
         });
         ui.add_space(S_SM);
         ui.label(egui::RichText::new(i18n::bloat_monitor_paused()).size(T_META).color(FG_DIM));
+        if !app.bloat_live.is_empty() {
+            ui.add_space(S_MD);
+            course(ui, &app.bloat_live, "bloat_live", 160.0, Some(total));
+        }
     });
+}
+
+/// One direction of the test as the speed panel shows it: the speed, and
+/// the ping while the line was loaded that way.
+#[derive(Clone, Copy, Default)]
+struct Dir {
+    mbps: Option<f64>,
+    ping: Option<f64>,
+    rise: Option<f64>,
+    /// Nothing answered under this load, which is a result, not a gap.
+    silent: bool,
+}
+
+fn mean(samples: &[Sample], phase: Phase) -> Option<f64> {
+    let rtts: Vec<f64> =
+        samples.iter().filter(|s| s.phase == phase).filter_map(|s| s.rtt).collect();
+    (!rtts.is_empty()).then(|| rtts.iter().sum::<f64>() / rtts.len() as f64)
+}
+
+/// The figures a speed test leads with: the idle ping, and the speed each
+/// way with the ping it cost under it. While the test runs, the phase under
+/// way is lit and the others are dimmed.
+fn speed_row(
+    ui: &mut egui::Ui,
+    idle: Option<f64>,
+    down: Dir,
+    up: Dir,
+    active: Option<Phase>,
+) -> egui::Response {
+    let mbps = |v: f64| if v < 10.0 { format!("{v:.1}") } else { format!("{v:.0}") };
+    let under = |d: Dir| match (d.ping, d.silent) {
+        (Some(p), _) => {
+            let rise = d.rise.unwrap_or(p - idle.unwrap_or(p));
+            (i18n::bloat_speed_sub(p, rise), bump_colour(rise))
+        }
+        (None, true) => (i18n::bloat_no_answer().to_string(), RED),
+        (None, false) => (String::new(), FG_DIM),
+    };
+    let items = [
+        (
+            i18n::bloat_speed_ping(),
+            idle.map(|v| format!("{v:.0}")),
+            "ms",
+            FG,
+            (i18n::bloat_speed_idle().to_string(), FG_DIM),
+            Phase::Idle,
+        ),
+        (
+            i18n::bloat_step_down(),
+            down.mbps.map(mbps),
+            "Mbps",
+            SERIES_COLOURS[2],
+            under(down),
+            Phase::Down,
+        ),
+        (i18n::bloat_step_up(), up.mbps.map(mbps), "Mbps", SERIES_COLOURS[4], under(up), Phase::Up),
+    ];
+    let panel = egui::Frame::none()
+        .fill(BG2)
+        .rounding(6.0)
+        .inner_margin(egui::Margin::symmetric(S_LG, S_MD))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.columns(items.len(), |cols| {
+                for (col, (label, value, unit, colour, (sub, sub_colour), phase)) in
+                    cols.iter_mut().zip(items)
+                {
+                    let lit = active.is_none_or(|a| a == phase);
+                    col.label(egui::RichText::new(label).size(T_META).color(FG_DIM));
+                    // Held to the figure's own height. Left to fill, a
+                    // bottom-aligned row took the whole height of the
+                    // scroll area and pushed the figures off their labels.
+                    let size = egui::vec2(col.available_width(), T_METRIC * 1.5 + 4.0);
+                    let layout = egui::Layout::left_to_right(egui::Align::Max);
+                    col.allocate_ui_with_layout(size, layout, |ui| {
+                        ui.spacing_mut().item_spacing.x = S_XS;
+                        match value {
+                            Some(v) => {
+                                let c = if lit { colour } else { colour.gamma_multiply(0.45) };
+                                ui.label(figure(v, T_METRIC * 1.5, c).strong());
+                                ui.label(egui::RichText::new(unit).size(T_BODY).color(FG_DIM));
+                            }
+                            None => {
+                                ui.label(figure("-", T_METRIC * 1.5, FG_DIM));
+                            }
+                        }
+                    });
+                    // The line is kept even when empty, so the three columns
+                    // stay level.
+                    let sub = if sub.is_empty() { "\u{a0}".to_string() } else { sub };
+                    col.label(egui::RichText::new(sub).size(T_META).color(sub_colour));
+                }
+            });
+        });
+    panel.response.on_hover_ui(|ui| tip_prose(ui, i18n::bloat_tip_speed()))
 }
 
 /// The three phases as numbered steps: done ones green, the current one in
@@ -177,9 +284,21 @@ fn stepper(ui: &mut egui::Ui, current: usize) {
 fn result(app: &App, ui: &mut egui::Ui) {
     let r = &app.bloat;
     let g = r.grade_or_unknown();
-    verdict(ui, r);
+    let down = Dir {
+        mbps: r.mbps,
+        ping: r.loaded_avg,
+        rise: r.bump_ms,
+        silent: r.loaded_avg.is_none() && r.grade == Some(Grade::F),
+    };
+    let up = r.upload.as_ref().map_or_else(Dir::default, |u| Dir {
+        mbps: u.mbps,
+        ping: u.loaded_avg,
+        rise: u.bump_ms,
+        silent: u.loaded_avg.is_none() && u.grade == Some(Grade::F),
+    });
+    speed_row(ui, r.idle_avg, down, up, None);
     ui.add_space(S_MD);
-    cards(ui, r);
+    verdict(ui, r);
     ui.add_space(S_MD);
     if r.samples.iter().any(|s| s.phase != Phase::Idle) {
         card(ui, i18n::bloat_chart_title(), |ui| chart(ui, r));
@@ -334,59 +453,17 @@ fn scale(ui: &mut egui::Ui, current: Grade) {
     });
 }
 
-/// One card per phase: the idle baseline, then the ping with the line full
-/// each way, with the rise and the speed under it.
-fn cards(ui: &mut egui::Ui, r: &BloatResult) {
-    let none = || ("-".to_string(), FG_DIM);
-    let loaded = |avg: Option<f64>, bump: Option<f64>, silent: bool| match (avg, bump) {
-        (Some(v), b) => (format!("{v:.0} ms"), bump_colour(b.unwrap_or(0.0))),
-        (None, _) if silent => (i18n::bloat_no_answer().to_string(), RED),
-        (None, _) => none(),
-    };
-    let idle = r.idle_avg.map_or_else(none, |v| (format!("{v:.0} ms"), FG));
-    let down = loaded(r.loaded_avg, r.bump_ms, r.grade == Some(Grade::F));
-    let up = r
-        .upload
-        .as_ref()
-        .map_or_else(none, |u| loaded(u.loaded_avg, u.bump_ms, u.grade == Some(Grade::F)));
-    let up_sub =
-        r.upload.as_ref().map_or_else(String::new, |u| i18n::bloat_card_sub(u.bump_ms, u.mbps));
-    let items = [
-        (i18n::bloat_card_idle(), idle, "1.1.1.1".to_string(), i18n::bloat_tip_idle()),
-        (
-            i18n::bloat_card_loaded(),
-            down,
-            i18n::bloat_card_sub(r.bump_ms, r.mbps),
-            i18n::bloat_tip_loaded(),
-        ),
-        (i18n::bloat_card_loaded_up(), up, up_sub, i18n::bloat_tip_loaded_up()),
-    ];
-
-    let one = |ui: &mut egui::Ui, i: usize| {
-        let (label, (value, colour), sub, tip) = &items[i];
-        let w = ui.available_width() - S_MD * 2.0;
-        stat_card_ex(ui, label, value, sub, *colour, Some(w), tip);
-    };
-    if ui.available_width() < CARDS_MIN_W {
-        for i in 0..items.len() {
-            one(ui, i);
-            ui.add_space(S_SM);
-        }
-    } else {
-        ui.scope(|ui| {
-            ui.spacing_mut().item_spacing.x = S_MD;
-            ui.columns(items.len(), |cols| {
-                for (i, col) in cols.iter_mut().enumerate() {
-                    one(col, i);
-                }
-            });
-        });
-    }
+/// The result's course, with the worst ping each way under it.
+fn chart(ui: &mut egui::Ui, r: &BloatResult) {
+    course(ui, &r.samples, "bloat_course", 200.0, None);
+    worst(ui, r);
 }
 
 /// Every ping of the test against time, a line per phase, with the two
 /// loaded stretches shaded. An average hides the spikes a game feels.
-fn chart(ui: &mut egui::Ui, r: &BloatResult) {
+/// `x_max` holds the axis at the test's planned length while it runs, so
+/// the line grows across the plot rather than the plot stretching to it.
+fn course(ui: &mut egui::Ui, samples: &[Sample], id: &str, height: f32, x_max: Option<f64>) {
     let colour = |p: Phase| match p {
         Phase::Idle => SERIES_COLOURS[0],
         Phase::Down => SERIES_COLOURS[2],
@@ -398,11 +475,11 @@ fn chart(ui: &mut egui::Ui, r: &BloatResult) {
         Phase::Up => i18n::bloat_step_up(),
     };
     let phases = [Phase::Idle, Phase::Down, Phase::Up];
-    let top = r.samples.iter().filter_map(|s| s.rtt).fold(20.0_f64, f64::max);
+    let top = samples.iter().filter_map(|s| s.rtt).fold(20.0_f64, f64::max);
     // Unanswered pings sit in a row just over the highest answer.
     let lost_y = top * 1.08;
     let lost: Vec<[f64; 2]> =
-        r.samples.iter().filter(|s| s.rtt.is_none()).map(|s| [s.t, lost_y]).collect();
+        samples.iter().filter(|s| s.rtt.is_none()).map(|s| [s.t, lost_y]).collect();
 
     ui.label(egui::RichText::new(i18n::bloat_chart_caption()).size(T_META).color(FG_DIM));
     ui.add_space(S_XS);
@@ -414,13 +491,14 @@ fn chart(ui: &mut egui::Ui, r: &BloatResult) {
     legend_row(ui, &keys);
 
     let lost_name = i18n::bloat_chart_lost();
-    Plot::new("bloat_course")
-        .height(200.0)
+    Plot::new(id)
+        .height(height)
         .allow_drag(false)
         .allow_zoom(false)
         .allow_scroll(false)
         .allow_boxed_zoom(false)
         .include_x(0.0)
+        .include_x(x_max.unwrap_or(0.0))
         .include_y(0.0)
         .include_y(lost_y * 1.04)
         .y_axis_min_width(44.0)
@@ -439,13 +517,12 @@ fn chart(ui: &mut egui::Ui, r: &BloatResult) {
         })
         .show(ui, |plot| {
             for p in phases {
-                let points: Vec<[f64; 2]> = r
-                    .samples
+                let points: Vec<[f64; 2]> = samples
                     .iter()
                     .filter(|s| s.phase == p)
                     .filter_map(|s| s.rtt.map(|rtt| [s.t, rtt]))
                     .collect();
-                let span = r.samples.iter().filter(|s| s.phase == p).fold(
+                let span = samples.iter().filter(|s| s.phase == p).fold(
                     None,
                     |acc: Option<(f64, f64)>, s| {
                         Some(acc.map_or((s.t, s.t), |(a, b)| (a.min(s.t), b.max(s.t))))
@@ -475,8 +552,10 @@ fn chart(ui: &mut egui::Ui, r: &BloatResult) {
                 );
             }
         });
+}
 
-    // The worst single ping each way, which the averages on the cards hide.
+/// The worst single ping each way, which the averages on the cards hide.
+fn worst(ui: &mut egui::Ui, r: &BloatResult) {
     ui.add_space(S_SM);
     if let (Some(max), true) = (r.loaded_max, r.loaded_avg.is_some()) {
         ui.label(
@@ -534,6 +613,8 @@ fn start(app: &mut App) {
     app.bloat_label = i18n::bloat_prog_idle().into();
     app.bloat_started = Some(Instant::now());
     app.bloat_cancel = Arc::default();
+    app.bloat_live.clear();
+    app.bloat_speed = [None; 2];
     // Our own probes would otherwise count as part of the load.
     app.monitor.hold();
 
@@ -545,6 +626,10 @@ fn start(app: &mut App) {
         let progress: bandwidth::Progress = Arc::new(move |label: &str, frac: f32| {
             let _ = progress_tx.send(Job::BloatProgress(label.to_string(), frac));
         });
+        let live_tx = tx.clone();
+        let live: bandwidth::Live = Arc::new(move |sample: Sample, mbps: Option<f64>| {
+            let _ = live_tx.send(Job::BloatLive(sample, mbps));
+        });
         let res = bandwidth::run(
             std::net::Ipv4Addr::new(1, 1, 1, 1),
             IDLE,
@@ -552,6 +637,7 @@ fn start(app: &mut App) {
             timeout,
             Some(progress),
             &cancel,
+            Some(live),
         );
         let _ = tx.send(Job::BloatDone(Box::new(res)));
     });
@@ -567,6 +653,33 @@ mod tests {
         assert_eq!(phase_index(bandwidth::PROGRESS_DOWN), 1);
         assert_eq!(phase_index(bandwidth::PROGRESS_UP), 2);
         assert_eq!(phase_index(1.0), 2);
+    }
+
+    #[test]
+    fn the_speed_panel_is_as_tall_as_its_figures_inside_a_scroll_area() {
+        // A bottom-aligned row in each column used to take the whole height
+        // the scroll area offered: a panel of three figures 800 px tall.
+        let _guard = i18n::test_lock();
+        let ctx = egui::Context::default();
+        let mut height = 0.0_f32;
+        let d = Dir { mbps: Some(38.0), ping: Some(33.0), rise: Some(20.0), silent: false };
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 800.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                        height = speed_row(ui, Some(12.0), d, d, None).rect.height();
+                    });
+                });
+            });
+        }
+        assert!(height > 40.0 && height < 150.0, "{height}");
     }
 
     #[test]

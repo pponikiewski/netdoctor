@@ -1571,6 +1571,7 @@ fn check_load(
         progress,
         // The scan has no stop for this step; the tab's test has one.
         &std::sync::atomic::AtomicBool::new(false),
+        None,
     );
 
     if !res.error.is_empty() && res.grade.is_none() {

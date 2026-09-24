@@ -138,7 +138,7 @@ netdoctor.exe --help
 ```
 
 `--scan` includes the load test unless you add `--quick`, so a scripted scan
-downloads and uploads a few hundred megabytes every time it runs. See the Load test entry
+downloads and uploads a few hundred megabytes every time it runs. See the Speed test entry
 under Tabs for what that costs. `--quick` is the flag to reach for on a metered
 connection or in anything scheduled.
 
@@ -230,7 +230,9 @@ one English label that would silently fail everywhere else.
   exact text sent can be read first, and your network's name, the access
   point's MAC and public addresses are masked. The answer is labelled as an
   interpretation; the verdict from the measurements stays the answer.
-- **Load test** — bufferbloat: idle latency versus latency with the link
+- **Speed test**: download and upload speed in Mbps and the idle ping,
+  filled in live while the test runs, plus bufferbloat: idle latency
+  versus latency with the link
   saturated, first downloading and then uploading, since on an asymmetric
   line the upload queue (video calls, cloud backups) is usually the worse
   one. Grade A–F from the worse direction, and specific advice. A good grade
@@ -362,7 +364,7 @@ seconds, so the lobby between matches does not end it; from the tray menu;
 or on the next start if the app was killed mid-game. While the session lasts,
 a service Windows starts again on its own is stopped again. It can
 only clear this computer's own traffic: a television streaming in the next
-room is the router's to manage, and the load test tells you whether it needs
+room is the router's to manage, and the speed test tells you whether it needs
 to.
 
 ## Changes it can make
@@ -463,7 +465,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-374 tests, covering the failure-blame logic, the statistics, the registry layer,
+375 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

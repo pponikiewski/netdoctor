@@ -74,7 +74,7 @@ strings! {
     // -----------------------------------------------------------------------
     tab_live => "Live", "Na żywo";
     tab_diagnose => "Diagnose", "Diagnostyka";
-    tab_bloat => "Load test", "Test obciążeniowy";
+    tab_bloat => "Speed test", "Test prędkości";
     tab_optimise => "Optimise", "Optymalizacja";
     tab_history => "Outage history", "Historia awarii";
     tab_settings => "Settings", "Ustawienia";
@@ -1386,14 +1386,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // -----------------------------------------------------------------------
     // load test tab
     // -----------------------------------------------------------------------
-    bloat_title => "Latency under load", "Opóźnienie pod obciążeniem";
+    bloat_title => "Speed and latency under load", "Prędkość i opóźnienie pod obciążeniem";
     bloat_blurb =>
-        "Idle latency says little. What matters is what happens to it when somebody in the house \
-         starts a download or an upload. This test fills the line both ways and measures how far \
-         the ping climbs.",
-        "Ping na bezczynnym łączu mówi niewiele. Liczy się to, co się z nim dzieje, gdy ktoś w \
-         domu zaczyna coś pobierać albo wysyłać. Ten test zapycha łącze w obie strony i mierzy, \
-         o ile rośnie ping.";
+        "Measures download and upload speed, and how far the ping rises while the line is busy. \
+         Lag in games usually comes from that rise, not from the idle ping.",
+        "Mierzy prędkość pobierania i wysyłania oraz to, o ile rośnie ping, gdy łącze jest \
+         zajęte. Lagi w grach zwykle biorą się z tego wzrostu, a nie z pingu na bezczynnym łączu.";
     bloat_btn_run => "Run test", "Uruchom test";
     bloat_btn_rerun => "Run again", "Uruchom ponownie";
     bloat_btn_stop => "Stop", "Przerwij";
@@ -1405,32 +1403,21 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Poczekaj, aż skończy się skanowanie w Diagnostyce: oba obciążają łącze.";
 
     diag_busy_load =>
-        "A load test is running. The scan becomes available once it ends.",
-        "Trwa test obciążeniowy. Skanowanie będzie dostępne po jego zakończeniu.";
+        "A speed test is running. The scan becomes available once it ends.",
+        "Trwa test prędkości. Skanowanie będzie dostępne po jego zakończeniu.";
 
-    bloat_card_idle => "Idle", "Bez obciążenia";
-    bloat_card_loaded => "Downloading", "Przy pobieraniu";
-    bloat_card_loaded_up => "Uploading", "Przy wysyłaniu";
     bloat_no_answer => "no reply", "brak odpowiedzi";
-    bloat_tip_idle =>
-        "The ping to 1.1.1.1 while nothing loads the line.\n\n\
-         The baseline: the other two cards are read against it.",
-        "Ping do 1.1.1.1, gdy nic nie obciąża łącza.\n\n\
-         To punkt odniesienia: pozostałe dwie karty są liczone względem niego.";
-    bloat_tip_loaded =>
-        "The average ping while the test downloads as fast as the line allows.\n\n\
-         The rise over the idle ping is what the grade is read from. The speed is what the test \
-         managed to pull, not necessarily what your plan allows.",
-        "Średni ping, gdy test pobiera dane z pełną prędkością łącza.\n\n\
-         Z wzrostu względem pingu bez obciążenia wynika ocena. Prędkość to tyle, ile test zdołał \
-         pobrać, niekoniecznie tyle, ile daje Twój pakiet.";
-    bloat_tip_loaded_up =>
-        "The average ping while the test uploads as fast as the line allows.\n\n\
-         On most home lines this is the worse direction: the upload is slower, and its queue fills \
-         sooner. A video call or a cloud backup fills it.",
-        "Średni ping, gdy test wysyła dane z pełną prędkością łącza.\n\n\
-         Na większości domowych łączy to gorszy kierunek: wysyłanie jest wolniejsze i jego kolejka \
-         szybciej się zapycha. Zapycha ją rozmowa wideo albo kopia zapasowa w chmurze.";
+    bloat_speed_ping => "Ping", "Ping";
+    bloat_speed_idle => "idle line", "bezczynne łącze";
+    bloat_tip_speed =>
+        "The speed the test reached on four connections to Cloudflare's servers.\n\n\
+         It can be lower than your plan if the server, the Wi-Fi or this computer limits it. \
+         Ping is measured with the line idle; the ping under each speed is the average while \
+         the line was loaded that way, and the rise over idle is what the grade is read from.",
+        "Prędkość, jaką test osiągnął na czterech połączeniach z serwerami Cloudflare.\n\n\
+         Może być niższa niż w pakiecie, jeśli ogranicza ją serwer, Wi-Fi albo ten komputer. \
+         Ping jest mierzony na bezczynnym łączu; ping pod każdą prędkością to średnia w trakcie \
+         pobierania albo wysyłania, a z jego wzrostu wynika ocena.";
 
     bloat_running_title => "Test in progress", "Trwa test";
     bloat_step_idle => "Idle", "Bez obciążenia";
@@ -1447,9 +1434,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "For 6 seconds it pings 1.1.1.1 with nothing else on the line.",
         "Przez 6 sekund pinguje 1.1.1.1, gdy nic innego nie obciąża łącza.";
     bloat_empty_2 =>
-        "For about 14 seconds it downloads from Cloudflare as fast as the line allows, and keeps \
-         pinging.",
-        "Przez około 14 sekund pobiera dane z Cloudflare z pełną prędkością łącza i dalej pinguje.";
+        "For about 14 seconds it downloads from Cloudflare as fast as the line allows, measuring \
+         the speed and the ping.",
+        "Przez około 14 sekund pobiera dane z Cloudflare z pełną prędkością łącza i mierzy \
+         prędkość oraz ping.";
     bloat_empty_3 =>
         "For about 14 more it uploads the same way.",
         "Przez kolejne około 14 sekund tak samo wysyła dane.";
@@ -1910,12 +1898,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "CUBIC treats every lost packet as congestion and halves its speed, which on Wi-Fi wastes \
          throughput. BBR2 adjusts to the measured bandwidth and latency instead. Downside: game \
          launchers such as Battle.net or the Riot client can hang while loading, because they \
-         open many short connections. Compare the load test before and after, and revert if it \
+         open many short connections. Compare the speed test before and after, and revert if it \
          does not help or something stops loading.",
         "CUBIC traktuje każdy zgubiony pakiet jak przeciążenie i zmniejsza prędkość o połowę, co \
          na Wi-Fi marnuje przepustowość. BBR2 dostosowuje się do zmierzonej przepustowości i \
          opóźnienia. Minus: launchery gier, np. Battle.net czy klient Riot, mogą zawieszać się na \
-         ładowaniu, bo otwierają wiele krótkich połączeń. Porównaj test obciążeniowy przed i po \
+         ładowaniu, bo otwierają wiele krótkich połączeń. Porównaj test prędkości przed i po \
          zmianie i cofnij ją, jeśli nie pomaga albo coś przestało się ładować.";
     tw_cong_unreadable =>
         "netsh did not report an algorithm",
@@ -2418,19 +2406,14 @@ pub fn bloat_cost_warning() -> &'static str {
 }
 
 /// How much the test actually cost, shown next to the result.
-/// The line under a loaded card: how far the ping rose, and the speed the
-/// test reached that way.
-pub fn bloat_card_sub(rise: Option<f64>, mbps: Option<f64>) -> String {
+/// The line under a speed: the ping while the line was loaded that way, and
+/// how far it rose over idle.
+pub fn bloat_speed_sub(ping: f64, rise: f64) -> String {
     // A ping lower under load than idle is noise, not a negative rise.
-    let rise = rise.map(|r| format!("+{:.0} ms", r.max(0.0)));
-    let mbps = mbps.map(|m| format!("{m:.0} Mbps"));
-    match (current(), rise, mbps) {
-        (Lang::En, Some(r), Some(m)) => format!("{r} rise · {m}"),
-        (Lang::Pl, Some(r), Some(m)) => format!("wzrost {r} · {m}"),
-        (Lang::En, Some(r), None) => format!("{r} rise"),
-        (Lang::Pl, Some(r), None) => format!("wzrost {r}"),
-        (_, None, Some(m)) => m,
-        (_, None, None) => String::new(),
+    let rise = rise.max(0.0);
+    match current() {
+        Lang::En => format!("ping {ping:.0} ms, +{rise:.0} ms rise"),
+        Lang::Pl => format!("ping {ping:.0} ms, wzrost +{rise:.0} ms"),
     }
 }
 
@@ -3721,9 +3704,9 @@ pub fn cause_advice(code: &str) -> String {
         ),
         "local_saturation" => (
             "Latency to the router rose before the quality dropped, so something on this side \
-             filled the connection: an upload, a backup or an update. The load test confirms it.",
+             filled the connection: an upload, a backup or an update. The speed test confirms it.",
             "Opóźnienie do routera rosło, zanim spadła jakość, więc coś po tej stronie zapchało \
-             łącze: wysyłanie, kopia zapasowa albo aktualizacja. Test obciążeniowy pozwala to \
+             łącze: wysyłanie, kopia zapasowa albo aktualizacja. Test prędkości pozwala to \
              potwierdzić.",
         ),
         "rate_collapse" => (

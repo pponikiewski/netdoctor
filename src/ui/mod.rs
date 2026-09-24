@@ -181,6 +181,8 @@ pub enum Job {
     ScanDone(Box<Scan>),
     BloatProgress(String, f32),
     BloatDone(Box<BloatResult>),
+    /// A ping of the running load test, with the speed at that moment.
+    BloatLive(crate::bandwidth::Sample, Option<f64>),
     Traceroute(Vec<String>),
     AirDone(Box<crate::probe::airscan::AirScan>),
     /// The Windows event log around one outage, keyed by that outage's row id
@@ -255,6 +257,10 @@ pub struct App {
     pub bloat_cancel: Arc<std::sync::atomic::AtomicBool>,
     /// When the result in `bloat` was measured; `None` before the first run.
     pub bloat_at: Option<f64>,
+    /// The running test's pings so far, and its latest download and upload
+    /// speed, for drawing it while it runs.
+    pub bloat_live: Vec<crate::bandwidth::Sample>,
+    pub bloat_speed: [Option<f64>; 2],
 
     pub trace: Vec<String>,
     pub tracing: bool,
@@ -399,6 +405,8 @@ impl App {
             bloat_started: None,
             bloat_cancel: Arc::default(),
             bloat_at: None,
+            bloat_live: Vec::new(),
+            bloat_speed: [None; 2],
             trace: Vec::new(),
             tracing: false,
             chart_range_s: 300.0,
@@ -528,6 +536,17 @@ impl App {
                 Job::BloatProgress(label, frac) => {
                     self.bloat_label = label;
                     self.bloat_progress = frac;
+                }
+                Job::BloatLive(sample, mbps) => {
+                    let slot = match sample.phase {
+                        crate::bandwidth::Phase::Down => Some(0),
+                        crate::bandwidth::Phase::Up => Some(1),
+                        crate::bandwidth::Phase::Idle => None,
+                    };
+                    if let (Some(i), Some(m)) = (slot, mbps) {
+                        self.bloat_speed[i] = Some(m);
+                    }
+                    self.bloat_live.push(sample);
                 }
                 Job::BloatDone(res) => {
                     self.bloat_running = false;
@@ -1271,7 +1290,7 @@ pub fn list_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// A stat card, used on the live and load-test tabs: one headline number,
+/// A stat card, used on the live tab: one headline number,
 /// its name, and a line of context under it.
 ///
 /// `width` pins the card's inner width, which is what a row of cards laid out
