@@ -1123,6 +1123,87 @@ pub fn card(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(S_MD);
 }
 
+/// One entry in a list beside a detail pane: a status dot, a title with an
+/// optional figure at the far right, and a second line cut to the row.
+///
+/// The whole row is the click target. The history tab used to make only the
+/// date clickable, which left most of the row looking clickable and doing
+/// nothing. Shared so the history and optimise lists look and answer alike.
+///
+/// The second line is cut rather than wrapped: a list whose rows change
+/// height with their text is not a list to scan. Its first piece lifts to
+/// full strength when the row is hovered or selected, the rest stay dim.
+#[allow(clippy::too_many_arguments)]
+pub fn list_row(
+    ui: &mut egui::Ui,
+    height: f32,
+    selected: bool,
+    dot: egui::Color32,
+    title: &str,
+    title_mono: bool,
+    trailing: Option<(&str, egui::Color32)>,
+    sub: &[(&str, egui::Color32)],
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+
+    let hovered = response.hovered();
+    let active = selected || hovered;
+    let inner = rect.shrink2(egui::vec2(S_MD, S_SM));
+    let top = inner.top() + T_BODY * 0.6;
+    let bottom = inner.bottom() - T_META * 0.6;
+    let text_x = inner.left() + 16.0;
+
+    let body = egui::FontId::new(T_BODY, egui::FontFamily::Proportional);
+    let trailing = trailing.map(|(text, colour)| {
+        ui.fonts(|f| f.layout_no_wrap(text.to_string(), body.clone(), colour))
+    });
+    let trailing_w = trailing.as_ref().map_or(0.0, |g| g.size().x + S_SM);
+
+    let title_font = if title_mono {
+        egui::FontId::new(T_BODY, egui::FontFamily::Monospace)
+    } else {
+        body.clone()
+    };
+    let mut title_job = egui::text::LayoutJob::simple_singleline(title.to_string(), title_font, FG);
+    title_job.wrap =
+        egui::text::TextWrapping::truncate_at_width(inner.right() - text_x - trailing_w);
+    let title_galley = ui.fonts(|f| f.layout_job(title_job));
+
+    let meta = egui::FontId::new(T_META, egui::FontFamily::Proportional);
+    let mut job = egui::text::LayoutJob::default();
+    for (i, (text, colour)) in sub.iter().enumerate() {
+        let colour = if i == 0 && !active { FG_DIM } else { *colour };
+        job.append(text, 0.0, egui::TextFormat::simple(meta.clone(), colour));
+    }
+    job.wrap = egui::text::TextWrapping::truncate_at_width(inner.right() - text_x);
+    let sub_galley = ui.fonts(|f| f.layout_job(job));
+
+    let painter = ui.painter();
+    if active {
+        painter.rect_filled(rect, BTN_R, if selected { BG3 } else { BG2 });
+    }
+    if selected {
+        let bar = egui::Rect::from_min_size(
+            rect.left_top() + egui::vec2(0.0, 8.0),
+            egui::vec2(3.0, rect.height() - 16.0),
+        );
+        painter.rect_filled(bar, 1.5, ACCENT);
+    }
+    painter.circle_filled(egui::pos2(inner.left() + 4.0, top), 4.0, dot);
+    painter.galley(egui::pos2(text_x, top - title_galley.size().y * 0.5), title_galley, FG);
+    if let Some(g) = trailing {
+        let pos = egui::pos2(inner.right() - g.size().x, top - g.size().y * 0.5);
+        painter.galley(pos, g, FG);
+    }
+    painter.galley(egui::pos2(text_x, bottom - sub_galley.size().y * 0.5), sub_galley, FG_DIM);
+
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// The common case: a card sized to its own content, with no explanation.
 pub fn stat_card(
     ui: &mut egui::Ui,

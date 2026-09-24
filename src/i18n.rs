@@ -136,8 +136,16 @@ strings! {
 
     btn_dismiss => "Dismiss", "Zamknij";
     btn_apply => "Apply", "Zastosuj";
-    btn_revert => "Revert", "Cofnij";
     btn_refresh => "Refresh", "Odśwież";
+    opt_card_what => "What it does", "Co robi";
+    opt_card_why => "Why it helps", "Dlaczego pomaga";
+    opt_more => "Click for the full description", "Kliknij, żeby zobaczyć pełny opis";
+    opt_less => "Click to fold it away", "Kliknij, żeby zwinąć";
+    opt_btn_apply_anyway => "Apply anyway", "Zastosuj mimo to";
+    opt_confirm_risky =>
+        "This one is high risk or cannot be undone. Read what it does before you go ahead.",
+        "Ta zmiana jest ryzykowna albo nieodwracalna. Przeczytaj, co robi, zanim przejdziesz dalej.";
+    opt_headline_done => "Everything here is already set.", "Wszystko tu jest już ustawione.";
 
     word_none => "none", "brak";
     word_router => "Router", "Router";
@@ -247,9 +255,9 @@ poprosisz.";
     set_keep_days => "Keep measurements for", "Przechowuj pomiary przez";
 
     set_targets_hint =>
-        "One host per line — for example the game server you play on. Names are resolved when \
+        "One host per line, for example the game server you play on. Names are resolved when \
          settings are saved.",
-        "Jeden host w linii — na przykład serwer gry, na którym grasz. Nazwy są rozwiązywane \
+        "Jeden host w linii, na przykład serwer gry, na którym grasz. Nazwy są rozwiązywane \
          przy zapisie ustawień.";
 
     set_lat_good => "Latency still good up to", "Opóźnienie jeszcze dobre do";
@@ -514,7 +522,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     hist_recovery_heading => "Connection when it came back", "Połączenie po powrocie";
     hist_no_recovery => "It has not come back yet.", "Jeszcze nie wróciło.";
     hist_btn_fix => "Open the fix", "Otwórz poprawkę";
-    hist_btn_back => "Back to the list", "Wróć do listy";
+    btn_back_to_list => "Back to the list", "Wróć do listy";
     hist_btn_clear => "Clear history…", "Wyczyść historię…";
     hist_btn_clear_confirm => "Delete outages", "Usuń awarie";
     hist_btn_cancel => "Cancel", "Anuluj";
@@ -1512,8 +1520,8 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Nie udało się odczytać obecnej wartości, więc Cofnij nie miałoby do czego wrócić. Niczego nie zmieniono.";
     tw_state_unreadable => "cannot read", "nie można odczytać";
     tw_snapshots_unreadable_hint =>
-        "The saved-state file is damaged, so Revert is unavailable for every change. The file was not overwritten — it can still be repaired by hand.",
-        "Plik zapisanych stanów jest uszkodzony, więc Cofnij jest niedostępne dla wszystkich zmian. Plik nie został nadpisany — nadal da się go naprawić ręcznie.";
+        "The saved-state file is damaged, so Revert is unavailable for every change. The file was not overwritten, so it can still be repaired by hand.",
+        "Plik zapisanych stanów jest uszkodzony, więc Cofnij jest niedostępne dla wszystkich zmian. Plik nie został nadpisany, więc nadal da się go naprawić ręcznie.";
     tw_not_set => "not set", "nie ustawione";
 
     // adapter power saving
@@ -1693,20 +1701,17 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // optimise tab
     // -----------------------------------------------------------------------
     opt_blurb =>
-        "Every change records the previous value first, so each one can be reverted individually \
-         — including after a reboot.",
-        "Każda zmiana najpierw zapisuje poprzednią wartość, więc da się ją cofnąć pojedynczo — \
+        "Every change records the previous value first, so each one can be reverted individually, \
+         including after a reboot.",
+        "Każda zmiana najpierw zapisuje poprzednią wartość, więc da się ją cofnąć pojedynczo, \
          również po ponownym uruchomieniu komputera.";
     opt_btn_apply_all => "Apply all safe changes", "Zastosuj wszystkie bezpieczne zmiany";
     opt_needs_admin => "Requires administrator rights", "Wymaga uprawnień administratora";
     opt_read_only =>
         "read-only (restart as administrator to apply)",
         "tylko do odczytu (uruchom ponownie jako administrator, żeby zastosować)";
-    opt_select_tweak =>
-        "Select a change to see what it does.",
-        "Wybierz zmianę, żeby zobaczyć, co robi.";
     opt_nothing_to_revert => "Nothing saved to revert to", "Nie zapisano nic, do czego można wrócić";
-    opt_needs_reboot => "takes effect after a restart", "działa po ponownym uruchomieniu";
+    opt_needs_reboot => "needs a restart", "wymaga restartu";
     opt_irreversible => "cannot be undone", "nie da się cofnąć";
     opt_reading => "reading the current state…", "odczytuję bieżący stan…";
     opt_all_ok =>
@@ -1749,11 +1754,11 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          first until the signal is nearly gone, and everything is slow in the meantime. This \
          makes it hand over while there is still a good signal to hand over from. On a single \
          access point it does nothing, and in a noisy block of flats it can make the card hop \
-         about — revert it if the connection starts stuttering.",
+         about. Revert it if the connection starts stuttering.",
         "Przy mesh lub drugim access poincie ostrożna karta trzyma się tego, z którym się \
          połączyła, aż sygnał prawie zniknie, a w międzyczasie wszystko muli. To sprawia, że \
          przełącza się, póki jest jeszcze z czego. Przy jednym access poincie nic nie zmienia, \
-         a w zagęszczonym bloku karta może zacząć skakać — wtedy cofnij.";
+         a w zagęszczonym bloku karta może zacząć skakać. Wtedy cofnij.";
 
     tw_psm_title =>
         "Stop the Wi-Fi radio going to sleep between packets",
@@ -1765,10 +1770,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Power save parks the radio between beacons, so the first packet after a quiet moment \
          waits for it to wake. That is the tens of milliseconds that show up as a stutter at \
          the start of every call and every click, and it is separate from the Windows device \
-         setting — the driver has its own.",
+         setting: the driver has its own.",
         "Oszczędzanie energii parkuje radio między beaconami, więc pierwszy pakiet po chwili \
          ciszy czeka na wybudzenie. To te kilkadziesiąt milisekund, które widać jako zacięcie \
-         na starcie każdej rozmowy i każdego kliknięcia — i jest to coś innego niż ustawienie \
+         na starcie każdej rozmowy i każdego kliknięcia. To coś innego niż ustawienie \
          urządzenia w Windows, sterownik ma własne.";
 
     tw_mimo_title =>
@@ -1799,7 +1804,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          slower on paper and faster in a block of flats, and it reaches further.",
         "Na 2,4 GHz mieszczą się trzy nienachodzące na siebie kanały. Łącze 40 MHz zabiera dwa \
          z nich, więc zderza się z każdym sąsiadem i zajezdza się retransmisjami; węższy kanał \
-         jest wolniejszy na papierze, a szybszy w bloku — i sięga dalej.";
+         jest wolniejszy na papierze, a szybszy w bloku, i do tego sięga dalej.";
 
     tw_band_title =>
         "Prefer 5 GHz when the signal allows",
@@ -1810,10 +1815,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     tw_band_why =>
         "5 GHz is nearly empty compared with 2.4 and carries several times the throughput, but \
          it goes through walls far worse. Worth it in the same room as the router, wrong at the \
-         other end of the flat — if the signal is already weak where you sit, leave this alone.",
+         other end of the flat. If the signal is already weak where you sit, leave this alone.",
         "5 GHz jest w porównaniu z 2,4 prawie puste i niesie kilka razy większą przepustowość, \
          ale znacznie gorzej przechodzi przez ściany. Opłaca się w tym samym pokoju co router, \
-         szkodzi na drugim końcu mieszkania — jeśli sygnał u ciebie jest już słaby, zostaw to.";
+         szkodzi na drugim końcu mieszkania. Jeśli sygnał u ciebie jest już słaby, zostaw to.";
 
     tw_intmod_title =>
         "Turn off interrupt moderation on the wired card",
@@ -1866,7 +1871,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          waits out a full timeout where CUBIC retransmits at once. A launcher that gives up \
          after a few seconds then sits on a spinner while the browser beside it is fine. It \
          is a real change to how every connection behaves, so measure before and after in \
-         the load test, and revert if it does not help — or if something stops loading.",
+         the load test, and revert if it does not help, or if something stops loading.",
         "CUBIC czyta zgubiony pakiet jako pełną kolejkę i tnie tempo o połowę. Na kablu to \
          słuszne; na Wi-Fi, gdzie pakiety giną przez zakłócenia, wyrzuca przepustowość za \
          przeciążenie, którego nie było. BBR2 zamiast tego dostraja się do zmierzonej \
@@ -1876,7 +1881,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          tam, gdzie CUBIC retransmituje od razu. Launcher, który poddaje się po kilku \
          sekundach, wisi wtedy na kręciołku, choć przeglądarka obok działa. To realna zmiana \
          zachowania wszystkich połączeń, więc zmierz test obciążeniowy przed i po, i cofnij, \
-         jeśli nie pomaga — albo jeśli coś przestało się ładować.";
+         jeśli nie pomaga albo jeśli coś przestało się ładować.";
     tw_cong_unreadable =>
         "netsh did not report an algorithm",
         "netsh nie podał algorytmu";
@@ -1889,11 +1894,11 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Ustawia czas życia negatywnego cache DNS na zero.";
     tw_negdns_why =>
         "By default a lookup that failed is remembered as failed for five minutes. So the \
-         connection comes back, and the browser still says the site does not exist — the \
+         connection comes back, and the browser still says the site does not exist: the \
          resolver is not asking. This is the reason a working link can still look broken for \
          minutes after an outage.",
         "Domyślnie nieudane zapytanie jest pamiętane jako nieudane przez pięć minut. Czyli \
-         połączenie wraca, a przeglądarka dalej twierdzi, że strony nie ma — resolver w ogóle \
+         połączenie wraca, a przeglądarka dalej twierdzi, że strony nie ma, bo resolver w ogóle \
          nie pyta. To dlatego działające łącze potrafi jeszcze przez kilka minut po awarii \
          wyglądać na zepsute.";
 
@@ -1942,8 +1947,8 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          revert it if things get worse rather than better.",
         "Gdy operator daje IPv6, które faktycznie nie routuje, każde połączenie próbuje go \
          najpierw i odczekuje timeout, zanim zejdzie na IPv4. Strony ruszają po kilku \
-         sekundach, a Windows nic nie tłumaczy. Szkodliwe w sieci naprawdę opartej na IPv6 — \
-         jeśli będzie gorzej zamiast lepiej, cofnij.";
+         sekundach, a Windows nic nie tłumaczy. Szkodliwe w sieci naprawdę opartej na IPv6, \
+         więc jeśli będzie gorzej zamiast lepiej, cofnij.";
 
     // -----------------------------------------------------------------------
     // the air scan
@@ -1954,39 +1959,37 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     air_no_adapter =>
         "no Wi-Fi adapter to scan with",
         "brak karty Wi-Fi, którą można skanować";
-    air_title =>
-        "What else is on the air",
-        "Co jeszcze jest w eterze";
+    air_title => "Wi-Fi channel on your router", "Kanał Wi-Fi w routerze";
     air_blurb =>
-        "Every access point in range beacons its channel and its signal, so the interference \
-         each channel would suffer can be measured. The channel itself is set in the router, \
-         not here — this works out which one to ask it for.",
-        "Każdy access point w zasięgu rozgłasza swój kanał i sygnał, więc zakłócenia na każdym \
-         kanale da się zmierzyć. Sam kanał ustawia się w routerze, nie tutaj — to wylicza, o \
-         który go poprosić.";
-    air_btn_scan => "Scan the air", "Skanuj eter";
+        "Checks which channels your neighbours' networks use and suggests the one to set on your \
+         router. Nothing is changed here: the channel is set in the router itself.",
+        "Sprawdza, na których kanałach nadają sieci sąsiadów, i podpowiada, który kanał ustawić \
+         w routerze. Tu niczego nie zmieniam: kanał ustawia się w samym routerze.";
+    air_btn_scan => "Check the channels", "Sprawdź kanały";
+    air_btn_rescan => "Check again", "Sprawdź ponownie";
     air_scan_cost =>
-        "Costs about a second of connectivity: the card has to leave your channel to \
-         listen to the others. The monitor is paused meanwhile, so it is not filed as \
-         an outage.",
-        "Kosztuje około sekundy łączności: karta musi zejść z twojego kanału, żeby \
-         posłuchać pozostałych. Monitor jest na ten czas wstrzymany, więc nie trafia to \
-         do historii jako awaria.";
-    air_scanning => "scanning, about four seconds…", "skanowanie, około czterech sekund…";
-    air_empty => "Nothing scanned yet.", "Jeszcze nic nie zeskanowano.";
-    air_quiet_here =>
-        "Your channel is already the quietest of the three. Nothing to ask the router for.",
-        "Twój kanał jest już najspokojniejszy z trzech. Nie ma o co prosić routera.";
+        "takes about four seconds; the Wi-Fi drops for a moment while the card listens",
+        "trwa około czterech sekund; Wi-Fi na chwilę się rozłącza, bo karta nasłuchuje";
+    air_scanning => "checking, about four seconds…", "sprawdzam, około czterech sekund…";
+    air_verdict_fine_why =>
+        "Your channel is no busier than the alternatives. Nothing needs changing on the router.",
+        "Twój kanał nie jest bardziej zatłoczony niż pozostałe. W routerze nie trzeba nic zmieniać.";
+    air_verdict_unknown =>
+        "Scanned, but the channel you are on could not be read.",
+        "Sprawdzone, ale nie udało się odczytać, na jakim kanale jesteś.";
+    air_bars_heading =>
+        "How crowded the 2.4 GHz channels are (longer is busier)",
+        "Jak zatłoczone są kanały 2,4 GHz (dłuższy pasek to większy tłok)";
+    air_bars_heading_5 =>
+        "How crowded your 5 GHz channel is next to the radar-free ones (longer is busier)",
+        "Jak zatłoczony jest twój kanał 5 GHz na tle kanałów bez radaru (dłuższy pasek to większy tłok)";
+    air_tag_yours => "your channel", "twój kanał";
+    air_tag_best => "recommended", "polecany";
     air_router_note =>
         "Change this on the router's settings page, under the 2.4 GHz wireless channel. Set a \
          fixed channel rather than auto: auto picks at boot and then never reconsiders.",
         "Zmień to na stronie ustawień routera, przy kanale bezprzewodowym 2,4 GHz. Ustaw kanał \
          na stałe zamiast auto: auto wybiera przy starcie i potem już nigdy tego nie rozważa.";
-    air_dfs_note =>
-        "Only radar-free channels are suggested on 5 GHz. A DFS channel can be perfectly quiet \
-         and still cut the network for a minute when the router thinks it heard radar.",
-        "Na 5 GHz proponowane są tylko kanały wolne od radaru. Kanał DFS może być idealnie \
-         cichy i mimo to uciąć sieć na minutę, gdy routerowi wyda się, że usłyszał radar.";
     air_dfs_move =>
         "Move off it: pick 36, 40, 44 or 48 for range, or 149 and up for the least \
          crowded air. Both groups are radar-free and never go quiet on their own.",
@@ -2025,6 +2028,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
 
     st_set => "set", "ustawione";
     st_todo => "worth changing", "do poprawy";
+    st_todo_heading => "Worth changing", "Do poprawy";
     st_na => "not available", "niedostępne";
     opt_revert_available =>
         "changed by NetDoctor (can be undone)",
@@ -3533,8 +3537,8 @@ pub fn cause_advice(code: &str) -> String {
         "after_tweak" => (
             "Revert that change and watch whether the outages stop. If they do, the change is the \
              cause; if they carry on, put it back and look further down this list.",
-            "Cofnij tę zmianę i sprawdź, czy awarie ustaną. Jeśli tak — to ona jest przyczyną; \
-             jeśli nie — przywróć ją i szukaj niżej na tej liście.",
+            "Cofnij tę zmianę i sprawdź, czy awarie ustaną. Jeśli tak, to ona jest przyczyną; \
+             jeśli nie, przywróć ją i szukaj niżej na tej liście.",
         ),
         "adapter_powered_down" => (
             "Turn off power saving on the adapter. This is the most common cause of a connection \
@@ -3546,7 +3550,7 @@ pub fn cause_advice(code: &str) -> String {
             "Set the wireless adapter to maximum performance in the active power plan. It is a \
              separate setting from the adapter's own power saving and both have to be off.",
             "Ustaw kartę bezprzewodową na maksymalną wydajność w aktywnym planie zasilania. To \
-             osobne ustawienie od oszczędzania energii samej karty — oba muszą być wyłączone.",
+             osobne ustawienie od oszczędzania energii samej karty: oba muszą być wyłączone.",
         ),
         "out_of_range" | "weak_signal" => (
             "Move closer to the access point or add one. Below about -75 dBm a link stops being \
@@ -3571,18 +3575,18 @@ pub fn cause_advice(code: &str) -> String {
         "signal_fade" => (
             "The signal was dropping steadily before the connection broke, so the computer or the \
              access point moved, or something came between them. This is not a router fault.",
-            "Sygnał spadał miarowo, zanim połączenie padło — więc komputer albo access point \
+            "Sygnał spadał miarowo, zanim połączenie padło, więc komputer albo access point \
              zmienił położenie, albo coś stanęło między nimi. To nie jest wina routera.",
         ),
         "airtime_24ghz" => (
             "How busy the channel was is not measured here; the air scan in Optimise shows the \
              networks around you. 2.4 GHz is shared with every neighbour, microwave and \
              Bluetooth device around. Move to 5 GHz if the adapter supports it, or pick channel \
-             1, 6 or 11 — whichever is least used nearby.",
+             1, 6 or 11, whichever is least used nearby.",
             "Obciążenia kanału tu nie mierzono; skan Wi-Fi w zakładce Optymalizacja pokaże sieci \
              wokół ciebie. 2.4 GHz dzielisz z każdym sąsiadem, mikrofalówką i urządzeniem \
              Bluetooth w okolicy. Przejdź na 5 GHz, jeśli karta to obsługuje, albo wybierz kanał \
-             1, 6 lub 11 — ten najmniej obciążony w pobliżu.",
+             1, 6 lub 11, ten najmniej obciążony w pobliżu.",
         ),
         "router_side" => (
             "The signal was strong and steady right up to the drop, so the radio link was not the \
@@ -3594,11 +3598,11 @@ pub fn cause_advice(code: &str) -> String {
         ),
         "marginal_link" => (
             "It failed on a weak signal and recovered on a much stronger one, so the link sits \
-             right at the edge of usable. Anything that nudges it — a door, a body, a microwave — \
+             right at the edge of usable. Anything that nudges it (a door, a body, a microwave) \
              will keep breaking it.",
             "Zerwało się przy słabym sygnale, a wróciło przy znacznie mocniejszym, więc łącze \
-             działa na samej granicy używalności. Cokolwiek je poruszy — drzwi, człowiek, \
-             mikrofalówka — będzie je zrywać dalej.",
+             działa na samej granicy używalności. Cokolwiek je poruszy (drzwi, człowiek, \
+             mikrofalówka), będzie je zrywać dalej.",
         ),
         "cable_or_router" => (
             "This is a wired link, so start with the cable and the port: reseat both ends, try \
@@ -3609,17 +3613,17 @@ pub fn cause_advice(code: &str) -> String {
         ),
         "isp_sustained" | "isp_brief" => (
             "The router was answering the whole time, so the break was beyond it. Nothing on this \
-             computer will fix that — but this log is the evidence to put in front of the \
+             computer will fix that, but this log is the evidence to put in front of the \
              provider.",
             "Router odpowiadał przez cały czas, więc zerwanie było za nim. Nic na tym komputerze \
-             tego nie naprawi — ale ten dziennik jest dowodem, który możesz przedstawić dostawcy.",
+             tego nie naprawi, ale ten dziennik jest dowodem, który możesz przedstawić dostawcy.",
         ),
         "isp_pattern" => (
             "Repeated WAN drops are a service fault, not bad luck. Export the report and quote the \
              timestamps; a provider will engage with a list of dated outages and will not engage \
              with \"my internet is bad\".",
             "Powtarzające się zrywy WAN to usterka usługi, a nie pech. Wyeksportuj raport i podaj \
-             znaczniki czasu — dostawca podejmie rozmowę o liście awarii z datami, a nie o \
+             znaczniki czasu: dostawca podejmie rozmowę o liście awarii z datami, a nie o \
              stwierdzeniu „internet mi nie działa”.",
         ),
         "dns_router_only" => (
@@ -3636,17 +3640,17 @@ pub fn cause_advice(code: &str) -> String {
         ),
         "local_saturation" => (
             "Latency to the router climbed before the quality dropped, so something on this side \
-             filled the link — an upload, a backup, an update. Run the load test to confirm it and \
+             filled the link: an upload, a backup, an update. Run the load test to confirm it and \
              to find the rate the link actually holds.",
             "Opóźnienie do routera rosło, zanim jakość spadła, więc coś po tej stronie zapchało \
-             łącze — wysyłka, backup, aktualizacja. Uruchom test obciążeniowy, żeby to \
+             łącze: wysyłka, backup, aktualizacja. Uruchom test obciążeniowy, żeby to \
              potwierdzić i znaleźć przepustowość, którą łącze naprawdę utrzymuje.",
         ),
         "rate_collapse" => (
             "The negotiated Wi-Fi rate fell away before the quality did. That is interference or \
-             distance, not the router's capacity — a faster router will not change it.",
+             distance, not the router's capacity, so a faster router will not change it.",
             "Wynegocjowana prędkość Wi-Fi spadła, zanim spadła jakość. To zakłócenia albo \
-             odległość, a nie wydajność routera — szybszy router tego nie zmieni.",
+             odległość, a nie wydajność routera, więc szybszy router tego nie zmieni.",
         ),
         "time_pattern" => (
             "Outages clustered at one hour of the day have a schedule behind them: a neighbour's \
@@ -3679,7 +3683,7 @@ pub fn cause_advice(code: &str) -> String {
             "After waking, the radio has to re-associate and the DHCP lease has to be confirmed, \
              and that takes a few seconds during which nothing answers. An outage that fills \
              exactly that gap is the resume sequence working, not failing.",
-            "Po wybudzeniu radio musi się ponownie powiązać, a dzierżawa DHCP potwierdzić — to \
+            "Po wybudzeniu radio musi się ponownie powiązać, a dzierżawa DHCP potwierdzić. To \
              kilka sekund, w których nic nie odpowiada. Awaria wypełniająca dokładnie tę lukę to \
              działająca sekwencja wybudzenia, a nie jej błąd.",
         ),
@@ -3696,11 +3700,11 @@ pub fn cause_advice(code: &str) -> String {
         "log_wlan_inactivity" => (
             "The access point stopped hearing from a card that Windows had quietly powered down, \
              so it disassociated it. This is the textbook cause of a link that dies while the \
-             machine sits idle and revives the moment you touch it — turn off the adapter's power \
+             machine sits idle and revives the moment you touch it. Turn off the adapter's power \
              saving and the power plan's, both.",
             "Access point przestał słyszeć kartę, którą Windows po cichu wyłączył, więc ją \
              rozłączył. To podręcznikowa przyczyna łącza, które umiera, gdy komputer stoi \
-             bezczynnie, i ożywa, gdy tylko go dotkniesz — wyłącz oszczędzanie energii karty i \
+             bezczynnie, i ożywa, gdy tylko go dotkniesz. Wyłącz oszczędzanie energii karty i \
              planu zasilania, oba.",
         ),
         "log_wlan_auth" => (
@@ -3714,10 +3718,10 @@ pub fn cause_advice(code: &str) -> String {
              odbudować profil.",
         ),
         "log_wlan_ap_rejected" => (
-            "The access point refused the card rather than losing it — usually because it had no \
+            "The access point refused the card rather than losing it, usually because it had no \
              capacity left. Check how many devices are associated, and whether a guest network or \
              a mesh node is holding slots it does not need.",
-            "Access point odmówił karcie, zamiast ją zgubić — zwykle dlatego, że nie miał wolnych \
+            "Access point odmówił karcie, zamiast ją zgubić, zwykle dlatego, że nie miał wolnych \
              miejsc. Sprawdź, ile urządzeń jest powiązanych i czy sieć gościnna albo węzeł mesh \
              nie trzyma miejsc, których nie potrzebuje.",
         ),
@@ -3732,11 +3736,11 @@ pub fn cause_advice(code: &str) -> String {
         "log_dhcp" => (
             "The adapter could not get an address from the router. Until it has one, nothing \
              routes, however good the signal is. Restart the router's DHCP server or check that \
-             its address pool is not exhausted — a full pool fails exactly like this, and only for \
+             its address pool is not exhausted: a full pool fails exactly like this, and only for \
              whichever device asks last.",
             "Karta nie mogła dostać adresu od routera. Dopóki go nie ma, nic się nie routuje, \
              niezależnie od jakości sygnału. Zrestartuj serwer DHCP routera albo sprawdź, czy jego \
-             pula adresów się nie wyczerpała — pełna pula zawodzi dokładnie w ten sposób i tylko \
+             pula adresów się nie wyczerpała: pełna pula zawodzi dokładnie w ten sposób i tylko \
              dla tego urządzenia, które pyta jako ostatnie.",
         ),
         "log_duplicate_ip" => (
@@ -3748,19 +3752,19 @@ pub fn cause_advice(code: &str) -> String {
              DHCP routera. Przenieś go poza pulę albo rozdawaj jako rezerwację.",
         ),
         "log_link_down" => (
-            "The interface itself went down — the OS saw it, so this is the adapter, its driver, \
+            "The interface itself went down and the OS saw it, so this is the adapter, its driver, \
              its cable or its power state, and not anything beyond the router.",
-            "Sam interfejs padł — system to zobaczył, więc chodzi o kartę, jej sterownik, kabel \
+            "Sam interfejs padł i system to zobaczył, więc chodzi o kartę, jej sterownik, kabel \
              albo stan zasilania, a nie o cokolwiek za routerem.",
         ),
         "log_clean_isp" => (
             "The Windows log has entries from this period and none of them is a fault here: no \
              sleep, no driver error, no disconnect, no DHCP failure. Together with the router \
-             answering throughout, that puts the outage past your own equipment — which is exactly \
+             answering throughout, that puts the outage past your own equipment, which is exactly \
              the case a provider has to answer.",
             "Dziennik Windows ma wpisy z tego okresu i żaden z nich nie jest usterką tutaj: brak \
              uśpienia, brak błędu sterownika, brak rozłączenia, brak awarii DHCP. Razem z \
-             routerem odpowiadającym przez cały czas stawia to awarię za twoim sprzętem — a to \
+             routerem odpowiadającym przez cały czas stawia to awarię za twoim sprzętem, a to \
              dokładnie ten przypadek, na który dostawca musi odpowiedzieć.",
         ),
         _ => ("", ""),
@@ -4394,20 +4398,6 @@ pub fn bloat_worst_up(max: f64, loss_pct: f64) -> String {
 }
 
 /// Labels in the tweak detail panel.
-pub fn opt_what_it_does(text: &str) -> String {
-    match current() {
-        Lang::En => format!("What it does: {text}"),
-        Lang::Pl => format!("Co robi: {text}"),
-    }
-}
-
-pub fn opt_why_it_helps(text: &str) -> String {
-    match current() {
-        Lang::En => format!("Why it helps: {text}"),
-        Lang::Pl => format!("Dlaczego pomaga: {text}"),
-    }
-}
-
 pub fn opt_risk_note(label: &str) -> String {
     match current() {
         Lang::En => format!("Risk: {label}"),
@@ -4648,57 +4638,89 @@ pub fn air_seen(networks: usize, co_channel: usize) -> String {
     }
 }
 
-pub fn air_current_line(channel: u32, noise: Option<f64>) -> String {
-    let noise = match noise {
-        Some(n) => format!("{n:.0} dBm"),
-        None => match current() {
-            Lang::En => "nothing else heard".to_string(),
-            Lang::Pl => "nic innego nie słychać".to_string(),
-        },
-    };
-    match current() {
-        Lang::En => format!("You are on channel {channel}; interference there: {noise}"),
-        Lang::Pl => format!("Jesteś na kanale {channel}; zakłócenia tam: {noise}"),
-    }
-}
-
-pub fn air_best_24(channel: u32, gain: f64) -> String {
-    match current() {
-        Lang::En => format!("Ask the router for 2.4 GHz channel {channel}, {gain:.0} dB quieter"),
-        Lang::Pl => format!("Poproś router o kanał {channel} na 2,4 GHz, o {gain:.0} dB ciszej"),
-    }
-}
-
 pub fn air_on_dfs(channel: u32) -> String {
     match current() {
         Lang::En => format!(
             "Channel {channel} is a radar channel. The router has to vacate it within \
-             ten seconds of thinking it heard radar, and stay off for thirty minutes — \
+             ten seconds of thinking it heard radar, and stay off for thirty minutes: \
              an outage with no cause visible from here."
         ),
         Lang::Pl => format!(
             "Kanał {channel} to kanał radarowy. Router musi go opuścić w ciągu dziesięciu \
              sekund od chwili, gdy wyda mu się, że usłyszał radar, i nie wraca przez pół \
-             godziny — czyli awaria bez przyczyny widocznej z tej strony."
+             godziny. To awaria bez przyczyny widocznej z tej strony."
         ),
     }
 }
 
-pub fn air_best_5(channel: u32) -> String {
+/// A channel number as the bars label it.
+pub fn air_channel_no(channel: u32) -> String {
     match current() {
-        Lang::En => format!("Quietest radar-free 5 GHz channel: {channel}"),
-        Lang::Pl => format!("Najspokojniejszy kanał 5 GHz bez radaru: {channel}"),
+        Lang::En => format!("Channel {channel}"),
+        Lang::Pl => format!("Kanał {channel}"),
     }
 }
 
-pub fn air_load_cell(channel: u32, aps: usize, noise: Option<f64>) -> String {
-    let noise = match noise {
-        Some(n) => format!("{n:.0} dBm"),
-        None => "—".to_string(),
+/// The figures beside one channel's bar.
+///
+/// With no level measured and networks heard, only the count is given: that
+/// is a channel whose loudness was not read, not a quiet one.
+pub fn air_bar_note(aps: usize, noise: Option<f64>) -> String {
+    let noise = match (noise, aps) {
+        (Some(n), _) => format!(" · {n:.0} dBm"),
+        (None, 0) => format!(" · {}", pick("nothing heard", "cisza")),
+        (None, _) => String::new(),
     };
     match current() {
-        Lang::En => format!("ch {channel}: {aps} networks, {noise}"),
-        Lang::Pl => format!("kan. {channel}: {aps} sieci, {noise}"),
+        Lang::En => format!("{aps} networks{noise}"),
+        Lang::Pl => format!("sieci: {aps}{noise}"),
+    }
+}
+
+pub fn air_networks(count: usize) -> String {
+    match current() {
+        Lang::En => format!("Networks nearby ({count})"),
+        Lang::Pl => format!("Sieci w pobliżu ({count})"),
+    }
+}
+
+pub fn air_verdict_move(channel: u32) -> String {
+    match current() {
+        Lang::En => format!("Set your router to 2.4 GHz channel {channel}"),
+        Lang::Pl => format!("Ustaw w routerze kanał {channel} na 2,4 GHz"),
+    }
+}
+
+pub fn air_verdict_move_why(current_channel: u32, gain: f64) -> String {
+    match current() {
+        Lang::En => {
+            format!(
+                "It is {gain:.0} dB quieter than channel {current_channel}, the one you are on."
+            )
+        }
+        Lang::Pl => {
+            format!("Jest o {gain:.0} dB ciszej niż na kanale {current_channel}, na którym jesteś.")
+        }
+    }
+}
+
+pub fn air_verdict_fine(channel: u32) -> String {
+    match current() {
+        Lang::En => format!("Channel {channel} is fine"),
+        Lang::Pl => format!("Kanał {channel} jest w porządku"),
+    }
+}
+
+pub fn air_verdict_dfs(channel: u32, best: Option<u32>) -> String {
+    match (current(), best) {
+        (Lang::En, Some(b)) => {
+            format!("Channel {channel} can switch itself off: set channel {b} on your router")
+        }
+        (Lang::Pl, Some(b)) => {
+            format!("Kanał {channel} potrafi sam się wyłączyć: ustaw w routerze kanał {b}")
+        }
+        (Lang::En, None) => format!("Channel {channel} can switch itself off: move to another"),
+        (Lang::Pl, None) => format!("Kanał {channel} potrafi sam się wyłączyć: przejdź na inny"),
     }
 }
 

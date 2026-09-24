@@ -10,7 +10,7 @@ use eframe::egui;
 use egui_plot::{HLine, Line, Plot, PlotPoints, Points, Polygon, VLine};
 
 use super::{
-    button, button_ex, card, figure, App, Emphasis, Tab, ACCENT, BG2, BG3, FG, FG_DIM, GREEN, RED,
+    button, button_ex, card, figure, App, Emphasis, Tab, BG2, BG3, FG, FG_DIM, GREEN, RED,
     SERIES_COLOURS, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_TITLE, YELLOW,
 };
 use crate::cause::{self, Cause, Confidence, Evidence};
@@ -84,7 +84,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         // squeezed into a narrow window left the detail a few lines tall.
         match app.selected_outage.and_then(|id| events.iter().find(|e| e.id == id)) {
             Some(event) => {
-                if button(ui, i18n::hist_btn_back(), Emphasis::Ghost).clicked() {
+                if button(ui, i18n::btn_back_to_list(), Emphasis::Ghost).clicked() {
                     app.selected_outage = None;
                 }
                 ui.add_space(S_SM);
@@ -289,67 +289,25 @@ fn list(app: &mut App, ui: &mut egui::Ui, events: &[Event]) {
 }
 
 /// One outage in the list: when and how long on the first line, what kind
-/// and the detail on the second. The whole row is the click target; only
-/// the date used to be, which left most of the row looking clickable and
-/// doing nothing.
+/// and the detail on the second.
 fn list_row(ui: &mut egui::Ui, e: &Event, selected: bool) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), egui::Sense::click());
-    if !ui.is_rect_visible(rect) {
-        return response;
-    }
-
-    let hovered = response.hovered();
     let colour = scope_colour(e);
-    let inner = rect.shrink2(egui::vec2(S_MD, S_SM));
-    let top = inner.top() + T_BODY * 0.6;
-    let bottom = inner.bottom() - T_META * 0.6;
-    let text_x = inner.left() + 16.0;
-
-    // Kind first, then the detail, cut to the row rather than wrapped: a
-    // list whose rows change height with their text is not a list to scan.
-    let meta = egui::FontId::new(T_META, egui::FontFamily::Proportional);
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        &i18n::event_kind(&e.kind),
-        0.0,
-        egui::TextFormat::simple(meta.clone(), if selected || hovered { FG } else { FG_DIM }),
-    );
+    let kind = i18n::event_kind(&e.kind);
+    let detail = format!("  ·  {}", e.detail);
+    let mut sub = vec![(kind.as_str(), FG)];
     if !e.detail.is_empty() {
-        job.append(&format!("  ·  {}", e.detail), 0.0, egui::TextFormat::simple(meta, FG_DIM));
+        sub.push((detail.as_str(), FG_DIM));
     }
-    job.wrap = egui::text::TextWrapping::truncate_at_width(inner.right() - text_x);
-    let galley = ui.fonts(|f| f.layout_job(job));
-
-    let painter = ui.painter();
-    if selected || hovered {
-        painter.rect_filled(rect, super::BTN_R, if selected { BG3 } else { BG2 });
-    }
-    if selected {
-        let bar = egui::Rect::from_min_size(
-            rect.left_top() + egui::vec2(0.0, 8.0),
-            egui::vec2(3.0, rect.height() - 16.0),
-        );
-        painter.rect_filled(bar, 1.5, ACCENT);
-    }
-    painter.circle_filled(egui::pos2(inner.left() + 4.0, top), 4.0, colour);
-    painter.text(
-        egui::pos2(text_x, top),
-        egui::Align2::LEFT_CENTER,
-        format_datetime(e.ts_start),
-        egui::FontId::new(T_BODY, egui::FontFamily::Monospace),
-        FG,
-    );
-    painter.text(
-        egui::pos2(inner.right(), top),
-        egui::Align2::RIGHT_CENTER,
-        duration_text(e),
-        egui::FontId::new(T_BODY, egui::FontFamily::Proportional),
+    super::list_row(
+        ui,
+        ROW_H,
+        selected,
         colour,
-    );
-    painter.galley(egui::pos2(text_x, bottom - galley.size().y * 0.5), galley, FG_DIM);
-
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+        &format_datetime(e.ts_start),
+        true,
+        Some((&duration_text(e), colour)),
+        &sub,
+    )
 }
 
 fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {

@@ -249,11 +249,14 @@ one English label that would silently fail everywhere else.
   cable and a property the driver does not expose both say so rather than
   looking like a failure. A DNS server you run yourself (a Pi-hole, AdGuard
   Home, a company resolver) is left alone and never offered a replacement.
-  Once a change has been applied, its row shows the line in the day before
-  it against the time since (median ping, jitter, loss), or says there are
-  too few readings; the figures are measured, not proof that the change did
-  it. Plus a scan of the surrounding Wi-Fi that works out which channel to
-  ask the router for.
+  Each tweak is a card with a switch: on applies it, off puts back what was
+  there before, and one that is high risk or cannot be undone asks first.
+  Clicking a card opens what it does and why; once a change has been
+  applied, that also shows the line in the day before it against the time
+  since (median ping, jitter, loss), or says there are too few readings; the
+  figures are measured, not proof that the change did it. Above the cards,
+  **Wi-Fi channel on your router** listens to the networks nearby and says
+  which channel to set on the router, or that the one it is on is fine.
 - **Outage history** — when, how long, whose fault, and on selecting an entry,
   why: cause, evidence, what Windows logged around it, the lead-up plotted, and
   a route to the fix. A line that stays *slow* (loss, jitter or latency past
@@ -457,7 +460,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-370 tests, covering the failure-blame logic, the statistics, the registry layer,
+371 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

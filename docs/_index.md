@@ -32,8 +32,9 @@ zgadywanka.
 
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
-- 2026-09-24 — Historia awarii w nowym układzie: lista obok szczegółów, przebieg awarii na dwóch wykresach (czas odpowiedzi i sygnał) na wspólnej osi czasu, oraz czyszczenie historii z potwierdzeniem.
-- 2026-09-24 — pierwszy krok porządkowania wyglądu: Ustawienia podzielone na strony, z przypiętym paskiem zapisu i widocznym stanem niezapisanych zmian, zamiast jednej długiej kolumny z przyciskiem Zapisz na samym dole.
+- 2026-09-24: Optymalizacja jako karty z przełącznikami (kliknięcie rozwija opis, ryzykowne zmiany pytają) i czytelna karta kanału Wi-Fi z werdyktem, co ustawić w routerze.
+- 2026-09-24: Historia awarii w nowym układzie: lista obok szczegółów, przebieg awarii na dwóch wykresach (czas odpowiedzi i sygnał) na wspólnej osi czasu, oraz czyszczenie historii z potwierdzeniem.
+- 2026-09-24: pierwszy krok porządkowania wyglądu: Ustawienia podzielone na strony, z przypiętym paskiem zapisu i widocznym stanem niezapisanych zmian, zamiast jednej długiej kolumny z przyciskiem Zapisz na samym dole.
 - 2026-09-24 — Diagnoza pokazuje dowody, nie tylko werdykt: rysunek ogniw z milisekundami i stratami każdego, tabela wszystkich pomiarów z jawnym „nie zmierzono”, oraz opcjonalne wyjaśnienie AI przez OpenRouter na kluczu użytkownika, z maskowaniem danych identyfikujących sieć.
 - 2026-09-23 — audyt funkcji zamknięty poza #10, plus odczyt routera przez UPnP IGD: nieudana zmiana nie jest przyczyną awarii, błąd zapisu do bazy daje szary stan zamiast zielonego, jeden próg jittera, Pi-hole/AdGuard bez rady „zmień DNS”, pomiar skutku zmiany (doba przed i po), test obciążenia w obie strony z zastrzeżeniem o nasyceniu, trasa nie obwinia ostatniego widocznego hopa, kanały 5 GHz liczone blokami 80 MHz, a analiza awarii wie, czy router sam zgłaszał WAN jako rozłączony, czy się zrestartował i czy wrócił z nowym adresem publicznym.
 - 2026-09-23 — wydanie v1.3.0: tryb gry (nakładka z pingiem i stroną skoku, „Przygotuj łącze” cofane samo), ekran główny zwykłymi słowami dla osób nietechnicznych, próba TCP gdy sieć blokuje pingi, liczniki błędów kabla, Cofnij DNS wraca do DHCP, awaria dostawcy nie jest przepisywana na LAN po jednym pingu.
