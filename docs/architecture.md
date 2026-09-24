@@ -24,8 +24,10 @@ robocze i wracają kanałem `Job`. Wszystkie trzy spotykają się wyłącznie na
 | Moduł | Za co odpowiada |
 |---|---|
 | `cause.rs` | z zapisanej awarii na nazwaną przyczynę i naprawę, z poziomem pewności |
-| `diagnose.rs` | skan jednorazowy: dziewięć kontroli, werdykt na górze, `Finding` pod nim |
+| `diagnose.rs` | skan jednorazowy: dziewięć kontroli, werdykt na górze, `Finding` pod nim, `chain` z ogniwami do rysunku |
 | `bandwidth.rs` | test obciążenia i ocena bufferbloatu |
+| `longrun.rs` | długi pomiar: 2–5 min pingów na wspólnym zegarze, zrywy przypisane do ogniwa |
+| `ai.rs` | opcjonalne wyjaśnienie wyniku przez OpenRouter, z maskowaniem danych identyfikujących |
 
 **Zmienianie systemu**
 
