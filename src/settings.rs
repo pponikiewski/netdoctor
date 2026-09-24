@@ -66,6 +66,15 @@ pub struct Settings {
     /// Show the ping overlay while a game is running.
     pub game_overlay: bool,
 
+    /// The user's own OpenRouter key for the optional AI explanation. Empty
+    /// means the feature is off.
+    // ponytail: stored in plain text in settings.json under the user's own
+    // profile, like any per-user CLI config. Wrap it with DPAPI
+    // (CryptProtectData) if the file ever needs to be shared or synced.
+    pub ai_key: String,
+    /// Which OpenRouter model answers. Empty means `ai::DEFAULT_MODEL`.
+    pub ai_model: String,
+
     /// `None` until the user picks one, which lets the first run follow the
     /// Windows UI language without freezing that choice in the file.
     pub lang: Option<Lang>,
@@ -94,6 +103,9 @@ impl Default for Settings {
             check_updates: true,
 
             game_overlay: true,
+
+            ai_key: String::new(),
+            ai_model: String::new(),
 
             lang: None,
         }

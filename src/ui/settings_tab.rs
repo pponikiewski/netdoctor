@@ -117,6 +117,26 @@ fn language_thresholds_behaviour(app: &mut App, ui: &mut egui::Ui) {
         }
     });
 
+    section(ui, i18n::set_sec_ai(), |ui| {
+        hint(ui, i18n::set_ai_hint());
+        row(ui, i18n::set_ai_key(), |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut app.draft.ai_key)
+                    .password(true)
+                    .desired_width(260.0)
+                    .hint_text("sk-or-…"),
+            );
+        });
+        row(ui, i18n::set_ai_model(), |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut app.draft.ai_model)
+                    .desired_width(260.0)
+                    .hint_text(crate::ai::DEFAULT_MODEL),
+            );
+        });
+        hint(ui, &i18n::set_ai_model_hint(crate::ai::DEFAULT_MODEL));
+    });
+
     section(ui, i18n::upd_section(), |ui| super::update_ui::section(app, ui));
 }
 

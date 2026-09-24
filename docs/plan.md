@@ -65,3 +65,14 @@ Zrobione w tej sesji: cofanie DNS wraca do DHCP, awaria przepisywana dopiero po 
 - [ ] IPv6: czy jest adres i trasa, czy połączenie przez v6 dochodzi (wolne pierwsze ładowanie)
 - [ ] BSS Load z beaconów: zajętość kanału i liczba stacji wg punktu dostępowego
 - [ ] Sprawdzić na żywo: VPN bez bramy daje `AdapterDown` (audyt #10)
+
+## Diagnoza na poważnie (2026-09-24)
+
+Kolejność uzgodniona z użytkownikiem: 1+2 układ i dane, potem AI, potem 3, potem 4.
+
+- [x] Etap 1+2: rysunek ogniw i tabela pomiarów w Diagnozie. `diagnose::chain` + 4 testy; obejrzane w działającej aplikacji na prawdziwym skanie (zrzuty ekranu), podpis ogniwa barwiony pomiarem, nie werdyktem
+- [x] AI jako drugi głos (OpenRouter). Maskowanie sprawdzone na prawdziwym raporcie z tej sieci (`[SSID]`, `[public IP]`); odrzucony klucz daje czytelne HTTP 401 (test `#[ignore]` `refused_key`); sekcja w Ustawieniach obejrzana
+- [ ] Odpowiedź modelu na prawdziwym skanie nie oglądana (`cargo test -- --ignored explains_a_real_scan --nocapture` z `OPENROUTER_API_KEY`)
+- [ ] Etap 3: dłuższy pomiar (2–5 min), który łapie przerywane problemy
+- [ ] Etap 4: nowe testy (kandydaci: IPv6, DNS z DHCP vs publiczny, rozłączenia z dziennika Windows w oknie skanu)
+- [ ] Do rozważenia: werdykt „LAN” przy podziale czasu wskazującym na wejście do dostawcy (zaobserwowane 2026-09-24 na Wi-Fi, jitter 24 ms)

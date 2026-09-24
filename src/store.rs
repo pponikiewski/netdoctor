@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS tweaks (
 );
 "#;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Stats {
     pub count: usize,
     pub loss_pct: f64,

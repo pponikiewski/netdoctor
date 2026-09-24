@@ -671,6 +671,73 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     verdict_heading => "Where the problem is", "Gdzie leży problem";
     verdict_cost_heading => "What it costs you", "Ile Cię to kosztuje";
     verdict_actions_heading => "What to do, in order", "Co zrobić, po kolei";
+    chain_heading => "The connection, link by link", "Połączenie, ogniwo po ogniwie";
+    chain_note =>
+        "Under each link: the milliseconds it added and the packets lost on the way to its far end. \
+         The link at fault is marked in colour.",
+        "Pod każdym ogniwem: ile milisekund dokłada i ile pakietów ginie w drodze do jego końca. \
+         Ogniwo winne jest wyróżnione kolorem.";
+    node_pc => "This PC", "Ten komputer";
+    node_router => "Router", "Router";
+    node_isp => "Provider", "Dostawca";
+    node_internet => "Internet", "Internet";
+    link_silent => "no answer", "brak odpowiedzi";
+    link_filtered => "ignores ping, traffic passes", "ignoruje ping, ruch przechodzi";
+    link_unknown => "not established", "nie ustalono";
+    link_not_measured => "not measured", "nie zmierzono";
+    link_local => "your own second router", "Twój drugi router";
+    measure_heading => "Measurements", "Pomiary";
+    measure_col_leg => "Leg", "Odcinek";
+    measure_col_addr => "Address", "Adres";
+    measure_col_sent => "Sent", "Wysłano";
+    measure_col_loss => "Loss", "Straty";
+    measure_col_min => "Min", "Min";
+    measure_col_avg => "Avg", "Śr.";
+    measure_col_max => "Max", "Maks";
+    measure_col_jitter => "Jitter", "Jitter";
+    measure_leg_router => "To the router", "Do routera";
+    measure_leg_isp => "To the provider", "Do dostawcy";
+    measure_leg_internet => "To the internet", "Do internetu";
+    measure_dns => "DNS answer", "Odpowiedź DNS";
+    measure_tcp => "TCP connection (port 443)", "Połączenie TCP (port 443)";
+    measure_tcp_blocked => "refused or timed out", "odrzucone lub przekroczony czas";
+    measure_baseline => "Usual ping here (7-day median)", "Typowy ping tutaj (mediana 7 dni)";
+    measure_baseline_none =>
+        "not enough history yet", "za mało historii";
+    measure_medium => "Connection", "Połączenie";
+    measure_load => "Under load", "Pod obciążeniem";
+    measure_load_skipped =>
+        "not tested (tick the load test to include it)",
+        "nie testowano (zaznacz test obciążenia, żeby go dołączyć)";
+    measure_none => "not measured in this scan", "nie zmierzono w tym skanie";
+    measure_blind =>
+        "No ping could be sent, so no latency was measured. Reason:",
+        "Nie dało się wysłać żadnego pingu, więc żaden czas nie został zmierzony. Powód:";
+    measure_cumulative =>
+        "Times are the full round trip to the end of each leg, not the leg alone.",
+        "Czasy to pełny przelot do końca danego odcinka, nie sam odcinek.";
+    findings_heading => "Individual checks", "Poszczególne kontrole";
+    ai_heading => "Second opinion (AI)", "Drugi głos (AI)";
+    ai_off_hint =>
+        "Optional: paste your own OpenRouter key in Settings and a language model will explain \
+         this result in plain words.",
+        "Opcjonalnie: wklej własny klucz OpenRouter w Ustawieniach, a model językowy wyjaśni \
+         ten wynik prostymi słowami.";
+    ai_btn_ask => "Ask AI about this result", "Zapytaj AI o ten wynik";
+    ai_btn_again => "Ask again", "Zapytaj ponownie";
+    ai_preview => "Show exactly what will be sent", "Pokaż dokładnie, co zostanie wysłane";
+    ai_running => "The model is reading the results…", "Model czyta wyniki…";
+    ai_err_no_key => "No OpenRouter key. Paste one in Settings.", "Brak klucza OpenRouter. Wklej go w Ustawieniach.";
+    ai_err_empty => "it was empty", "była pusta";
+    set_sec_ai => "AI explanation (optional)", "Wyjaśnienie AI (opcjonalne)";
+    set_ai_key => "OpenRouter key", "Klucz OpenRouter";
+    set_ai_model => "Model", "Model";
+    set_ai_hint =>
+        "Off while the key is empty. The key is your own (openrouter.ai/keys) and is kept in \
+         this PC's settings file. Nothing is sent until you press the button on the Diagnose tab.",
+        "Wyłączone, dopóki klucz jest pusty. Klucz jest Twój (openrouter.ai/keys) i zostaje w \
+         pliku ustawień na tym komputerze. Nic nie jest wysyłane, dopóki nie naciśniesz przycisku \
+         w zakładce Diagnoza.";
     verdict_none =>
         "Too little was measured to point at a segment.",
         "Zmierzono za mało, żeby wskazać odcinek.";
@@ -2566,6 +2633,96 @@ pub fn f_baseline_detail(now: f64, usual: f64, samples: usize) -> String {
         Lang::Pl => format!(
             "Teraz {now:.0} ms wobec mediany {usual:.0} ms z siedmiu dni i {samples} próbek."
         ),
+    }
+}
+
+pub fn ai_sends(model: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "Sends this scan's results to {model} through OpenRouter, without your network's \
+             name, the access point's MAC or public addresses. It costs a fraction of a cent on \
+             your key."
+        ),
+        Lang::Pl => format!(
+            "Wyśle wyniki tego skanu do {model} przez OpenRouter, bez nazwy Twojej sieci, adresu \
+             MAC punktu dostępu i adresów publicznych. Kosztuje ułamek centa z Twojego klucza."
+        ),
+    }
+}
+
+pub fn ai_disclaimer(model: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "Written by {model}. An interpretation, not a measurement: the verdict above comes \
+             from the numbers, and where the two disagree, the numbers win."
+        ),
+        Lang::Pl => format!(
+            "Napisane przez {model}. To interpretacja, nie pomiar: werdykt powyżej wynika z \
+             liczb, a gdy się nie zgadzają, rację mają liczby."
+        ),
+    }
+}
+
+pub fn ai_err_network(e: &str) -> String {
+    match current() {
+        Lang::En => format!("Could not reach OpenRouter: {e}"),
+        Lang::Pl => format!("Nie udało się połączyć z OpenRouter: {e}"),
+    }
+}
+
+pub fn ai_err_status(code: u16, detail: &str) -> String {
+    let hint = match (code, current()) {
+        (401, Lang::En) => " The key is wrong or was revoked.",
+        (401, Lang::Pl) => " Klucz jest błędny albo został unieważniony.",
+        (402, Lang::En) => " The key has no credits left.",
+        (402, Lang::Pl) => " Na kluczu skończyły się środki.",
+        _ => "",
+    };
+    match current() {
+        Lang::En => format!("OpenRouter refused the request (HTTP {code}).{hint} {detail}"),
+        Lang::Pl => format!("OpenRouter odrzucił zapytanie (HTTP {code}).{hint} {detail}"),
+    }
+    .trim_end()
+    .to_string()
+}
+
+pub fn ai_err_reply(e: &str) -> String {
+    match current() {
+        Lang::En => format!("The reply could not be used: {e}"),
+        Lang::Pl => format!("Nie da się użyć odpowiedzi: {e}"),
+    }
+}
+
+pub fn set_ai_model_hint(default: &str) -> String {
+    match current() {
+        Lang::En => format!("Any OpenRouter model id. Empty uses {default}."),
+        Lang::Pl => format!("Dowolny identyfikator modelu z OpenRouter. Puste oznacza {default}."),
+    }
+}
+
+/// The caption under one link of the chain: what it added, what it lost.
+pub fn link_caption(added_ms: Option<f64>, loss_pct: f64) -> String {
+    let loss = match current() {
+        Lang::En => format!("{loss_pct:.0}% lost"),
+        Lang::Pl => format!("straty {loss_pct:.0}%"),
+    };
+    match added_ms {
+        Some(ms) => format!("+{ms:.0} ms · {loss}"),
+        None => loss,
+    }
+}
+
+pub fn measure_signal(pct: u32) -> String {
+    match current() {
+        Lang::En => format!("Wi-Fi, signal {pct}%"),
+        Lang::Pl => format!("Wi-Fi, sygnał {pct}%"),
+    }
+}
+
+pub fn measure_baseline_value(ms: f64, readings: usize) -> String {
+    match current() {
+        Lang::En => format!("{ms:.0} ms (from {readings} readings)"),
+        Lang::Pl => format!("{ms:.0} ms (odczyty: {readings})"),
     }
 }
 

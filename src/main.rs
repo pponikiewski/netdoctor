@@ -8,6 +8,7 @@
 // blocks are the map, and the map has to stay accurate.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod ai;
 mod autostart;
 mod bandwidth;
 mod cause;
@@ -298,6 +299,7 @@ mod tests {
         let scan = |segment, findings: Vec<Finding>| Scan {
             findings,
             verdict: Verdict { segment, ..Verdict::default() },
+            ..Scan::default()
         };
         let code = |segment| super::scan_exit_code(&scan(segment, Vec::new()));
         assert_eq!(code(Segment::Healthy), super::EXIT_SOUND);

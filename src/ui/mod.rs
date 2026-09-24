@@ -21,7 +21,7 @@ use std::sync::Arc;
 use eframe::egui;
 
 use crate::bandwidth::BloatResult;
-use crate::diagnose::{Finding, Scan, Verdict};
+use crate::diagnose::{Finding, Measurements, Scan, Verdict};
 use crate::monitor::{Monitor, Snapshot, Status};
 use crate::probe::netstate::NetState;
 use crate::settings::Settings;
@@ -200,6 +200,10 @@ pub enum Job {
     /// happen on the UI thread. The generation is what makes a read that
     /// started before an apply land in the bin rather than on screen.
     TweakStates(u64, Vec<(String, String, Option<bool>)>, HashMap<String, crate::effect::Effect>),
+    /// The AI's reading of a scan, with the generation of the scan it was
+    /// asked about, so an answer landing after a rescan is dropped rather
+    /// than shown beside numbers it never saw.
+    AiDone(u64, Result<String, String>),
 }
 
 pub struct App {
@@ -216,6 +220,7 @@ pub struct App {
 
     pub findings: Vec<Finding>,
     pub verdict: Verdict,
+    pub measurements: Measurements,
     pub selected_finding: Option<usize>,
     pub scanning: bool,
     pub scan_label: String,
@@ -226,6 +231,14 @@ pub struct App {
     /// Whether the running scan holds the monitor paused, so finishing it
     /// releases exactly the hold it took. See [`crate::monitor::Monitor::hold`].
     pub scan_held: bool,
+    /// Counts finished scans; see [`Job::AiDone`].
+    pub scan_gen: u64,
+    /// The AI's answer about the scan on screen, when one was asked for.
+    pub ai_answer: Option<Result<String, String>>,
+    pub ai_running: bool,
+    /// The connection as it was when the scan on screen started. The AI
+    /// report masks this network's name, not whichever one is current.
+    pub scan_net: NetState,
 
     pub bloat: BloatResult,
     pub bloat_running: bool,
@@ -352,12 +365,17 @@ impl App {
             net: NetState::default(),
             findings: Vec::new(),
             verdict: Verdict::default(),
+            measurements: Measurements::default(),
             selected_finding: None,
             scanning: false,
             scan_label: crate::i18n::diag_scan_hint().into(),
             scan_progress: 0.0,
             deep_scan: false,
             scan_held: false,
+            scan_gen: 0,
+            ai_answer: None,
+            ai_running: false,
+            scan_net: NetState::default(),
             bloat: BloatResult::default(),
             bloat_running: false,
             bloat_label: String::new(),
@@ -466,6 +484,10 @@ impl App {
                     let scan = *scan;
                     self.findings = scan.findings;
                     self.verdict = scan.verdict;
+                    self.measurements = scan.measurements;
+                    self.scan_gen += 1;
+                    self.ai_answer = None;
+                    self.ai_running = false;
                     self.selected_finding = None;
                     self.scanning = false;
                     self.scan_label = crate::i18n::diag_scan_done().into();
@@ -475,6 +497,12 @@ impl App {
                     // still needed.
                     if std::mem::take(&mut self.scan_held) {
                         self.monitor.release();
+                    }
+                }
+                Job::AiDone(generation, answer) => {
+                    if generation == self.scan_gen {
+                        self.ai_answer = Some(answer);
+                        self.ai_running = false;
                     }
                 }
                 Job::BloatProgress(label, frac) => {

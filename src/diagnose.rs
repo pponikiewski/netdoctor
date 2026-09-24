@@ -207,6 +207,11 @@ pub struct Measurements {
     pub load: Option<BloatResult>,
     pub medium: Medium,
     pub signal_pct: Option<u32>,
+    /// The router the pings went to, so a row of numbers can say whose they are.
+    pub gateway_addr: Option<Ipv4Addr>,
+    /// Why no ping series could be sent at all. Every latency above is then
+    /// empty for that reason, not because anything stayed silent.
+    pub blind: Option<String>,
 }
 
 impl Measurements {
@@ -217,7 +222,7 @@ impl Measurements {
     /// Milliseconds contributed by each segment, rather than the cumulative
     /// round trip each probe happens to report. A hop that answers in 40 ms
     /// when the router answers in 38 is not slow; it inherited 38 of them.
-    fn shares(&self) -> Option<(f64, f64, f64)> {
+    pub fn shares(&self) -> Option<(f64, f64, f64)> {
         let measured = Self::avg(&self.internet)?;
         // Every share is a slice of the one end-to-end measurement, so each
         // boundary is clamped between the one before it and that total. A hop
@@ -252,6 +257,113 @@ impl Measurements {
 pub struct Scan {
     pub findings: Vec<Finding>,
     pub verdict: Verdict,
+    /// The numbers themselves, for anyone who wants to check the verdict
+    /// rather than take it on trust.
+    pub measurements: Measurements,
+}
+
+// ---------------------------------------------------------------------------
+// The chain, as the scan saw it
+// ---------------------------------------------------------------------------
+
+/// What the scan can say about one link of the chain. The states are kept
+/// apart because they mean different things to the person reading them: a
+/// router that ignores pings while traffic flows is not a dead router, and a
+/// link that was never probed is not a link that failed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LinkState {
+    /// Answered; the numbers are the round trip to the far end of this link.
+    Measured(Stats),
+    /// Nothing came back, and nothing else got through either.
+    Silent,
+    /// No echo, but traffic demonstrably crossed it: a filter, not a fault.
+    Filtered,
+    /// This link was not probed, or its far end could not be identified.
+    Unknown,
+    /// No probe could be sent at all.
+    NotMeasured,
+}
+
+/// One link: this PC to the router, the router to the provider, the provider
+/// to the open internet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Link {
+    pub state: LinkState,
+    /// Who answered at the far end, when the scan knows.
+    pub addr: Option<Ipv4Addr>,
+    /// Milliseconds this link added on top of the one before it, when the
+    /// split could be made.
+    pub added_ms: Option<f64>,
+    /// The far hop is still the user's own equipment (double NAT).
+    pub local: bool,
+}
+
+/// The three links, read off the measurements and the findings that
+/// describe what did not answer. Nothing here is inferred beyond what the
+/// findings already concluded.
+pub fn chain(findings: &[Finding], m: &Measurements) -> [Link; 3] {
+    let has = |key: &str| findings.iter().any(|f| f.key == key);
+    let blank = |state| Link { state, addr: None, added_ms: None, local: false };
+    if m.blind.is_some() {
+        return [
+            blank(LinkState::NotMeasured),
+            blank(LinkState::NotMeasured),
+            blank(LinkState::NotMeasured),
+        ];
+    }
+    let shares = m.shares();
+
+    let lan = match &m.gateway {
+        Some(s) => Link {
+            state: LinkState::Measured(s.clone()),
+            addr: m.gateway_addr,
+            added_ms: shares.map(|(lan, _, _)| lan),
+            local: false,
+        },
+        None if has("gateway_mute") => Link { addr: m.gateway_addr, ..blank(LinkState::Filtered) },
+        None if has("gateway_silent") => Link { addr: m.gateway_addr, ..blank(LinkState::Silent) },
+        None => Link { addr: m.gateway_addr, ..blank(LinkState::Unknown) },
+    };
+
+    let isp = match &m.edge {
+        Some((addr, s)) => Link {
+            state: LinkState::Measured(s.clone()),
+            addr: Some(*addr),
+            // A local hop's milliseconds were folded into the LAN share, so
+            // this link has no share of its own to show.
+            added_ms: shares.filter(|_| !m.edge_is_local).map(|(_, isp, _)| isp),
+            local: m.edge_is_local,
+        },
+        // An edge that ignores pings is common and says nothing on its own.
+        None => blank(LinkState::Unknown),
+    };
+
+    let internet = match &m.internet {
+        Some(s) => Link {
+            state: LinkState::Measured(s.clone()),
+            addr: None,
+            added_ms: shares.map(|(_, _, far)| far),
+            local: false,
+        },
+        None if has("icmp_filtered") => blank(LinkState::Filtered),
+        None if has("internet_silent") => blank(LinkState::Silent),
+        None => blank(LinkState::Unknown),
+    };
+
+    [lan, isp, internet]
+}
+
+impl Segment {
+    /// Which of the three links this segment is, when it is one of them.
+    /// The uplink queue sits between the router and the provider.
+    pub fn link_index(&self) -> Option<usize> {
+        match self {
+            Segment::Lan => Some(0),
+            Segment::Uplink | Segment::Isp => Some(1),
+            Segment::Internet => Some(2),
+            _ => None,
+        }
+    }
 }
 
 pub type Progress = Arc<dyn Fn(&str, f32) + Send + Sync>;
@@ -277,6 +389,7 @@ pub fn scan(
     let mut m = Measurements {
         medium: net.medium.clone(),
         signal_pct: net.signal_pct,
+        gateway_addr: net.gateway,
         ..Default::default()
     };
     let mut out = Vec::new();
@@ -302,6 +415,7 @@ pub fn scan(
     let counters_before = netstate::link_counters(net.if_index);
     let wire = measure_wire(net, settings);
     let counters_after = netstate::link_counters(net.if_index);
+    m.blind = wire.blind.clone();
     out.extend(check_link(net, counters_before, counters_after));
 
     out.extend(report_dns(net, &wire, &mut m));
@@ -339,7 +453,7 @@ pub fn scan(
     // Worst first, stable within a severity so related findings stay together.
     out.sort_by_key(|f| std::cmp::Reverse(f.severity));
     let verdict = judge(&out, &m, settings);
-    Scan { findings: out, verdict }
+    Scan { findings: out, verdict, measurements: m }
 }
 
 /// Turn the measurements into one segment, one cost and an ordered plan.
@@ -1682,6 +1796,58 @@ mod tests {
             max: Some(avg),
             jitter: Some(0.0),
         }
+    }
+
+    #[test]
+    fn the_chain_carries_each_links_share_and_its_owner() {
+        let m = Measurements {
+            gateway: Some(stats(4.0, 0.0)),
+            gateway_addr: Some(Ipv4Addr::new(192, 168, 1, 1)),
+            edge: Some((Ipv4Addr::new(10, 0, 0, 1), stats(70.0, 0.0))),
+            internet: Some(stats(74.0, 0.0)),
+            ..Default::default()
+        };
+        let [lan, isp, far] = chain(&[], &m);
+        assert_eq!(lan.state, LinkState::Measured(stats(4.0, 0.0)));
+        assert_eq!(lan.addr, Some(Ipv4Addr::new(192, 168, 1, 1)));
+        assert_eq!((lan.added_ms, isp.added_ms, far.added_ms), (Some(4.0), Some(66.0), Some(4.0)));
+    }
+
+    #[test]
+    fn a_second_router_of_the_users_own_has_no_provider_share() {
+        // Its milliseconds went to the LAN share; showing them again on the
+        // provider's link would count them twice.
+        let m = Measurements {
+            gateway: Some(stats(4.0, 0.0)),
+            edge: Some((Ipv4Addr::new(192, 168, 0, 1), stats(30.0, 0.0))),
+            edge_is_local: true,
+            internet: Some(stats(40.0, 0.0)),
+            ..Default::default()
+        };
+        let [lan, isp, _] = chain(&[], &m);
+        assert_eq!(lan.added_ms, Some(30.0));
+        assert!(isp.local);
+        assert_eq!(isp.added_ms, None);
+    }
+
+    #[test]
+    fn a_scan_that_could_not_ping_claims_nothing_about_any_link() {
+        // Even with findings that would otherwise read as silence.
+        let m = Measurements { blind: Some("no ICMP handle".into()), ..Default::default() };
+        let f = vec![Finding::new("internet_silent", "", Severity::Critical, "")];
+        assert!(chain(&f, &m).iter().all(|l| l.state == LinkState::NotMeasured));
+    }
+
+    #[test]
+    fn a_router_that_ignores_pings_is_filtered_not_silent() {
+        let m = Measurements { internet: Some(stats(20.0, 0.0)), ..Default::default() };
+        let mute = vec![Finding::new("gateway_mute", "", Severity::Info, "")];
+        assert_eq!(chain(&mute, &m)[0].state, LinkState::Filtered);
+        let dead = vec![Finding::new("gateway_silent", "", Severity::Critical, "")];
+        assert_eq!(chain(&dead, &Measurements::default())[0].state, LinkState::Silent);
+        // Filtered pings to the internet with TCP working are not an outage.
+        let filtered = vec![Finding::new("icmp_filtered", "", Severity::Warn, "")];
+        assert_eq!(chain(&filtered, &Measurements::default())[2].state, LinkState::Filtered);
     }
 
     #[test]

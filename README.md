@@ -205,8 +205,19 @@ one English label that would silently fail everywhere else.
 - **Diagnose** — nine checks: adapter and medium (on a cable, also whether
   it is corrupting frames and what speed it negotiated), Wi-Fi quality and band,
   adapter power management, DNS, the link to the router, internet latency and
-  loss, MTU, TCP settings, and the recorded outage history. Each finding
-  explains itself, and some link straight to the fix.
+  loss, MTU, TCP settings, and the recorded outage history. It opens with the
+  verdict, then draws the chain *this PC → router → provider → internet* with
+  the milliseconds and loss each link added and the link at fault marked, then
+  a table of every reading (samples sent, loss, min / avg / max, jitter per
+  leg, DNS, TCP connect, the line's usual ping, the load test) so the verdict
+  can be checked rather than taken on trust. A leg that was not measured says
+  so. Each finding explains itself, and some link straight to the fix.
+  Optionally, with your own [OpenRouter](https://openrouter.ai/keys) key in
+  the settings, a button asks a language model (DeepSeek V4 Flash by default)
+  to explain the result in plain words. Nothing is sent until you press it, the
+  exact text sent can be read first, and your network's name, the access
+  point's MAC and public addresses are masked. The answer is labelled as an
+  interpretation; the verdict from the measurements stays the answer.
 - **Load test** — bufferbloat: idle latency versus latency with the link
   saturated, first downloading and then uploading, since on an asymmetric
   line the upload queue (video calls, cloud backups) is usually the worse
@@ -411,7 +422,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-327 tests, covering the failure-blame logic, the statistics, the registry layer,
+338 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable
@@ -445,7 +456,9 @@ cargo test a_real_outage -- --ignored --nocapture
 - `history.db` — samples, outage events, tweak log, the router's UPnP
   readings (WAL mode). The router's public address is stored only as a
   fingerprint, enough to tell a new address from the same one
-- `settings.json` — your settings; unknown keys from older versions are ignored
+- `settings.json` — your settings; unknown keys from older versions are ignored.
+  If you set an OpenRouter key, it is stored here in plain text
+  (`OPENROUTER_API_KEY` in the environment works too and keeps it out of the file)
 - `tweak_snapshots.json` — prior state for every applied change
 - `netdoctor-report.txt` — written by "Save report"
 
