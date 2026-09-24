@@ -212,6 +212,13 @@ one English label that would silently fail everywhere else.
   leg, DNS, TCP connect, the line's usual ping, the load test) so the verdict
   can be checked rather than taken on trust. A leg that was not measured says
   so. Each finding explains itself, and some link straight to the fix.
+  For drops that come a few times an hour, *Measure for* adds two or five
+  minutes of watching: every link pinged once a second on one clock, each bad
+  second charged to the link where it started, drawn on a timeline and listed
+  with the time to the second. A single lost second is recorded but blames
+  nothing; drops found this way outrank the outage history in the verdict, and
+  a quiet run does not clear that history. It can be stopped early and keeps
+  what it recorded.
   Optionally, with your own [OpenRouter](https://openrouter.ai/keys) key in
   the settings, a button asks a language model (DeepSeek V4 Flash by default)
   to explain the result in plain words. Nothing is sent until you press it, the
@@ -422,7 +429,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-338 tests, covering the failure-blame logic, the statistics, the registry layer,
+354 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

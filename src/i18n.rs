@@ -717,6 +717,44 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Times are the full round trip to the end of each leg, not the leg alone.",
         "Czasy to pełny przelot do końca danego odcinka, nie sam odcinek.";
     findings_heading => "Individual checks", "Poszczególne kontrole";
+    f_long_failed => "The long measurement could not run", "Długi pomiar nie mógł się odbyć";
+    f_long_advice_lan =>
+        "The drops start between this PC and the router. Try the same test on a cable, or \
+         closer to the router: if they stop, it is the Wi-Fi (distance, channel, the card's \
+         power saving).",
+        "Zrywy zaczynają się między komputerem a routerem. Powtórz test na kablu albo bliżej \
+         routera: jeśli znikną, winne jest Wi-Fi (odległość, kanał, oszczędzanie energii karty).";
+    f_long_advice_isp =>
+        "The drops start past your router, where the provider's network begins. Report them to \
+         the provider with the times listed under the long measurement; nothing on this PC \
+         will fix them.",
+        "Zrywy zaczynają się za routerem, tam gdzie zaczyna się sieć dostawcy. Zgłoś je dostawcy \
+         z godzinami z listy pod długim pomiarem; nic na tym komputerze tego nie naprawi.";
+    f_long_advice_far =>
+        "The drops happen past your provider's first hop, out in the internet. If only one \
+         service suffers, it is that service; if everything does, show the provider the times.",
+        "Zrywy powstają za pierwszym węzłem dostawcy, dalej w internecie. Jeśli cierpi tylko \
+         jedna usługa, to jej problem; jeśli wszystko, pokaż dostawcy godziny zrywów.";
+    diag_duration => "Measure for", "Czas pomiaru";
+    diag_duration_quick => "quick (about 30 s)", "szybki (ok. 30 s)";
+    diag_duration_hint =>
+        "A quick scan sees half a minute. Drops that come a few times an hour need minutes: the \
+         long measurement pings every link once a second and records where each drop starts.",
+        "Szybki skan widzi pół minuty. Zrywy, które zdarzają się kilka razy na godzinę, wymagają \
+         minut: długi pomiar pinguje każde ogniwo raz na sekundę i zapisuje, gdzie zaczyna się \
+         każdy zryw.";
+    diag_btn_stop => "Stop and show results", "Przerwij i pokaż wynik";
+    long_heading => "Long measurement", "Długi pomiar";
+    long_rows_note =>
+        "One column per second. A mark shows the link where that second's trouble started: \
+         red for lost packets, yellow for a latency spike.",
+        "Jedna kolumna to jedna sekunda. Znacznik pokazuje ogniwo, na którym zaczął się kłopot w \
+         tej sekundzie: czerwony to utrata pakietów, żółty to skok opóźnienia.";
+    long_col_time => "Time", "Godzina";
+    long_col_what => "What", "Co";
+    long_col_where => "Where", "Gdzie";
+    long_col_len => "Length", "Długość";
+    long_no_episodes => "No drops or spikes recorded.", "Nie zapisano zrywów ani skoków.";
     ai_heading => "Second opinion (AI)", "Drugi głos (AI)";
     ai_off_hint =>
         "Optional: paste your own OpenRouter key in Settings and a language model will explain \
@@ -2697,6 +2735,117 @@ pub fn set_ai_model_hint(default: &str) -> String {
     match current() {
         Lang::En => format!("Any OpenRouter model id. Empty uses {default}."),
         Lang::Pl => format!("Dowolny identyfikator modelu z OpenRouter. Puste oznacza {default}."),
+    }
+}
+
+/// Seconds as m:ss, the way a stopwatch shows them.
+pub fn mm_ss(secs: usize) -> String {
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+pub fn step_long(done: usize, total: usize) -> String {
+    match current() {
+        Lang::En => format!("Long measurement: {} of {}", mm_ss(done), mm_ss(total)),
+        Lang::Pl => format!("Długi pomiar: {} z {}", mm_ss(done), mm_ss(total)),
+    }
+}
+
+fn stopped_early(cancelled: bool) -> &'static str {
+    match (cancelled, current()) {
+        (false, _) => "",
+        (true, Lang::En) => " (stopped early)",
+        (true, Lang::Pl) => " (przerwany)",
+    }
+}
+
+pub fn f_long_clean(watched_s: usize, cancelled: bool) -> String {
+    match current() {
+        Lang::En => {
+            format!("No drops in {} of watching{}", mm_ss(watched_s), stopped_early(cancelled))
+        }
+        Lang::Pl => {
+            format!("Bez zrywów przez {} pomiaru{}", mm_ss(watched_s), stopped_early(cancelled))
+        }
+    }
+}
+
+pub fn f_long_clean_detail(lone_seconds: usize, spikes: usize) -> String {
+    match current() {
+        Lang::En => format!(
+            "Every link was probed once a second. Single lost seconds: {lone_seconds} (every line \
+             has a few). Latency spikes: {spikes}. The fault did not happen while this ran, which \
+             is not proof it never does: the outage history covers the rest of the day."
+        ),
+        Lang::Pl => format!(
+            "Każde ogniwo pingowane raz na sekundę. Pojedyncze zgubione sekundy: {lone_seconds} \
+             (każde łącze ma ich kilka). Skoki opóźnienia: {spikes}. Usterka nie wystąpiła w \
+             trakcie pomiaru, co nie dowodzi, że nie występuje: resztę doby pokazuje historia awarii."
+        ),
+    }
+}
+
+pub fn f_long_found(count: usize, watched_s: usize, segment: &str, cancelled: bool) -> String {
+    match current() {
+        Lang::En => format!(
+            "{count} drop(s) in {}, mostly {}{}",
+            mm_ss(watched_s),
+            segment.to_lowercase(),
+            stopped_early(cancelled)
+        ),
+        Lang::Pl => format!(
+            "Zrywy w {} pomiaru: {count}, głównie {}{}",
+            mm_ss(watched_s),
+            segment.to_lowercase(),
+            stopped_early(cancelled)
+        ),
+    }
+}
+
+pub fn f_long_detail(drops: usize, spikes: usize, bad_s: usize, share_pct: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "Lost packets for two seconds or more: {drops}. Latency spikes above 50 ms: {spikes}. \
+             Bad seconds in total: {bad_s}, of which {share_pct:.0}% started at the link named. \
+             Each second was measured on every link at once, so the link where the trouble first \
+             appears is where it comes from."
+        ),
+        Lang::Pl => format!(
+            "Utrata pakietów przez co najmniej dwie sekundy: {drops}. Skoki opóźnienia ponad 50 ms: \
+             {spikes}. Złych sekund łącznie: {bad_s}, z czego {share_pct:.0}% zaczęło się na \
+             wskazanym ogniwie. Każda sekunda była mierzona na wszystkich ogniwach naraz, więc \
+             ogniwo, na którym kłopot pojawia się pierwszy, jest jego źródłem."
+        ),
+    }
+}
+
+pub fn cost_long(count: usize, watched_s: usize) -> String {
+    match current() {
+        Lang::En => format!(
+            "{count} interruption(s) in {} of watching. Each one is a call that stutters or a game \
+             that freezes, and they come back.",
+            mm_ss(watched_s)
+        ),
+        Lang::Pl => format!(
+            "Przerwy w {} pomiaru: {count}. Każda to zacinająca się rozmowa albo zamrożona gra, i \
+             one wracają.",
+            mm_ss(watched_s)
+        ),
+    }
+}
+
+pub fn long_episode_kind(loss: bool) -> &'static str {
+    match (loss, current()) {
+        (true, Lang::En) => "packets lost",
+        (true, Lang::Pl) => "utrata pakietów",
+        (false, Lang::En) => "latency spike",
+        (false, Lang::Pl) => "skok opóźnienia",
+    }
+}
+
+pub fn long_episode_len(secs: usize, worst_ms: Option<f64>) -> String {
+    match worst_ms {
+        Some(ms) => format!("{secs} s, +{ms:.0} ms"),
+        None => format!("{secs} s"),
     }
 }
 

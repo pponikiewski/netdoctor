@@ -16,6 +16,7 @@ mod diagnose;
 mod effect;
 mod game;
 mod i18n;
+mod longrun;
 mod monitor;
 mod optimize;
 mod overlay;
@@ -110,7 +111,7 @@ fn main() -> eframe::Result<()> {
     if args.iter().any(|a| a == "--scan") {
         let deep = !args.iter().any(|a| a == "--quick");
         let net = probe::netstate::read();
-        let scan = diagnose::scan(&net, &store, &cfg, deep, None);
+        let scan = diagnose::scan(&net, &store, &cfg, deep, None, None);
 
         let v = &scan.verdict;
         println!("{}", i18n::verdict_heading());

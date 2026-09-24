@@ -73,6 +73,6 @@ Kolejność uzgodniona z użytkownikiem: 1+2 układ i dane, potem AI, potem 3, p
 - [x] Etap 1+2: rysunek ogniw i tabela pomiarów w Diagnozie. `diagnose::chain` + 4 testy; obejrzane w działającej aplikacji na prawdziwym skanie (zrzuty ekranu), podpis ogniwa barwiony pomiarem, nie werdyktem
 - [x] AI jako drugi głos (OpenRouter). Maskowanie sprawdzone na prawdziwym raporcie z tej sieci (`[SSID]`, `[public IP]`); odrzucony klucz daje czytelne HTTP 401 (test `#[ignore]` `refused_key`); sekcja w Ustawieniach obejrzana
 - [ ] Odpowiedź modelu na prawdziwym skanie nie oglądana (`cargo test -- --ignored explains_a_real_scan --nocapture` z `OPENROUTER_API_KEY`)
-- [ ] Etap 3: dłuższy pomiar (2–5 min), który łapie przerywane problemy
+- [x] Etap 3: dłuższy pomiar (2–5 min), który łapie przerywane problemy. `longrun.rs` + 12 testów analizy, 3 testy werdyktu (zrywy wyprzedzają historię, spokojny pomiar jej nie kasuje, twarda awaria wyprzedza zrywy); 10 s nagrywania na żywo (test `#[ignore]` `ten_seconds`); w aplikacji obejrzane: wybór czasu, postęp „0:44 z 2:00”, przycisk przerwania, zakończenie 2-min pomiaru. Karta z paskiem czasu i tabelą zrywów NIE obejrzana (użytkownik grał, okno zasłonięte), progi 2 s / +50 ms / 3 skoki nie sprawdzone na `history.db`
 - [ ] Etap 4: nowe testy (kandydaci: IPv6, DNS z DHCP vs publiczny, rozłączenia z dziennika Windows w oknie skanu)
 - [ ] Do rozważenia: werdykt „LAN” przy podziale czasu wskazującym na wejście do dostawcy (zaobserwowane 2026-09-24 na Wi-Fi, jitter 24 ms)

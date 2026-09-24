@@ -17,6 +17,7 @@ use super::{
 };
 use crate::diagnose::{self, Link, LinkState, Segment, Severity, Verdict};
 use crate::i18n;
+use crate::longrun::{LongRun, Trouble};
 use crate::probe::netstate::Medium;
 
 fn severity_colour(s: Severity) -> egui::Color32 {
@@ -50,6 +51,32 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.add_enabled(!app.scanning, egui::Checkbox::new(&mut app.deep_scan, i18n::diag_deep()))
             .on_hover_text(i18n::diag_deep_hint());
+
+        ui.add_space(S_MD);
+        ui.label(egui::RichText::new(i18n::diag_duration()).size(T_BODY).color(FG_DIM))
+            .on_hover_text(i18n::diag_duration_hint());
+        let name = |secs: usize| {
+            if secs == 0 {
+                i18n::diag_duration_quick().to_string()
+            } else {
+                format!("+ {} min", secs / 60)
+            }
+        };
+        ui.add_enabled_ui(!app.scanning, |ui| {
+            egui::ComboBox::from_id_salt("long_secs")
+                .selected_text(name(app.long_secs))
+                .show_ui(ui, |ui| {
+                    for secs in LONG_CHOICES {
+                        ui.selectable_value(&mut app.long_secs, secs, name(secs));
+                    }
+                })
+                .response
+                .on_hover_text(i18n::diag_duration_hint());
+        });
+
+        if app.scanning && app.long_secs > 0 && ui.button(i18n::diag_btn_stop()).clicked() {
+            app.scan_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         ui.label(egui::RichText::new(&app.scan_label).size(T_BODY).color(FG_DIM));
     });
 
@@ -88,6 +115,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(S_MD);
         chain_card(view, ui);
         ui.add_space(S_MD);
+        if let Some(run) = &view.measurements.long {
+            long_card(run, ui);
+            ui.add_space(S_MD);
+        }
         measure_card(view, ui);
         ui.add_space(S_LG);
         ui.label(egui::RichText::new(i18n::findings_heading()).size(T_BODY).color(FG_DIM));
@@ -549,6 +580,132 @@ fn measure_card(app: &App, ui: &mut egui::Ui) {
     });
 }
 
+/// The lengths offered for the long measurement, in seconds. 0 is none.
+const LONG_CHOICES: [usize; 3] = [0, 120, 300];
+
+/// Where each second's trouble started, over the whole run, and the list of
+/// drops with the times a provider will ask for.
+fn long_card(run: &LongRun, ui: &mut egui::Ui) {
+    card(ui, |ui| {
+        ui.label(egui::RichText::new(i18n::long_heading()).size(T_BODY).color(FG_DIM));
+        ui.add_space(S_SM);
+
+        // The strip: one row per link, one column per second.
+        let rows = [
+            (i18n::measure_leg_router(), Segment::Lan),
+            (i18n::measure_leg_isp(), Segment::Isp),
+            (i18n::measure_leg_internet(), Segment::Internet),
+        ];
+        let row_of = |seg: Segment| match seg {
+            Segment::Lan => 0,
+            Segment::Isp | Segment::Uplink => 1,
+            _ => 2,
+        };
+        let label_w = 120.0;
+        let row_h = 16.0;
+        let w = ui.available_width();
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(w, row_h * 3.0 + 22.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        let strip_w = (w - label_w).max(1.0);
+        let n = run.ticks.len().max(1) as f32;
+        let x_of = |s: usize| rect.left() + label_w + strip_w * s as f32 / n;
+
+        for (i, (name, _)) in rows.iter().enumerate() {
+            let top = rect.top() + i as f32 * row_h;
+            painter.text(
+                egui::pos2(rect.left(), top + row_h / 2.0),
+                egui::Align2::LEFT_CENTER,
+                *name,
+                egui::FontId::proportional(super::T_META),
+                FG_DIM,
+            );
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.left() + label_w, top + 2.0),
+                    egui::pos2(rect.right(), top + row_h - 2.0),
+                ),
+                2.0,
+                super::BG3,
+            );
+        }
+        for e in &run.episodes {
+            let top = rect.top() + row_of(e.segment) as f32 * row_h;
+            let colour = if e.kind == Trouble::Loss { RED } else { YELLOW };
+            // At five minutes a second is a pixel or two; a drop has to stay
+            // visible however short it was.
+            let (x0, x1) = (x_of(e.start_s), x_of(e.start_s + e.len_s).max(x_of(e.start_s) + 3.0));
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(x0, top + 2.0),
+                    egui::pos2(x1, top + row_h - 2.0),
+                ),
+                1.0,
+                colour,
+            );
+        }
+        let axis_y = rect.top() + row_h * 3.0 + 4.0;
+        for (s, align) in [(0, egui::Align2::LEFT_TOP), (run.ticks.len(), egui::Align2::RIGHT_TOP)]
+        {
+            painter.text(
+                egui::pos2(x_of(s), axis_y),
+                align,
+                diagnose::format_clock_s(run.started_at + s as f64),
+                egui::FontId::monospace(super::T_MICRO),
+                FG_DIM,
+            );
+        }
+        ui.label(egui::RichText::new(i18n::long_rows_note()).size(super::T_MICRO).color(FG_DIM));
+        ui.add_space(S_MD);
+
+        if run.episodes.is_empty() {
+            ui.label(egui::RichText::new(i18n::long_no_episodes()).size(T_BODY).color(FG));
+            return;
+        }
+        // Worth listing in full up to a point; past it the strip above is
+        // the better reading and the list only pushes the rest of the page.
+        const SHOWN: usize = 15;
+        egui::Grid::new("long_episodes").striped(true).spacing([S_LG, S_XS]).show(ui, |ui| {
+            for head in [
+                i18n::long_col_time(),
+                i18n::long_col_what(),
+                i18n::long_col_where(),
+                i18n::long_col_len(),
+            ] {
+                ui.label(egui::RichText::new(head).size(super::T_META).color(FG_DIM));
+            }
+            ui.end_row();
+            for e in run.episodes.iter().take(SHOWN) {
+                let loss = e.kind == Trouble::Loss;
+                let colour = match (loss, e.len_s) {
+                    // A lone lost second is recorded, not accused.
+                    (true, 1) => FG_DIM,
+                    (true, _) => RED,
+                    (false, _) => YELLOW,
+                };
+                ui.label(super::figure(
+                    diagnose::format_clock_s(run.started_at + e.start_s as f64),
+                    T_BODY,
+                    FG,
+                ));
+                ui.label(
+                    egui::RichText::new(i18n::long_episode_kind(loss)).size(T_BODY).color(colour),
+                );
+                ui.label(egui::RichText::new(e.segment.label()).size(T_BODY).color(FG));
+                ui.label(super::figure(i18n::long_episode_len(e.len_s, e.worst_ms), T_BODY, FG));
+                ui.end_row();
+            }
+        });
+        if run.episodes.len() > SHOWN {
+            ui.label(
+                egui::RichText::new(format!("+{}", run.episodes.len() - SHOWN))
+                    .size(super::T_META)
+                    .color(FG_DIM),
+            );
+        }
+    });
+}
+
 /// The panel every section of the report sits on.
 fn card(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_MD)).show(
@@ -644,13 +801,16 @@ fn start_scan(app: &mut App) {
     let net = app.net.clone();
     app.scan_net = net.clone();
     let deep = app.deep_scan;
+    app.scan_cancel = Arc::default();
+    let long = (app.long_secs > 0)
+        .then(|| diagnose::LongOpts { secs: app.long_secs, cancel: Arc::clone(&app.scan_cancel) });
 
     std::thread::spawn(move || {
         let progress_tx = tx.clone();
         let progress: diagnose::Progress = Arc::new(move |label: &str, frac: f32| {
             let _ = progress_tx.send(Job::ScanProgress(label.to_string(), frac));
         });
-        let scan = diagnose::scan(&net, &store, &settings, deep, Some(progress));
+        let scan = diagnose::scan(&net, &store, &settings, deep, long, Some(progress));
         let _ = tx.send(Job::ScanDone(Box::new(scan)));
     });
 }

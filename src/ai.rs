@@ -228,6 +228,44 @@ pub fn report(scan: &Scan, net: &NetState) -> String {
         None => line("- Load test: not run".into()),
     }
 
+    if let Some(run) = &m.long {
+        line(String::new());
+        line(format!(
+            "LONG MEASUREMENT ({} of {} s, every link probed once a second on one clock{})",
+            run.ticks.len(),
+            run.planned_s,
+            if run.cancelled { ", stopped early by the user" } else { "" }
+        ));
+        for (name, s) in [("router", &run.gw), ("provider", &run.edge), ("internet", &run.net)] {
+            match s {
+                Some(s) => line(format!(
+                    "- To the {name}: lost {:.1}%, avg {:.1} ms, max {:.1} ms, jitter {:.1} ms",
+                    s.loss_pct,
+                    s.avg.unwrap_or(0.0),
+                    s.max.unwrap_or(0.0),
+                    s.jitter.unwrap_or(0.0)
+                )),
+                None => line(format!("- To the {name}: never answered or not probed")),
+            }
+        }
+        if run.episodes.is_empty() {
+            line("- No lost seconds and no latency spikes.".into());
+        }
+        for e in &run.episodes {
+            line(format!(
+                "- At {} for {} s: {} starting {}{}",
+                diagnose::format_clock_s(run.started_at + e.start_s as f64),
+                e.len_s,
+                match e.kind {
+                    crate::longrun::Trouble::Loss => "packets lost",
+                    crate::longrun::Trouble::Spike => "latency spike",
+                },
+                e.segment.label(),
+                e.worst_ms.map(|w| format!(", {w:.0} ms above usual")).unwrap_or_default()
+            ));
+        }
+    }
+
     line(String::new());
     line("INDIVIDUAL CHECKS (severity | title | detail | advice)".into());
     for f in &scan.findings {
@@ -362,7 +400,7 @@ mod tests {
         let net = crate::probe::netstate::read();
         let store = crate::store::Store::open_in_memory().unwrap();
         let cfg = Settings::default();
-        let scan = crate::diagnose::scan(&net, &store, &cfg, false, None);
+        let scan = crate::diagnose::scan(&net, &store, &cfg, false, None, None);
         println!("--- sent ---\n{}", report(&scan, &net));
         let answer = explain(&scan, &net, &cfg).unwrap();
         println!("--- answer ---\n{answer}");

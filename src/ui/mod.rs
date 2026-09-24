@@ -231,6 +231,11 @@ pub struct App {
     /// Whether the running scan holds the monitor paused, so finishing it
     /// releases exactly the hold it took. See [`crate::monitor::Monitor::hold`].
     pub scan_held: bool,
+    /// Seconds of long measurement to add to the next scan; 0 is none.
+    pub long_secs: usize,
+    /// Stops a running long measurement early. A fresh flag per scan, so a
+    /// stop pressed during one scan cannot cut the next one short.
+    pub scan_cancel: Arc<std::sync::atomic::AtomicBool>,
     /// Counts finished scans; see [`Job::AiDone`].
     pub scan_gen: u64,
     /// The AI's answer about the scan on screen, when one was asked for.
@@ -372,6 +377,8 @@ impl App {
             scan_progress: 0.0,
             deep_scan: false,
             scan_held: false,
+            long_secs: 0,
+            scan_cancel: Arc::default(),
             scan_gen: 0,
             ai_answer: None,
             ai_running: false,

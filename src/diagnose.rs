@@ -22,12 +22,14 @@
 //! and at most three actions worth taking.
 
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::bandwidth::{self, BloatResult, Grade};
 use crate::cause::Confidence;
 use crate::i18n;
+use crate::longrun::{self, LongRun, Trouble};
 use crate::monitor;
 use crate::probe::icmp;
 use crate::probe::netstate::{self, LinkCounters, Medium, NetState};
@@ -212,6 +214,16 @@ pub struct Measurements {
     /// Why no ping series could be sent at all. Every latency above is then
     /// empty for that reason, not because anything stayed silent.
     pub blind: Option<String>,
+    /// The long measurement, when the user asked for one and it ran.
+    pub long: Option<LongRun>,
+}
+
+/// Asking the scan to keep watching for minutes after its quick checks.
+#[derive(Clone)]
+pub struct LongOpts {
+    pub secs: usize,
+    /// Set by the UI to stop early; what was recorded until then is kept.
+    pub cancel: Arc<AtomicBool>,
 }
 
 impl Measurements {
@@ -378,8 +390,15 @@ pub fn scan(
     store: &Store,
     settings: &Settings,
     deep: bool,
+    long: Option<LongOpts>,
     progress: Option<Progress>,
 ) -> Scan {
+    // With a long measurement the quick checks are the first fifth of the
+    // bar, and the minutes of watching are the rest.
+    let outer = progress.clone();
+    let quick_share = if long.is_some() { 0.2 } else { 1.0 };
+    let progress: Option<Progress> = progress
+        .map(|p| Arc::new(move |label: &str, frac: f32| p(label, frac * quick_share)) as Progress);
     let say = |label: &str, frac: f32| {
         if let Some(p) = &progress {
             p(label, frac);
@@ -448,7 +467,13 @@ pub fn scan(
     say(i18n::step_history(), 0.94);
     out.extend(check_history(net, store, settings));
 
-    say(i18n::step_done(), 1.0);
+    if let Some(opts) = long {
+        out.extend(check_long(opts, settings, outer.clone(), &mut m));
+    }
+
+    if let Some(p) = &outer {
+        p(i18n::step_done(), 1.0);
+    }
 
     // Worst first, stable within a severity so related findings stay together.
     out.sort_by_key(|f| std::cmp::Reverse(f.severity));
@@ -537,6 +562,22 @@ pub fn judge(findings: &[Finding], m: &Measurements, cfg: &Settings) -> Verdict 
             v.actions = worst_of(Segment::Uplink);
             return v;
         }
+    }
+
+    // 3b. The long run. Minutes of the same three links on one clock, with
+    //     every bad second charged to where it started, is an observation and
+    //     outranks the inferences below. It only speaks when it found
+    //     something: a quiet five minutes proves the fault was not happening
+    //     then, not that it never does.
+    if let Some((seg, share, count)) = m.long.as_ref().and_then(|r| r.culprit()) {
+        v.segment = seg;
+        // One link carrying nearly all of it is a pattern; a spread is a lead.
+        v.confidence =
+            if share >= 0.7 && count >= 2 { Confidence::Likely } else { Confidence::Possible };
+        v.cost = i18n::cost_long(count, m.long.as_ref().map_or(0, |r| r.ticks.len()));
+        v.actions = actions_for_key(findings, "long_run");
+        v.actions.extend(worst_of(seg).into_iter().take(2));
+        return v;
     }
 
     // 4. Latency, blamed on whichever segment actually contributed it. The
@@ -1503,6 +1544,79 @@ fn check_load(
     }
 }
 
+/// Minutes of watching the same three links, for the fault that comes and
+/// goes. See [`crate::longrun`].
+fn check_long(
+    opts: LongOpts,
+    cfg: &Settings,
+    progress: Option<Progress>,
+    m: &mut Measurements,
+) -> Vec<Finding> {
+    // Without ICMP there is nothing to watch with, and `icmp_blind` has
+    // already said why.
+    if m.blind.is_some() {
+        return Vec::new();
+    }
+    let ticks: Option<longrun::Progress> = progress.map(|p| {
+        Arc::new(move |done: usize, total: usize| {
+            p(&i18n::step_long(done, total), 0.2 + 0.78 * done as f32 / total.max(1) as f32)
+        }) as longrun::Progress
+    });
+    let started_at = store::now();
+    let recorded = longrun::record(
+        m.gateway_addr,
+        m.edge.as_ref().map(|(addr, _)| *addr),
+        [ANCHOR, ANCHOR_ALT],
+        opts.secs,
+        cfg.ping_timeout_ms,
+        Arc::clone(&opts.cancel),
+        ticks,
+    );
+    let ticks = match recorded {
+        Ok(t) => t,
+        Err(why) => {
+            return vec![Finding::new("long_run", i18n::f_long_failed(), Severity::Info, why)]
+        }
+    };
+    let cancelled = opts.cancel.load(std::sync::atomic::Ordering::Relaxed);
+    let mut run = longrun::analyse(ticks, opts.secs, m.edge_is_local, cancelled);
+    run.started_at = started_at;
+    let finding = long_finding(&run);
+    m.long = Some(run);
+    vec![finding]
+}
+
+/// The long run, as one finding: what was watched, how long, what broke.
+fn long_finding(run: &LongRun) -> Finding {
+    let watched = run.ticks.len();
+    let found: Vec<_> = run.significant().collect();
+    let drops = found.iter().filter(|e| e.kind == Trouble::Loss).count();
+    let spikes = found.len() - drops;
+    let lone = run.episodes.len() - found.len();
+
+    let Some((seg, share, _)) = run.culprit() else {
+        return Finding::new(
+            "long_run",
+            i18n::f_long_clean(watched, run.cancelled),
+            Severity::Good,
+            i18n::f_long_clean_detail(lone, spikes),
+        );
+    };
+    let severity = if drops > 0 { Severity::Critical } else { Severity::Warn };
+    let bad_s: usize = found.iter().map(|e| e.len_s).sum();
+    Finding::new(
+        "long_run",
+        i18n::f_long_found(found.len(), watched, seg.label(), run.cancelled),
+        severity,
+        i18n::f_long_detail(drops, spikes, bad_s, share * 100.0),
+    )
+    .advise(match seg {
+        Segment::Lan => i18n::f_long_advice_lan(),
+        Segment::Isp => i18n::f_long_advice_isp(),
+        _ => i18n::f_long_advice_far(),
+    })
+}
+
 fn check_mtu(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     use crate::optimize::{MtuFix, Tweak};
     let state = MtuFix.read(net);
@@ -1655,6 +1769,12 @@ pub fn format_datetime(ts: f64) -> String {
     format!("{d:02}.{m:02} {y:04} {:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
+/// Time of day to the second, local, for events inside one sitting.
+pub fn format_clock_s(ts: f64) -> String {
+    let secs = (ts as i64 + local_utc_offset_secs()).rem_euclid(86400);
+    format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
+}
+
 /// Hour of the day, 0-23, in the machine's own time zone. Grouping outages by
 /// hour only says anything if the hour is the one the user lives in.
 pub fn local_hour(ts: f64) -> i64 {
@@ -1774,7 +1894,7 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         // Without the load test: a unit test has no business saturating the
         // machine's uplink for twelve seconds.
-        let scan = scan(&net, &store, &Settings::default(), false, None);
+        let scan = scan(&net, &store, &Settings::default(), false, None, None);
         assert!(!scan.findings.is_empty());
         assert!(scan.findings.windows(2).all(|w| w[0].severity >= w[1].severity));
         // Every finding must be presentable: a title and something to show.
@@ -1848,6 +1968,58 @@ mod tests {
         // Filtered pings to the internet with TCP working are not an outage.
         let filtered = vec![Finding::new("icmp_filtered", "", Severity::Warn, "")];
         assert_eq!(chain(&filtered, &Measurements::default())[2].state, LinkState::Filtered);
+    }
+
+    fn long_run_with(dead_gw_at: &[usize]) -> LongRun {
+        let ok = longrun::Tick { gw: Some(3.0), edge: Some(8.0), net: Some(15.0) };
+        let mut ticks = vec![ok; 120];
+        for &i in dead_gw_at {
+            ticks[i] = longrun::Tick { gw: None, edge: None, net: None };
+        }
+        longrun::analyse(ticks, 120, false, false)
+    }
+
+    #[test]
+    fn drops_seen_in_the_long_run_outrank_the_outage_history() {
+        // The history blames the provider; the minutes just watched show the
+        // router itself going silent. What was measured now, on every link at
+        // once, is the stronger evidence.
+        let m = Measurements {
+            gateway: Some(stats(3.0, 0.0)),
+            internet: Some(stats(15.0, 0.0)),
+            long: Some(long_run_with(&[10, 11, 12, 70, 71])),
+            ..Default::default()
+        };
+        let findings = vec![
+            Finding::new("hist_isp", "drops", Severity::Critical, "").advise("call them"),
+            long_finding(m.long.as_ref().unwrap()),
+        ];
+        let v = judge(&findings, &m, &Settings::default());
+        assert_eq!(v.segment, Segment::Lan);
+        assert_eq!(v.confidence, Confidence::Likely);
+        assert!(!v.actions.is_empty(), "the verdict must come with a next step");
+    }
+
+    #[test]
+    fn a_quiet_long_run_does_not_clear_the_history() {
+        // Five clean minutes say the fault was not happening then. The
+        // recorded outages still stand.
+        let m = Measurements {
+            gateway: Some(stats(3.0, 0.0)),
+            internet: Some(stats(15.0, 0.0)),
+            long: Some(long_run_with(&[40])),
+            ..Default::default()
+        };
+        let findings = vec![Finding::new("hist_isp", "drops", Severity::Critical, "")];
+        assert_eq!(judge(&findings, &m, &Settings::default()).segment, Segment::Isp);
+        assert_eq!(long_finding(m.long.as_ref().unwrap()).severity, Severity::Good);
+    }
+
+    #[test]
+    fn a_hard_break_now_still_outranks_the_long_run() {
+        let m = Measurements { long: Some(long_run_with(&[10, 11])), ..Default::default() };
+        let findings = vec![Finding::new("internet_silent", "", Severity::Critical, "")];
+        assert_eq!(judge(&findings, &m, &Settings::default()).segment, Segment::Isp);
     }
 
     #[test]
