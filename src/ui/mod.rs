@@ -312,6 +312,9 @@ pub struct App {
     report_done: Option<Result<String, String>>,
     pub elevated: bool,
     pub autostart_on: bool,
+    /// The overlay's settings took effect but are not on disk yet: they are
+    /// written once the mouse is released, not on every frame of a drag.
+    pub overlay_unsaved: bool,
 
     /// Where the update flow has got to. One value rather than a set of
     /// booleans, so "downloading and also up to date" cannot be represented.
@@ -411,6 +414,7 @@ impl App {
             report_done: None,
             elevated: crate::optimize::is_elevated(),
             autostart_on: crate::autostart::is_enabled(),
+            overlay_unsaved: false,
             update: Default::default(),
             update_banner: false,
             toast: None,

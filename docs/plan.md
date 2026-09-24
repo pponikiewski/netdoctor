@@ -76,3 +76,18 @@ Kolejność uzgodniona z użytkownikiem: 1+2 układ i dane, potem AI, potem 3, p
 - [x] Etap 3: dłuższy pomiar (2–5 min), który łapie przerywane problemy. `longrun.rs` + 12 testów analizy, 3 testy werdyktu (zrywy wyprzedzają historię, spokojny pomiar jej nie kasuje, twarda awaria wyprzedza zrywy); 10 s nagrywania na żywo (test `#[ignore]` `ten_seconds`); w aplikacji obejrzane: wybór czasu, postęp „0:44 z 2:00”, przycisk przerwania, zakończenie 2-min pomiaru. Karta z paskiem czasu i tabelą zrywów NIE obejrzana (użytkownik grał, okno zasłonięte), progi 2 s / +50 ms / 3 skoki nie sprawdzone na `history.db`
 - [x] Etap 4: IPv6 (działa / brak / ustawione i zepsute → `prefer_ipv4`), DNS przydzielony kontra 1.1.1.1 (najlepszy z 3, próg ×2 i +30 ms), dziennik Windows w oknie skanu (tylko zdarzenia WLAN na Wi-Fi obciążają łącze, reguła 1b). 6 testów; `--scan --quick` na żywo: IPv6 „brak” (10051), porównanie DNS pominięte (serwery już publiczne), dziennik bez usterek. Nie sprawdzone na żywo: przypadek „IPv6 zepsute”, wiersze w tabeli Pomiary w oknie aplikacji
 - [ ] Do rozważenia: werdykt „LAN” przy podziale czasu wskazującym na wejście do dostawcy (zaobserwowane 2026-09-24 na Wi-Fi, jitter 24 ms)
+
+## Nakładka w grze: przegląd (2026-09-24)
+
+Przegląd z kodu i na żywo (podstawiony `cs2.exe`, zrzut ekranu 2560x1080).
+
+- [x] 1. Długi lag nie znika po ~5 s: odniesienie to 20. percentyl starszych pomiarów z ostatnich 120 s (`BLAME_SPAN_S`, `BASELINE_AT`), okno w sekundach, nie w liczbie pomiarów (przy okazji punkt 5). Test `a_lag_that_fills_most_of_the_window_is_still_a_lag`; na 118 942 pomiarach z `history.db`: 6,4 ostrzeżenia/h (było 5,0), 0% pomiarów w lagu > 100 ms nazwanych „Stabilnie” (było 29%, ale takich pomiarów było tylko 7)
+- [x] 2. Skok za routerem przy ruchu z PC nazywa oba fakty (`ov_beyond_busy`), „za routerem: łącze lub dostawca” bez „serwera”. Test w `overlay.rs`. Nowe teksty NIE obejrzane na ekranie (skoku nie dało się wywołać); okno 330 → 360 px na podstawie pomiaru starego tekstu
+- [x] 3. Ruch bez skoku nie jest ostrzeżeniem: nazywany tylko przy skoku za routerem („Skok: łącze, ruch PC X Mb/s”), w spokoju nakładka milczy (test w `overlay.rs`)
+- [x] 4. Róg do wyboru w Ustawieniach (`Settings::game_overlay_corner`, `Corner`), nakładka na monitorze okna na pierwszym planie (`MonitorFromWindow(GetForegroundWindow())`). Test `origin` na drugim monitorze; na żywo: domyślny lewy górny róg na 2560x1080. NIE sprawdzone: przełączanie rogu w działającej aplikacji, drugi monitor
+- [~] Nakładka nad każdą aplikacją: zrobiona i wycofana tego samego dnia na prośbę użytkownika (przeszkadzała nad przeglądarką); zamiast tego Hearthstone na liście gier
+- [x] Ustawienia wyglądu: widoczność, rozmiar, treść (`OverlaySize`, `OverlayContent`, `overlay_opacity`; `box_size`, `alpha`, 3 testy). Na żywo: domyślny i „sam internet, duży, 50%”. NIE obejrzane: mały rozmiar, „router i internet”, awaria w trybie kompaktowym
+- [x] Wygląd: karta z paskiem stanu, etykiety LAN/NET, ocena tylko przy problemie, zaokrąglone rogi, szerokość wg treści (`View`, `Layout`). Na żywo: stan spokojny. NIE obejrzane: żółty/czerwony pasek, rozmiar duży
+- [x] Ustawienia nakładki działają od kliknięcia (`Settings::take_overlay`), zapis po puszczeniu myszy
+- [~] 6. „Internet” to Cloudflare/Google, nie serwer gry. ODRZUCONE przez użytkownika 2026-09-24: ping do serwera LoL/VALORANT niemierzalny z zewnątrz (Riot Direct milczy na ICMP, Vanguard), CS2 przez przekaźniki Valve; Hearthstone (TCP) możliwy, ale niechciany
+- [ ] 7. DNS w trakcie meczu na czerwono; rozmiar bez skalowania DPI (niesprawdzone przy 150%)

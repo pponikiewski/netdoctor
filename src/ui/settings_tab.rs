@@ -99,6 +99,49 @@ fn language_thresholds_behaviour(app: &mut App, ui: &mut egui::Ui) {
         ui.checkbox(&mut app.draft.notify_on_outage, i18n::set_notify());
         ui.checkbox(&mut app.draft.start_minimised, i18n::set_start_min());
         ui.checkbox(&mut app.draft.game_overlay, i18n::set_game_overlay());
+        ui.add_enabled_ui(app.draft.game_overlay, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(i18n::set_overlay_corner());
+                for c in crate::settings::Corner::ALL {
+                    ui.selectable_value(&mut app.draft.game_overlay_corner, c, c.label());
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(i18n::set_overlay_content());
+                for c in crate::settings::OverlayContent::ALL {
+                    ui.selectable_value(&mut app.draft.overlay_content, c, c.label());
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(i18n::set_overlay_size());
+                for s in crate::settings::OverlaySize::ALL {
+                    ui.selectable_value(&mut app.draft.overlay_size, s, s.label());
+                }
+            });
+            ui.add(
+                egui::Slider::new(
+                    &mut app.draft.overlay_opacity,
+                    crate::settings::OVERLAY_OPACITY_MIN..=100,
+                )
+                .suffix(" %")
+                .text(i18n::set_overlay_opacity()),
+            );
+        });
+        // Applied on click, like the language: the overlay is watched while
+        // it is set, and a Save between a click and its effect hides which
+        // click did what. Written to disk once the mouse is up, so dragging
+        // the slider does not write the file every frame.
+        if app.settings.take_overlay(&app.draft) {
+            app.monitor.update_settings(app.settings.clone());
+            app.overlay_unsaved = true;
+        }
+        if app.overlay_unsaved && !ui.input(|i| i.pointer.any_down()) {
+            app.overlay_unsaved = false;
+            if let Err(e) = app.settings.save() {
+                let now = ui.input(|i| i.time);
+                app.toast(i18n::set_save_failed(&e.to_string()), RED, now);
+            }
+        }
 
         let mut autostart = app.autostart_on;
         if ui.checkbox(&mut autostart, i18n::set_autostart()).changed() {

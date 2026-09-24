@@ -29,6 +29,87 @@ pub enum Scope {
     Internet,
 }
 
+/// A corner of the screen for the game overlay. No corner is free in every
+/// game (CS2 and VALORANT keep the minimap top-left, the kill feed
+/// top-right), so the player picks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl Corner {
+    pub const ALL: [Corner; 4] =
+        [Corner::TopLeft, Corner::TopRight, Corner::BottomLeft, Corner::BottomRight];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Corner::TopLeft => i18n::corner_top_left(),
+            Corner::TopRight => i18n::corner_top_right(),
+            Corner::BottomLeft => i18n::corner_bottom_left(),
+            Corner::BottomRight => i18n::corner_bottom_right(),
+        }
+    }
+}
+
+/// The least opaque the overlay may be: below this it cannot be read.
+pub const OVERLAY_OPACITY_MIN: u8 = 20;
+
+/// How big the overlay's text is; the window grows with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OverlaySize {
+    Small,
+    Medium,
+    Large,
+}
+
+impl OverlaySize {
+    pub const ALL: [OverlaySize; 3] = [OverlaySize::Small, OverlaySize::Medium, OverlaySize::Large];
+
+    /// The font's height in pixels.
+    pub fn font_px(self) -> i32 {
+        match self {
+            OverlaySize::Small => 12,
+            OverlaySize::Medium => 15,
+            OverlaySize::Large => 20,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            OverlaySize::Small => i18n::size_small(),
+            OverlaySize::Medium => i18n::size_medium(),
+            OverlaySize::Large => i18n::size_large(),
+        }
+    }
+}
+
+/// What the overlay shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OverlayContent {
+    /// The router's and the internet's ping, and whose side a spike is on.
+    Full,
+    /// Only the router's and the internet's ping.
+    Ping,
+    /// Only the internet's ping.
+    Internet,
+}
+
+impl OverlayContent {
+    pub const ALL: [OverlayContent; 3] =
+        [OverlayContent::Full, OverlayContent::Ping, OverlayContent::Internet];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            OverlayContent::Full => i18n::content_full(),
+            OverlayContent::Ping => i18n::content_ping(),
+            OverlayContent::Internet => i18n::content_internet(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Target {
     pub key: String,
@@ -65,6 +146,13 @@ pub struct Settings {
 
     /// Show the ping overlay while a game is running.
     pub game_overlay: bool,
+    /// Which corner of the game's screen it sits in.
+    pub game_overlay_corner: Corner,
+    /// How opaque it is, in percent; clamped to [`OVERLAY_OPACITY_MIN`]..=100
+    /// where it is used, so a hand-edited 0 cannot make it invisible.
+    pub overlay_opacity: u8,
+    pub overlay_size: OverlaySize,
+    pub overlay_content: OverlayContent,
 
     /// The user's own OpenRouter key for the optional AI explanation. Empty
     /// means the feature is off.
@@ -103,6 +191,10 @@ impl Default for Settings {
             check_updates: true,
 
             game_overlay: true,
+            game_overlay_corner: Corner::TopLeft,
+            overlay_opacity: 85,
+            overlay_size: OverlaySize::Medium,
+            overlay_content: OverlayContent::Full,
 
             ai_key: String::new(),
             ai_model: String::new(),
@@ -197,6 +289,32 @@ impl Settings {
 
     /// Held to the range [`Settings::refusal`] allows, for a file edited by
     /// hand: past the ceiling no outage could be recorded at all.
+    /// Takes the overlay's settings from `other`, leaving the rest. Returns
+    /// whether anything changed.
+    pub fn take_overlay(&mut self, other: &Settings) -> bool {
+        let fields = |s: &Settings| {
+            (
+                s.game_overlay,
+                s.game_overlay_corner,
+                s.overlay_opacity,
+                s.overlay_size,
+                s.overlay_content,
+            )
+        };
+        let wanted = fields(other);
+        if fields(self) == wanted {
+            return false;
+        }
+        (
+            self.game_overlay,
+            self.game_overlay_corner,
+            self.overlay_opacity,
+            self.overlay_size,
+            self.overlay_content,
+        ) = wanted;
+        true
+    }
+
     pub fn interval(&self) -> std::time::Duration {
         std::time::Duration::from_millis(self.probe_interval_ms.clamp(300, MAX_PROBE_INTERVAL_MS))
     }
@@ -303,6 +421,20 @@ pub fn resolve_target(text: &str) -> Option<Ipv4Addr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_overlay_applies_alone_and_leaves_the_rest_of_the_draft() {
+        let mut live = Settings::default();
+        let mut draft = Settings::default();
+        assert!(!live.take_overlay(&draft), "nothing changed");
+
+        draft.overlay_size = OverlaySize::Large;
+        draft.overlay_opacity = 40;
+        draft.ping_ok_ms = 999.0;
+        assert!(live.take_overlay(&draft));
+        assert_eq!((live.overlay_size, live.overlay_opacity), (OverlaySize::Large, 40));
+        assert_ne!(live.ping_ok_ms, 999.0, "a threshold waits for Save");
+    }
 
     #[test]
     fn a_sweep_timeout_never_outlasts_its_own_interval() {

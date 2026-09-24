@@ -301,24 +301,39 @@ An outage is only recorded if the monitor is running when it happens. So:
 
 ## Game mode
 
-NetDoctor notices League of Legends, Counter-Strike 2 or VALORANT running (by
-process name, every few seconds) and then:
+NetDoctor notices League of Legends, Counter-Strike 2, VALORANT or
+Hearthstone running (by process name, every few seconds) and then:
 
 - **measures twice as often**, so a spike is caught while it happens;
-- **shows an overlay** in the top-left corner: the router's and the
+- **shows an overlay** in a corner of the game's screen (top left unless
+  Settings picks another; CS2 and VALORANT keep their minimap there): the
+  router's and the
   internet's reply time, and whose side a spike is on: *your side* (Wi-Fi or
-  router) when the router spiked with the internet, *past your router*
-  (provider or game server) when only the internet did. A spike is at least
-  50 ms over the last ten seconds' median, held for two of the last three
-  readings. Those numbers were chosen on a real recorded week: a first guess
-  of +30 ms on any single reading would have warned 27 times an hour on a
-  line that was sound 97% of the time; these warn about 3.5 times an hour. When no spike is
-  happening but this PC is moving more than 2 Mbit/s, it says so: a match
-  needs far less, so something else is downloading. Which program, it cannot
-  tell. The overlay is a separate click-through window, nothing is injected
+  router) when the router spiked with the internet, *past your router* (the
+  line or the provider) when only the internet did. The internet reply is
+  Cloudflare's or Google's, not the game server's: a lag on the game's own
+  server does not show. A spike is at least 50 ms over the calm part of the
+  last two minutes (the 20th percentile), held for two of the last three
+  readings, so a lag that lasts a minute is still called one. Those numbers
+  were chosen on real recorded readings: a first guess of +30 ms on any
+  single reading would have warned 27 times an hour on a line that was sound
+  97% of the time; these warn about 6 times an hour. While all is
+  calm it shows only the two numbers and a green bar; a second line appears
+  only for a spike or an outage. When a spike past the router comes while
+  this PC is moving more than 2 Mbit/s (a match needs far less), it names
+  both, because a download fills the line's queue and looks just like the
+  provider. Which
+  program, it cannot tell. The overlay is a separate click-through window, nothing is injected
   into the game, so anti-cheat has nothing to object to. It shows over
-  borderless windowed; over exclusive fullscreen Windows may hide it. It can
-  be turned off in Settings.
+  borderless windowed; over exclusive fullscreen Windows may hide it. It shows
+  only over these games, never over a browser or anything else, and can be
+  turned off in Settings. Settings also set
+  its visibility (20-100%), its size (small, medium, large; the window fits
+  its text), and what it shows: ping and verdict, router and internet, or the
+  internet alone. The compact choices drop the verdict, never an outage: while
+  something is down, that is what the overlay says. These overlay settings
+  take effect on the click, while the overlay is watched; the rest of
+  Settings waits for Save.
 
 It does not show the game server's ping: these games talk over UDP, CS2
 through Valve's relays, and a ping measured from outside the game would be a
@@ -434,7 +449,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-360 tests, covering the failure-blame logic, the statistics, the registry layer,
+368 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

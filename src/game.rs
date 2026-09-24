@@ -23,12 +23,14 @@ use crate::store::Store;
 /// The games watched for, by process name, with the name shown for them.
 ///
 /// The in-match processes, not the launchers: the overlay has nothing to say
-/// in a lobby. Hearthstone is left out on purpose: turn-based, and a ping it
-/// would notice is an outage, which the monitor already reports.
-pub const GAMES: [(&str, &str); 3] = [
+/// in a lobby. Hearthstone is turn-based and was first left out, but its
+/// player wanted the overlay there too; it has no separate match process, so
+/// it counts from the moment it starts.
+pub const GAMES: [(&str, &str); 4] = [
     ("League of Legends.exe", "League of Legends"),
     ("cs2.exe", "Counter-Strike 2"),
     ("VALORANT-Win64-Shipping.exe", "VALORANT"),
+    ("Hearthstone.exe", "Hearthstone"),
 ];
 
 /// The launchers and clients that stay up between matches. A session lasts
@@ -145,14 +147,26 @@ pub enum Blame {
 const BLAME_MIN: usize = 10;
 /// The newest sweeps a spike is looked for in.
 const BLAME_RECENT: usize = 3;
+/// How far back, in seconds, the sweeps a spike is measured against reach.
+/// In seconds rather than sweeps, so the overlay's faster cadence during a
+/// game and the monitor's usual one judge the same stretch of time.
+pub const BLAME_SPAN_S: f64 = 120.0;
+/// Where in the older sweeps' replies the baseline sits: low, so a lag that
+/// fills most of the span is still measured against the calm part of it.
+/// The median did not do that: a lag held for half the window became the
+/// median and was then called stable.
+// ponytail: a lag that outlasts ~80% of the span becomes the baseline and
+// reads as clean again; the first line's absolute ping still shows it. A
+// baseline kept across the whole game would be the upgrade.
+const BASELINE_AT: f64 = 0.2;
 
 /// Reads the spike, if any, off the window of sweeps, oldest first.
 ///
-/// A spike is a reply in the latest few sweeps well above the window's
-/// median, or no reply at all. It is on this side when the router spiked in
-/// the same sweeps: every packet crosses the Wi-Fi and the router first, so a
-/// delay there shows on both, and a delay past them shows only on the
-/// internet.
+/// A spike is a reply in the latest few sweeps well above the baseline of
+/// the older ones, or no reply at all. It is on this side when the router
+/// spiked in the same sweeps: every packet crosses the Wi-Fi and the router
+/// first, so a delay there shows on both, and a delay past them shows only
+/// on the internet.
 pub fn blame(window: &[Reading]) -> Blame {
     if window.len() < BLAME_MIN {
         return Blame::Unknown;
@@ -178,7 +192,11 @@ struct Tuning {
 /// +30 ms on any one sweep, would have spoken 27 times an hour on a line
 /// that was sound 97% of the time: nobody trusts a warning every two
 /// minutes. +50 ms held for two of the last three sweeps spoke 3.5 times an
-/// hour, and that is a delay a player feels, not one lost ping.
+/// hour, and that is a delay a player feels, not one lost ping. Against the
+/// low baseline over [`BLAME_SPAN_S`] it speaks 6.4 times an hour on 118,942
+/// recorded sweeps, where the median over 20 sweeps spoke 5.0 but called 29% of the
+/// sweeps inside a lag over 100 ms stable. +80 ms would be 3.6 an hour, and
+/// would let a spike from 25 to 90 ms, which a player feels, pass unsaid.
 const TUNING: Tuning =
     Tuning { net_floor_ms: 50.0, net_ratio: 0.5, router_floor_ms: 15.0, need: 2 };
 
@@ -195,7 +213,7 @@ fn blame_with(window: &[Reading], t: &Tuning) -> Blame {
 }
 
 /// Whether at least `need` of the `recent` sweeps are well above the
-/// window's median, a lost reply counting as above.
+/// baseline of the sweeps before them, a lost reply counting as above.
 fn spiked(
     window: &[Reading],
     recent: &[Reading],
@@ -204,13 +222,14 @@ fn spiked(
     ratio: f64,
     need: usize,
 ) -> bool {
-    let mut all: Vec<f64> = window.iter().filter_map(&pick).collect();
+    let older = &window[..window.len() - recent.len()];
+    let mut all: Vec<f64> = older.iter().filter_map(&pick).collect();
     if all.is_empty() {
         return false;
     }
     all.sort_by(|a, b| a.total_cmp(b));
-    let median = all[all.len() / 2];
-    let limit = median + floor_ms.max(median * ratio);
+    let base = all[(all.len() as f64 * BASELINE_AT) as usize];
+    let limit = base + floor_ms.max(base * ratio);
     recent.iter().filter(|r| pick(r).is_none_or(|v| v > limit)).count() >= need
 }
 
@@ -560,7 +579,8 @@ mod tests {
         assert!(is_game("league of legends.exe"));
         assert!(is_game("CS2.EXE"));
         assert!(is_game("VALORANT-Win64-Shipping.exe"));
-        assert!(!is_game("Hearthstone.exe"), "turn-based, left out on purpose");
+        assert!(is_game("Hearthstone.exe"));
+        assert!(!is_game("chrome.exe"), "a browser is not a game");
         assert!(!is_game("LeagueClient.exe"), "the lobby, not the match");
     }
 
@@ -596,6 +616,16 @@ mod tests {
 
         // Below +50 ms is not a spike either.
         assert_eq!(blame(&held(Reading { router: Some(4.0), internet: Some(60.0) })), Blame::Clean);
+    }
+
+    #[test]
+    fn a_lag_that_fills_most_of_the_window_is_still_a_lag() {
+        // Half a minute calm, then a lag held longer than the calm part: the
+        // median of the window is the lag by now, and it is still one.
+        let far = Reading { router: Some(3.5), internet: Some(140.0) };
+        let mut w = steady(30, 3.0, 25.0);
+        w.extend(vec![far; 60]);
+        assert_eq!(blame(&w), Blame::Beyond);
     }
 
     #[test]
@@ -682,11 +712,18 @@ mod tests {
         println!("sweeps {}", seq.len());
         for t in tunings {
             let (mut judged, mut local, mut beyond, mut alerts) = (0usize, 0usize, 0usize, 0usize);
+            // Sweeps in a lag a player feels (two of the last three internet
+            // replies over 100 ms) that were still called clean.
+            let (mut lagging, mut missed) = (0usize, 0usize);
             let mut prev = Blame::Clean;
+            let mut start = 0;
             for i in 0..seq.len() {
+                // The overlay's window: the sweeps of the last span.
+                while seq[i].0 - seq[start].0 > (BLAME_SPAN_S * 1000.0) as i64 {
+                    start += 1;
+                }
                 // Only an unbroken run of sweeps is a window: a gap is the
                 // app closed or asleep, not a spike.
-                let start = i.saturating_sub(WINDOW_FOR_TEST - 1);
                 let window = &seq[start..=i];
                 if window.len() < BLAME_MIN || !window.windows(2).all(|w| w[1].0 - w[0].0 <= 3000) {
                     continue;
@@ -694,6 +731,13 @@ mod tests {
                 let readings: Vec<Reading> = window.iter().map(|(_, r)| *r).collect();
                 let b = blame_with(&readings, &t);
                 judged += 1;
+                let recent = &readings[readings.len() - BLAME_RECENT..];
+                if recent.iter().filter(|r| r.internet.is_some_and(|v| v > 100.0)).count() >= 2 {
+                    lagging += 1;
+                    if b == Blame::Clean {
+                        missed += 1;
+                    }
+                }
                 match b {
                     Blame::Local => local += 1,
                     Blame::Beyond => beyond += 1,
@@ -707,17 +751,18 @@ mod tests {
             }
             let hours = judged as f64 / 3600.0;
             println!(
-                "net +{:>3} ms need {}: local {:.2}% beyond {:.2}% alerts/h {:.1}",
+                "net +{:>3} ms need {}: local {:.2}% beyond {:.2}% alerts/h {:.1} \
+                 clean in lag {:.0}% of {}",
                 t.net_floor_ms,
                 t.need,
                 local as f64 * 100.0 / judged.max(1) as f64,
                 beyond as f64 * 100.0 / judged.max(1) as f64,
-                alerts as f64 / hours.max(1e-9)
+                alerts as f64 / hours.max(1e-9),
+                missed as f64 * 100.0 / lagging.max(1) as f64,
+                lagging
             );
         }
     }
-
-    const WINDOW_FOR_TEST: usize = 20;
 
     #[test]
     #[ignore = "watches the live machine"]

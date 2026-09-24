@@ -109,18 +109,28 @@ strings! {
         "Nothing to change: updates are not downloading and Wi-Fi power saving is already off.",
         "Nie ma nic do zmiany: aktualizacje nie są pobierane, a oszczędzanie energii Wi-Fi jest \
          już wyłączone.";
-    ov_not_measuring => "NetDoctor: not measuring", "NetDoctor: nie mierzę";
-    ov_clean => "Stable", "Stabilnie";
-    ov_unknown => "Collecting readings…", "Zbieram pomiary…";
-    ov_local =>
-        "Spike on your side: Wi-Fi or router",
-        "Skok po Twojej stronie: Wi-Fi lub router";
-    ov_beyond =>
-        "Spike past your router: provider or server",
-        "Skok za routerem: dostawca lub serwer";
+    ov_not_measuring => "Not measuring", "Nie mierzę";
+    ov_router_label => "LAN", "LAN";
+    ov_internet_label => "NET", "NET";
+    ov_local => "Spike: Wi-Fi/router", "Skok: Wi-Fi/router";
+    ov_beyond => "Spike: line/provider", "Skok: łącze/dostawca";
     set_game_overlay =>
         "Show the ping overlay while a game runs",
         "Pokazuj nakładkę z pingiem podczas gry";
+    set_overlay_corner => "Overlay corner:", "Róg nakładki:";
+    set_overlay_opacity => "Visibility", "Widoczność";
+    set_overlay_size => "Size:", "Rozmiar:";
+    size_small => "small", "mały";
+    size_medium => "medium", "średni";
+    size_large => "large", "duży";
+    set_overlay_content => "Show:", "Pokazuj:";
+    content_full => "ping and verdict", "ping i ocenę";
+    content_ping => "router and internet", "router i internet";
+    content_internet => "internet only", "sam internet";
+    corner_top_left => "top left", "lewy górny";
+    corner_top_right => "top right", "prawy górny";
+    corner_bottom_left => "bottom left", "lewy dolny";
+    corner_bottom_right => "bottom right", "prawy dolny";
     tray_paused => "NetDoctor: measuring paused", "NetDoctor: pomiar wstrzymany";
     tray_waiting => "NetDoctor: waiting for the first reading", "NetDoctor: czekam na pierwszy pomiar";
 
@@ -3067,17 +3077,10 @@ pub fn game_prepared(changes: usize) -> String {
     }
 }
 
-pub fn ov_ping(router: &str, internet: &str) -> String {
+pub fn ov_beyond_busy(mbps: f64) -> String {
     match current() {
-        Lang::En => format!("Router {router}   Internet {internet}"),
-        Lang::Pl => format!("Router {router}   Internet {internet}"),
-    }
-}
-
-pub fn ov_busy(mbps: f64) -> String {
-    match current() {
-        Lang::En => format!("Something on this PC is using {mbps:.0} Mbit/s"),
-        Lang::Pl => format!("Coś na tym komputerze zajmuje {mbps:.0} Mbit/s"),
+        Lang::En => format!("Spike: line, PC uses {mbps:.0} Mb/s"),
+        Lang::Pl => format!("Skok: łącze, ruch PC {mbps:.0} Mb/s"),
     }
 }
 
