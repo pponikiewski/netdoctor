@@ -216,6 +216,34 @@ pub fn report(scan: &Scan, net: &NetState) -> String {
     if let Some((usual, n)) = m.baseline {
         line(format!("- Usual ping on this line (7-day median of {n} readings): {usual:.0} ms"));
     }
+    if let (Some(own), Some(public)) = (m.dns_own_ms, m.dns_public_ms) {
+        line(format!(
+            "- DNS, best of 3: the connection's own resolvers {own:.0} ms, public 1.1.1.1 {public:.0} ms"
+        ));
+    }
+    line(format!(
+        "- IPv6: {}",
+        match &m.ipv6 {
+            Some(diagnose::Ipv6State::Works(ms)) => format!("works, connected in {ms:.0} ms"),
+            Some(diagnose::Ipv6State::Absent) =>
+                "no IPv6 route (normal, everything uses IPv4)".into(),
+            Some(diagnose::Ipv6State::Broken) =>
+                "an IPv6 route exists but connections time out".into(),
+            Some(diagnose::Ipv6State::Failed(why)) => format!("could not be checked: {why}"),
+            None => "not checked".into(),
+        }
+    ));
+    if m.syslog.is_empty() {
+        line("- Windows event log during the scan: no connection faults".into());
+    }
+    for e in &m.syslog {
+        line(format!(
+            "- Windows logged at {}: {}{}",
+            diagnose::format_clock_s(e.ts),
+            i18n::log_kind(e.kind),
+            e.reason.map(|r| format!(" (reason {r})")).unwrap_or_default()
+        ));
+    }
     match &m.load {
         Some(l) => line(format!(
             "- Load test: idle {} ms, loaded {} ms, {} Mbps, grade {}{}",

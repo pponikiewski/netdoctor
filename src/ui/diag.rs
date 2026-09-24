@@ -15,7 +15,7 @@ use eframe::egui;
 use super::{
     App, Job, FG, FG_DIM, GREEN, RED, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_TITLE, YELLOW,
 };
-use crate::diagnose::{self, Link, LinkState, Segment, Severity, Verdict};
+use crate::diagnose::{self, Ipv6State, Link, LinkState, Segment, Severity, Verdict};
 use crate::i18n;
 use crate::longrun::{LongRun, Trouble};
 use crate::probe::netstate::Medium;
@@ -564,13 +564,39 @@ fn measure_card(app: &App, ui: &mut egui::Ui) {
             None => i18n::measure_load_skipped().into(),
         };
 
+        let ipv6 = match &m.ipv6 {
+            Some(Ipv6State::Works(v)) => ms(*v),
+            Some(Ipv6State::Absent) => i18n::ipv6_absent().into(),
+            Some(Ipv6State::Broken) => i18n::ipv6_broken().into(),
+            Some(Ipv6State::Failed(why)) => why.clone(),
+            None => i18n::measure_none().into(),
+        };
+        let dns_public = match (m.dns_own_ms, m.dns_public_ms) {
+            (Some(own), Some(public)) => format!("{} / {}", ms(own), ms(public)),
+            (Some(own), None) => format!("{} / {}", ms(own), i18n::link_silent()),
+            _ => i18n::measure_none().into(),
+        };
+        let syslog = if m.syslog.is_empty() {
+            i18n::measure_syslog_none().to_string()
+        } else {
+            m.syslog
+                .iter()
+                .take(4)
+                .map(|e| format!("{} {}", diagnose::format_clock_s(e.ts), i18n::log_kind(e.kind)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
         egui::Grid::new("measure_other").spacing([S_LG, S_SM]).show(ui, |ui| {
             for (k, v) in [
                 (i18n::measure_medium(), medium),
                 (i18n::measure_dns(), dns),
+                (i18n::measure_dns_public(), dns_public),
                 (i18n::measure_tcp(), tcp),
+                (i18n::measure_ipv6(), ipv6),
                 (i18n::measure_baseline(), baseline),
                 (i18n::measure_load(), load),
+                (i18n::measure_syslog(), syslog),
             ] {
                 ui.label(egui::RichText::new(k).size(T_BODY).color(FG_DIM));
                 ui.label(egui::RichText::new(v).size(T_BODY).color(FG));

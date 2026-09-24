@@ -31,6 +31,7 @@ use crate::cause::Confidence;
 use crate::i18n;
 use crate::longrun::{self, LongRun, Trouble};
 use crate::monitor;
+use crate::probe::eventlog::{self, Kind as LogKind, SysEvent};
 use crate::probe::icmp;
 use crate::probe::netstate::{self, LinkCounters, Medium, NetState};
 use crate::settings::Settings;
@@ -216,6 +217,38 @@ pub struct Measurements {
     pub blind: Option<String>,
     /// The long measurement, when the user asked for one and it ran.
     pub long: Option<LongRun>,
+    /// Whether a connection gets through over IPv6. `None` when not tried.
+    pub ipv6: Option<Ipv6State>,
+    /// Best of three answers from the adapter's own resolvers and from a
+    /// public one, asked back to back so they compare like with like.
+    pub dns_own_ms: Option<f64>,
+    pub dns_public_ms: Option<f64>,
+    /// Connection faults Windows itself logged while the scan ran.
+    pub syslog: Vec<SysEvent>,
+}
+
+/// What an IPv6 connection attempt found.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Ipv6State {
+    /// A connection opened, in this many milliseconds.
+    Works(f64),
+    /// No IPv6 route at all. Most home lines in Poland are like this, and it
+    /// costs nothing: everything goes over IPv4.
+    Absent,
+    /// Windows has an IPv6 route, but connections over it time out. This one
+    /// hurts: software that tries IPv6 first waits before falling back.
+    Broken,
+    /// Something else went wrong, in the system's own words.
+    Failed(String),
+}
+
+/// One IPv6 connection attempt, reduced to what it says.
+#[derive(Debug, Clone, PartialEq)]
+enum V6Try {
+    Connected(f64),
+    TimedOut,
+    NoRoute,
+    Other(String),
 }
 
 /// Asking the scan to keep watching for minutes after its quick checks.
@@ -412,6 +445,7 @@ pub fn scan(
         ..Default::default()
     };
     let mut out = Vec::new();
+    let started = store::now();
 
     say(i18n::step_medium(), 0.02);
     out.extend(check_medium(net, store, settings));
@@ -439,6 +473,12 @@ pub fn scan(
 
     out.extend(report_dns(net, &wire, &mut m));
     out.extend(report_wire(net, store, settings, &wire, &mut m));
+
+    say(i18n::step_dns_compare(), 0.42);
+    out.extend(check_dns_compare(net, &mut m));
+
+    say(i18n::step_ipv6(), 0.47);
+    out.extend(check_ipv6(&mut m));
 
     say(i18n::step_mtu(), 0.50);
     out.extend(check_mtu(net, store, settings));
@@ -470,6 +510,10 @@ pub fn scan(
     if let Some(opts) = long {
         out.extend(check_long(opts, settings, outer.clone(), &mut m));
     }
+
+    // Last, so the window covers the long measurement too.
+    say(i18n::step_syslog(), 0.97);
+    out.extend(check_syslog(net, started, &mut m));
 
     if let Some(p) = &outer {
         p(i18n::step_done(), 1.0);
@@ -521,6 +565,18 @@ pub fn judge(findings: &[Finding], m: &Measurements, cfg: &Settings) -> Verdict 
             v.actions = worst_of(seg);
             return v;
         }
+    }
+
+    // 1b. Windows logged the Wi-Fi link dropping while we watched. Not an
+    //     inference from pings but the OS naming the event, on the adapter
+    //     the scan measured.
+    if has("syslog_wifi") {
+        v.segment = Segment::Lan;
+        v.confidence = Confidence::Likely;
+        v.cost = i18n::cost_down().into();
+        v.actions = actions_for_key(findings, "syslog_wifi");
+        v.actions.extend(worst_of(Segment::Lan).into_iter().take(2));
+        return v;
     }
 
     // Everything below reads the pings. Without them the only honest verdict
@@ -631,10 +687,14 @@ pub fn judge(findings: &[Finding], m: &Measurements, cfg: &Settings) -> Verdict 
     }
 
     // 6. DNS. The line is fine; the wait happens before it is used.
-    if has("dns_slow") || has("dns_router") {
+    let dns_behind =
+        findings.iter().any(|f| f.key == "dns_compare" && f.severity == Severity::Warn);
+    if has("dns_slow") || has("dns_router") || dns_behind {
         v.segment = Segment::Dns;
         v.confidence = Confidence::Likely;
-        v.cost = i18n::cost_dns(m.dns_ms.unwrap_or(0.0));
+        // The slower of the two readings: either one crossing its line is
+        // what put the verdict here.
+        v.cost = i18n::cost_dns(m.dns_ms.unwrap_or(0.0).max(m.dns_own_ms.unwrap_or(0.0)));
         v.actions = worst_of(Segment::Dns);
         return v;
     }
@@ -733,14 +793,15 @@ fn actions_for(findings: &[Finding], seg: Segment) -> Vec<Action> {
 /// Which segment a finding speaks about. Keys are stable; titles are not.
 fn segment_of(key: &str) -> Option<Segment> {
     Some(match key {
-        "medium" | "signal" | "band" | "gateway" | "gateway_silent" | "hist_lan" => Segment::Lan,
+        "medium" | "signal" | "band" | "gateway" | "gateway_silent" | "hist_lan"
+        | "syslog_wifi" => Segment::Lan,
         "power" | "mtu" | "tcp_autotuning" | "net_throttling" | "hist_adapter" => Segment::Config,
         "load" => Segment::Uplink,
-        "edge" | "edge_silent" | "internet_silent" | "hist_isp" => Segment::Isp,
+        "edge" | "edge_silent" | "internet_silent" | "hist_isp" | "ipv6_broken" => Segment::Isp,
         "loss" | "jitter" | "ping" | "internet" | "baseline" | "tcp_blocked" | "tcp_slow" => {
             Segment::Internet
         }
-        "dns_resolve" | "dns_slow" | "dns_router" | "hist_dns" => Segment::Dns,
+        "dns_resolve" | "dns_slow" | "dns_router" | "dns_compare" | "hist_dns" => Segment::Dns,
         _ => return None,
     })
 }
@@ -1679,6 +1740,230 @@ const HIST_WINDOW_S: f64 = 24.0 * 3600.0;
 /// clean day. Short of it, the finding says how much was.
 const HIST_WATCHED_ENOUGH: f64 = 0.95;
 
+/// Public anchors reachable over IPv6: Cloudflare's and Google's resolvers,
+/// the same two operators as the IPv4 anchors.
+const ANCHOR6: [std::net::Ipv6Addr; 2] = [
+    std::net::Ipv6Addr::new(0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111),
+    std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888),
+];
+
+/// Whether IPv6 works, is simply not there, or is there and broken.
+///
+/// The last is the one worth finding. A router that hands out IPv6 addresses
+/// over a line whose IPv6 does not actually carry traffic makes every program
+/// that tries IPv6 first wait for it to fail before falling back, which is
+/// felt as "the first page takes seconds, then it is fine".
+fn check_ipv6(m: &mut Measurements) -> Vec<Finding> {
+    let tries: Vec<V6Try> = std::thread::scope(|s| {
+        let handles: Vec<_> = ANCHOR6
+            .iter()
+            .map(|a| {
+                s.spawn(move || {
+                    let addr = SocketAddr::from((*a, 443));
+                    let started = Instant::now();
+                    match TcpStream::connect_timeout(&addr, Duration::from_secs(3)) {
+                        Ok(_) => V6Try::Connected(started.elapsed().as_secs_f64() * 1000.0),
+                        Err(e) => v6_error(&e),
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| V6Try::Other("probe thread died".into())))
+            .collect()
+    });
+    let state = ipv6_state(&tries);
+    m.ipv6 = Some(state.clone());
+
+    vec![match state {
+        Ipv6State::Works(ms) => {
+            Finding::new("ipv6", i18n::f_ipv6_ok(ms), Severity::Good, i18n::f_ipv6_ok_detail())
+        }
+        Ipv6State::Absent => Finding::new(
+            "ipv6",
+            i18n::f_ipv6_absent(),
+            Severity::Info,
+            i18n::f_ipv6_absent_detail(),
+        ),
+        Ipv6State::Broken => Finding::new(
+            "ipv6_broken",
+            i18n::f_ipv6_broken(),
+            Severity::Warn,
+            i18n::f_ipv6_broken_detail(),
+        )
+        .advise(i18n::f_ipv6_broken_advice())
+        .fixed_by("prefer_ipv4"),
+        Ipv6State::Failed(why) => Finding::new("ipv6", i18n::f_ipv6_unknown(), Severity::Info, why),
+    }]
+}
+
+/// What a failed connect says. The Winsock codes are read rather than the
+/// `ErrorKind`, whose unreachable variants are newer than this crate's
+/// minimum Rust version.
+fn v6_error(e: &std::io::Error) -> V6Try {
+    // WSAENETUNREACH, WSAEHOSTUNREACH, WSAEAFNOSUPPORT, WSAEADDRNOTAVAIL: no
+    // IPv6 on this machine or no route for it.
+    const NO_ROUTE: [i32; 4] = [10051, 10065, 10047, 10049];
+    match (e.kind(), e.raw_os_error()) {
+        (std::io::ErrorKind::TimedOut, _) | (_, Some(10060)) => V6Try::TimedOut,
+        (_, Some(code)) if NO_ROUTE.contains(&code) => V6Try::NoRoute,
+        _ => V6Try::Other(e.to_string()),
+    }
+}
+
+/// Either anchor connecting is IPv6 working. Otherwise a timeout means a
+/// route that goes nowhere, and only every attempt finding no route means
+/// there is no IPv6 to speak of.
+fn ipv6_state(tries: &[V6Try]) -> Ipv6State {
+    let best = tries
+        .iter()
+        .filter_map(|t| match t {
+            V6Try::Connected(ms) => Some(*ms),
+            _ => None,
+        })
+        .fold(f64::NAN, f64::min);
+    if best.is_finite() {
+        return Ipv6State::Works(best);
+    }
+    if tries.contains(&V6Try::TimedOut) {
+        return Ipv6State::Broken;
+    }
+    if !tries.is_empty() && tries.iter().all(|t| *t == V6Try::NoRoute) {
+        return Ipv6State::Absent;
+    }
+    let why: Vec<&str> = tries
+        .iter()
+        .filter_map(|t| match t {
+            V6Try::Other(e) => Some(e.as_str()),
+            _ => None,
+        })
+        .collect();
+    Ipv6State::Failed(why.join("; "))
+}
+
+/// The adapter's resolvers against a public one, same question, asked back
+/// to back, best of three each.
+///
+/// "DNS answered in 60 ms" says little on its own: that is slow for a fibre
+/// line and normal on LTE. The same question put to a public resolver over
+/// the same line a moment later is the comparison that makes it mean
+/// something. The best of three, because the first answer from either may
+/// have had to be fetched from further away and the next one not.
+fn check_dns_compare(net: &NetState, m: &mut Measurements) -> Vec<Finding> {
+    use crate::probe::netstate::resolvers_answer;
+    use crate::settings::DNS_TEST_HOST;
+
+    let public = [ANCHOR];
+    // Already public: comparing it with itself would only measure noise.
+    if net.dns_servers.is_empty() || net.dns_servers.iter().any(|d| is_public_resolver(*d)) {
+        return Vec::new();
+    }
+    let best = |servers: &[Ipv4Addr]| {
+        (0..3).filter_map(|_| resolvers_answer(servers, DNS_TEST_HOST).0).fold(f64::NAN, f64::min)
+    };
+    let (own, public_ms) = (best(&net.dns_servers), best(&public));
+    let finite = |v: f64| v.is_finite().then_some(v);
+    m.dns_own_ms = finite(own);
+    m.dns_public_ms = finite(public_ms);
+
+    match (m.dns_own_ms, m.dns_public_ms) {
+        (Some(own), Some(public)) if dns_is_behind(own, public) => {
+            let f = Finding::new(
+                "dns_compare",
+                i18n::f_dns_compare_slow(own, public),
+                Severity::Warn,
+                i18n::f_dns_compare_detail(own, public),
+            );
+            // A resolver the user runs on purpose (a Pi-hole) is never
+            // offered for replacement.
+            if net.dns_is_own_resolver() {
+                vec![f.advise(i18n::f_dns_compare_own_advice())]
+            } else {
+                vec![f.advise(i18n::f_dns_compare_advice()).fixed_by("fast_dns")]
+            }
+        }
+        (Some(own), Some(public)) => vec![Finding::new(
+            "dns_compare",
+            i18n::f_dns_compare_ok(own, public),
+            Severity::Good,
+            i18n::f_dns_compare_detail(own, public),
+        )],
+        // The adapter's resolver failing is `dns_resolve`'s to report; a
+        // public one failing is usually a network that only allows its own.
+        (Some(_), None) => vec![Finding::new(
+            "dns_compare",
+            i18n::f_dns_compare_public_failed(),
+            Severity::Info,
+            i18n::f_dns_compare_public_failed_detail(),
+        )],
+        _ => Vec::new(),
+    }
+}
+
+/// The well-known public resolvers, whose speed is not the provider's.
+fn is_public_resolver(a: Ipv4Addr) -> bool {
+    matches!(a.octets(), [1, 1, 1, 1] | [1, 0, 0, 1] | [8, 8, 8, 8] | [8, 8, 4, 4] | [9, 9, 9, 9])
+}
+
+/// Behind by enough to feel: twice as slow and at least 30 ms more. Twice 4 ms
+/// is still nothing, and 30 ms on top of a 200 ms satellite answer is noise.
+fn dns_is_behind(own: f64, public: f64) -> bool {
+    own >= public * 2.0 && own - public >= 30.0
+}
+
+/// How far before the scan's start the log is worth reading: a disconnect
+/// just before the button was pressed is often why it was pressed.
+const SYSLOG_BEFORE_S: f64 = 60.0;
+
+/// What Windows logged about the connection while the scan ran.
+///
+/// Every other check infers from pings; this is the operating system naming
+/// what happened. Only the wireless events are treated as evidence about
+/// this link: a "network disconnected" from the network profile service or a
+/// DHCP failure may belong to a VPN or a virtual adapter, so those are shown
+/// and never accused.
+fn check_syslog(net: &NetState, from: f64, m: &mut Measurements) -> Vec<Finding> {
+    let faults: Vec<SysEvent> = eventlog::window(from - SYSLOG_BEFORE_S, store::now())
+        .into_iter()
+        .filter(|e| e.kind.is_fault())
+        .collect();
+    let finding = syslog_finding(&faults, net.medium == Medium::Wifi);
+    m.syslog = faults;
+    finding.into_iter().collect()
+}
+
+/// Whether a logged event speaks for the adapter the scan measured.
+fn is_wifi_event(k: LogKind) -> bool {
+    matches!(k, LogKind::WlanDisconnect | LogKind::WlanAuthFail)
+}
+
+fn syslog_finding(faults: &[SysEvent], on_wifi: bool) -> Option<Finding> {
+    if faults.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = faults
+        .iter()
+        .take(6)
+        .map(|e| {
+            let reason = e.reason.map(|r| format!(" ({r})")).unwrap_or_default();
+            format!("{} {}{reason}", format_clock_s(e.ts), i18n::log_kind(e.kind))
+        })
+        .collect();
+    let detail = list.join(", ");
+    Some(if on_wifi && faults.iter().any(|e| is_wifi_event(e.kind)) {
+        Finding::new("syslog_wifi", i18n::f_syslog_wifi(), Severity::Critical, detail)
+            .advise(i18n::f_syslog_wifi_advice())
+    } else {
+        Finding::new(
+            "syslog",
+            i18n::f_syslog_other(faults.len()),
+            Severity::Info,
+            i18n::f_syslog_other_detail(&detail),
+        )
+    })
+}
+
 fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding> {
     let events = store.events_since(24.0 * 3600.0);
     if events.is_empty() {
@@ -1968,6 +2253,96 @@ mod tests {
         // Filtered pings to the internet with TCP working are not an outage.
         let filtered = vec![Finding::new("icmp_filtered", "", Severity::Warn, "")];
         assert_eq!(chain(&filtered, &Measurements::default())[2].state, LinkState::Filtered);
+    }
+
+    #[test]
+    fn ipv6_is_working_absent_or_broken_and_only_broken_is_a_fault() {
+        use V6Try::*;
+        assert_eq!(ipv6_state(&[TimedOut, Connected(20.0)]), Ipv6State::Works(20.0));
+        assert_eq!(ipv6_state(&[NoRoute, NoRoute]), Ipv6State::Absent);
+        // A route that swallows connections is the case that makes the first
+        // page slow, and one timeout is enough to say the route exists.
+        assert_eq!(ipv6_state(&[NoRoute, TimedOut]), Ipv6State::Broken);
+        assert_eq!(
+            ipv6_state(&[Other("refused".into()), NoRoute]),
+            Ipv6State::Failed("refused".into())
+        );
+        assert_eq!(ipv6_state(&[]), Ipv6State::Failed(String::new()));
+    }
+
+    #[test]
+    fn a_connect_error_is_read_by_its_winsock_code() {
+        let code = |c| v6_error(&std::io::Error::from_raw_os_error(c));
+        assert_eq!(code(10051), V6Try::NoRoute);
+        assert_eq!(code(10065), V6Try::NoRoute);
+        assert_eq!(code(10060), V6Try::TimedOut);
+        assert!(matches!(code(10061), V6Try::Other(_)));
+    }
+
+    #[test]
+    fn dns_is_behind_only_when_the_gap_is_felt() {
+        assert!(dns_is_behind(80.0, 12.0));
+        // Twice as slow, but 4 ms is nothing.
+        assert!(!dns_is_behind(8.0, 4.0));
+        // 40 ms more on a 200 ms line is noise, not a slower resolver.
+        assert!(!dns_is_behind(240.0, 200.0));
+    }
+
+    fn log_line(kind: LogKind) -> SysEvent {
+        SysEvent {
+            ts: 1_700_000_000.0,
+            provider: String::new(),
+            id: 0,
+            kind,
+            reason: Some(4),
+            detail: String::new(),
+        }
+    }
+
+    #[test]
+    fn only_a_wireless_log_line_on_wifi_is_evidence_against_the_link() {
+        let wifi = [log_line(LogKind::WlanDisconnect)];
+        assert_eq!(syslog_finding(&wifi, true).map(|f| f.key), Some("syslog_wifi".into()));
+        // On a cable a WLAN line is some other adapter's story.
+        assert_eq!(syslog_finding(&wifi, false).map(|f| f.key), Some("syslog".into()));
+        // "Network disconnected" can be a VPN going down: shown, not accused.
+        let other = [log_line(LogKind::LinkDown), log_line(LogKind::DhcpFail)];
+        let f = syslog_finding(&other, true).unwrap();
+        assert_eq!((f.key.as_str(), f.severity), ("syslog", Severity::Info));
+        assert!(syslog_finding(&[], true).is_none());
+    }
+
+    #[test]
+    fn a_logged_wifi_drop_during_the_scan_names_the_lan() {
+        // Pings came back clean in between, and the history blames the
+        // provider; the OS saw the card lose the access point.
+        let m = Measurements {
+            gateway: Some(stats(3.0, 0.0)),
+            internet: Some(stats(15.0, 0.0)),
+            ..Default::default()
+        };
+        let findings = vec![
+            syslog_finding(&[log_line(LogKind::WlanDisconnect)], true).unwrap(),
+            Finding::new("hist_isp", "drops", Severity::Critical, ""),
+        ];
+        let v = judge(&findings, &m, &Settings::default());
+        assert_eq!(v.segment, Segment::Lan);
+        assert!(!v.actions.is_empty());
+    }
+
+    #[test]
+    fn a_resolver_slower_than_a_public_one_is_a_dns_verdict() {
+        let m = Measurements {
+            gateway: Some(stats(3.0, 0.0)),
+            internet: Some(stats(15.0, 0.0)),
+            dns_own_ms: Some(90.0),
+            dns_public_ms: Some(12.0),
+            ..Default::default()
+        };
+        let behind = Finding::new("dns_compare", "", Severity::Warn, "").advise("switch");
+        assert_eq!(judge(&[behind], &m, &Settings::default()).segment, Segment::Dns);
+        let fine = Finding::new("dns_compare", "", Severity::Good, "");
+        assert_eq!(judge(&[fine], &m, &Settings::default()).segment, Segment::Healthy);
     }
 
     fn long_run_with(dead_gw_at: &[usize]) -> LongRun {

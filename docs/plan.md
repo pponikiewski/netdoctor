@@ -62,7 +62,7 @@ Zrobione w tej sesji: cofanie DNS wraca do DHCP, awaria przepisywana dopiero po 
 - [x] Ostatni widoczny hop obwiniany tylko, gdy jest celem trasy (audyt #11, `Path.dest`, test w `path.rs`)
 - [x] Model kanałów 5/6 GHz liczy cały blok 80 MHz sąsiada za pół (audyt #12, test w `airscan.rs`)
 - [x] UPnP IGD: czas działania routera, stan WAN, publiczny IP w kontekście awarii (restart routera vs rozłączenie przez dostawcę). `probe/igd.rs`, wątek `run_router` co 30 s, tabela `router`, reguły `router_wan_down` / `router_restarted` / `wan_new_ip` / `router_wan_up`. Odczyt sprawdzony na żywo (test `#[ignore]` `the_live_router_answers`: Connected, uptime ~19 dni); reguły tylko na danych syntetycznych, bez prawdziwej awarii
-- [ ] IPv6: czy jest adres i trasa, czy połączenie przez v6 dochodzi (wolne pierwsze ładowanie)
+- [x] IPv6: czy jest adres i trasa, czy połączenie przez v6 dochodzi (wolne pierwsze ładowanie). Zrobione w Diagnozie 2026-09-24 (`check_ipv6`), patrz niżej
 - [ ] BSS Load z beaconów: zajętość kanału i liczba stacji wg punktu dostępowego
 - [ ] Sprawdzić na żywo: VPN bez bramy daje `AdapterDown` (audyt #10)
 
@@ -74,5 +74,5 @@ Kolejność uzgodniona z użytkownikiem: 1+2 układ i dane, potem AI, potem 3, p
 - [x] AI jako drugi głos (OpenRouter). Maskowanie sprawdzone na prawdziwym raporcie z tej sieci (`[SSID]`, `[public IP]`); odrzucony klucz daje czytelne HTTP 401 (test `#[ignore]` `refused_key`); sekcja w Ustawieniach obejrzana
 - [ ] Odpowiedź modelu na prawdziwym skanie nie oglądana (`cargo test -- --ignored explains_a_real_scan --nocapture` z `OPENROUTER_API_KEY`)
 - [x] Etap 3: dłuższy pomiar (2–5 min), który łapie przerywane problemy. `longrun.rs` + 12 testów analizy, 3 testy werdyktu (zrywy wyprzedzają historię, spokojny pomiar jej nie kasuje, twarda awaria wyprzedza zrywy); 10 s nagrywania na żywo (test `#[ignore]` `ten_seconds`); w aplikacji obejrzane: wybór czasu, postęp „0:44 z 2:00”, przycisk przerwania, zakończenie 2-min pomiaru. Karta z paskiem czasu i tabelą zrywów NIE obejrzana (użytkownik grał, okno zasłonięte), progi 2 s / +50 ms / 3 skoki nie sprawdzone na `history.db`
-- [ ] Etap 4: nowe testy (kandydaci: IPv6, DNS z DHCP vs publiczny, rozłączenia z dziennika Windows w oknie skanu)
+- [x] Etap 4: IPv6 (działa / brak / ustawione i zepsute → `prefer_ipv4`), DNS przydzielony kontra 1.1.1.1 (najlepszy z 3, próg ×2 i +30 ms), dziennik Windows w oknie skanu (tylko zdarzenia WLAN na Wi-Fi obciążają łącze, reguła 1b). 6 testów; `--scan --quick` na żywo: IPv6 „brak” (10051), porównanie DNS pominięte (serwery już publiczne), dziennik bez usterek. Nie sprawdzone na żywo: przypadek „IPv6 zepsute”, wiersze w tabeli Pomiary w oknie aplikacji
 - [ ] Do rozważenia: werdykt „LAN” przy podziale czasu wskazującym na wejście do dostawcy (zaobserwowane 2026-09-24 na Wi-Fi, jitter 24 ms)

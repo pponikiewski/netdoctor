@@ -205,7 +205,12 @@ one English label that would silently fail everywhere else.
 - **Diagnose** — nine checks: adapter and medium (on a cable, also whether
   it is corrupting frames and what speed it negotiated), Wi-Fi quality and band,
   adapter power management, DNS, the link to the router, internet latency and
-  loss, MTU, TCP settings, and the recorded outage history. It opens with the
+  loss, MTU, TCP settings, and the recorded outage history; also whether IPv6
+  works, is simply absent, or is set up and broken (the case that makes first
+  loads slow), how your DNS compares with a public resolver asked the same
+  question, and what Windows itself logged about the connection while the scan
+  ran (a Wi-Fi drop logged on the card counts against the link; events that
+  may belong to a VPN or virtual adapter are shown but never blamed). It opens with the
   verdict, then draws the chain *this PC → router → provider → internet* with
   the milliseconds and loss each link added and the link at fault marked, then
   a table of every reading (samples sent, loss, min / avg / max, jitter per
@@ -429,7 +434,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-354 tests, covering the failure-blame logic, the statistics, the registry layer,
+360 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable
@@ -527,4 +532,5 @@ path before cutting a tag.
 - Memory use is around 70 MB — higher than the Tk prototype, because egui keeps
   a GPU surface. The trade was made for a single dependency-free binary, not for
   a smaller footprint.
-- IPv4 only.
+- Measurements are IPv4. IPv6 is checked only for whether a connection gets
+  through, not measured for latency or loss.

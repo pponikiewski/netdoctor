@@ -102,5 +102,7 @@ z łamania dokładnie tej zasady.
 
 - 2026-09-24 — długi pomiar (`longrun.rs`) rozdziela nagrywanie od czytania: `record` tylko zbiera (wątek i uchwyt ICMP na ogniwo, wszystkie na jednym zegarze start + n s, więc tick n to ta sama sekunda na każdym ogniwie), `analyse` jest czysta i trzyma wszystkie reguły. Strata przypisana do pierwszego ogniwa, które ją pokazuje; cisza pierwszego węzła dostawcy liczy się tylko, gdy w tej samej sekundzie milkną obie kotwice. W `judge` nowa reguła 3b między bufferbloatem a opóźnieniem: obserwacja z minut wyprzedza wnioskowanie z milisekund i historię, ale nie twardą awarię z chwili skanu, a pomiar bez zrywów niczego nie orzeka. Nie użyto próbek monitora z `history.db`, bo monitor nie pinguje węzła dostawcy i ma inny rytm.
 
+- 2026-09-24 — dziennik Windows czytany w oknie skanu (od 60 s przed startem do końca, więc obejmuje długi pomiar) i dopuszczony do werdyktu tylko w wąskim zakresie: zdarzenia WLAN (`WlanDisconnect`, `WlanAuthFail`), gdy skan szedł po Wi-Fi, bo dotyczą karty, którą mierzono. `NetworkProfile 10001` i DHCP nie są przypisane do karty (VPN, przełącznik wirtualny), więc są pokazywane jako Info i niczego nie obciążają. Reguła 1b w `judge` stoi zaraz po twardych awariach, z pewnością Likely, nie Certain, bo okno zaczyna się przed skanem. IPv6 rozpoznawane po kodach Winsock (10051/10065/10047/10049 = brak trasy, 10060 = timeout), nie po `ErrorKind`, którego warianty „unreachable” są nowsze niż rust-version 1.82.
+
 ## Open questions
 <!-- Track unresolved technical decisions -->

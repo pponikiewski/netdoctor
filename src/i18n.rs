@@ -718,6 +718,65 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Czasy to pełny przelot do końca danego odcinka, nie sam odcinek.";
     findings_heading => "Individual checks", "Poszczególne kontrole";
     f_long_failed => "The long measurement could not run", "Długi pomiar nie mógł się odbyć";
+    step_dns_compare => "Comparing DNS with a public resolver", "Porównuję DNS z publicznym";
+    step_ipv6 => "Checking IPv6", "Sprawdzam IPv6";
+    step_syslog => "Reading the Windows log", "Czytam dziennik Windows";
+    f_ipv6_ok_detail =>
+        "A connection over IPv6 opened. Programs that prefer IPv6 get it without waiting.",
+        "Połączenie przez IPv6 się otworzyło. Programy, które wolą IPv6, dostają je bez czekania.";
+    f_ipv6_absent => "No IPv6 on this connection", "Brak IPv6 na tym połączeniu";
+    f_ipv6_absent_detail =>
+        "This machine has no IPv6 route, so everything goes over IPv4. That is normal on many \
+         home lines and costs nothing.",
+        "Ten komputer nie ma trasy IPv6, więc wszystko idzie przez IPv4. Na wielu domowych \
+         łączach to normalne i niczego nie kosztuje.";
+    f_ipv6_broken => "IPv6 is set up but does not work", "IPv6 jest ustawione, ale nie działa";
+    f_ipv6_broken_detail =>
+        "Windows has an IPv6 route, but connections over it time out. Browsers and games that \
+         try IPv6 first wait for it to fail before falling back to IPv4, which feels like a slow \
+         first load or a slow login.",
+        "Windows ma trasę IPv6, ale połączenia przez nią nie dochodzą. Przeglądarki i gry, które \
+         najpierw próbują IPv6, czekają, aż się nie uda, i dopiero wtedy przechodzą na IPv4. \
+         Odczuwa się to jako wolne pierwsze ładowanie albo wolne logowanie.";
+    f_ipv6_broken_advice =>
+        "Restart the router. If it comes back, telling Windows to prefer IPv4 stops programs \
+         waiting for IPv6 (Fix), and the provider can say whether IPv6 is meant to work on \
+         your line.",
+        "Zrestartuj router. Jeśli wróci, ustawienie Windowsa „preferuj IPv4” sprawi, że programy \
+         przestaną czekać na IPv6 (Napraw), a dostawca powie, czy IPv6 ma na Twojej linii \
+         działać.";
+    f_ipv6_unknown => "IPv6 could not be checked", "Nie udało się sprawdzić IPv6";
+    f_dns_compare_own_advice =>
+        "This is a resolver you run yourself (a Pi-hole or similar). Check its upstream servers \
+         and its load; the app will not offer to replace it.",
+        "To Twój własny resolver (Pi-hole albo podobny). Sprawdź jego serwery nadrzędne i \
+         obciążenie; aplikacja nie zaproponuje jego wymiany.";
+    f_dns_compare_advice =>
+        "Every new site waits for this answer before it starts loading. Switching to a public \
+         resolver removes the wait.",
+        "Każda nowa strona czeka na tę odpowiedź, zanim zacznie się ładować. Przejście na \
+         publiczny resolver usuwa to czekanie.";
+    f_dns_compare_public_failed =>
+        "The public resolver did not answer", "Publiczny resolver nie odpowiedział";
+    f_dns_compare_public_failed_detail =>
+        "1.1.1.1 did not answer a DNS query from here. Some networks only allow their own \
+         resolver; the comparison could not be made.",
+        "1.1.1.1 nie odpowiedział stąd na zapytanie DNS. Niektóre sieci pozwalają tylko na \
+         własny resolver; porównania nie dało się zrobić.";
+    f_syslog_wifi =>
+        "Windows logged the Wi-Fi dropping during the scan",
+        "Windows zapisał rozłączenie Wi-Fi w trakcie skanu";
+    f_syslog_wifi_advice =>
+        "The card itself lost the access point. That is the air or the card: distance, \
+         interference, or Windows putting the card to sleep. A cable test settles which.",
+        "Karta sama zgubiła punkt dostępowy. To powietrze albo karta: odległość, zakłócenia albo \
+         Windows usypiający kartę. Test na kablu rozstrzygnie, które.";
+    measure_ipv6 => "IPv6", "IPv6";
+    measure_dns_public => "DNS: yours vs public (best of 3)", "DNS: Twój kontra publiczny (najlepszy z 3)";
+    measure_syslog => "Windows log during the scan", "Dziennik Windows w trakcie skanu";
+    measure_syslog_none => "no connection faults", "brak usterek połączenia";
+    ipv6_absent => "not available", "niedostępne";
+    ipv6_broken => "set up, but connections time out", "ustawione, ale połączenia nie dochodzą";
     f_long_advice_lan =>
         "The drops start between this PC and the router. Try the same test on a cable, or \
          closer to the router: if they stop, it is the Wi-Fi (distance, channel, the card's \
@@ -2735,6 +2794,64 @@ pub fn set_ai_model_hint(default: &str) -> String {
     match current() {
         Lang::En => format!("Any OpenRouter model id. Empty uses {default}."),
         Lang::Pl => format!("Dowolny identyfikator modelu z OpenRouter. Puste oznacza {default}."),
+    }
+}
+
+pub fn f_ipv6_ok(ms: f64) -> String {
+    match current() {
+        Lang::En => format!("IPv6 works ({ms:.0} ms to connect)"),
+        Lang::Pl => format!("IPv6 działa (połączenie w {ms:.0} ms)"),
+    }
+}
+
+pub fn f_dns_compare_slow(own: f64, public: f64) -> String {
+    match current() {
+        Lang::En => format!("Your DNS is slower than a public one ({own:.0} vs {public:.0} ms)"),
+        Lang::Pl => {
+            format!("Twój DNS jest wolniejszy od publicznego ({own:.0} wobec {public:.0} ms)")
+        }
+    }
+}
+
+pub fn f_dns_compare_ok(own: f64, public: f64) -> String {
+    match current() {
+        Lang::En => format!("Your DNS keeps up with a public one ({own:.0} vs {public:.0} ms)"),
+        Lang::Pl => {
+            format!("Twój DNS nie odstaje od publicznego ({own:.0} wobec {public:.0} ms)")
+        }
+    }
+}
+
+pub fn f_dns_compare_detail(own: f64, public: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "The same question, asked three times of each, best answer counted: the resolvers \
+             this connection was given answered in {own:.0} ms, 1.1.1.1 in {public:.0} ms."
+        ),
+        Lang::Pl => format!(
+            "To samo pytanie, zadane każdemu trzy razy, liczy się najlepsza odpowiedź: resolwery \
+             przydzielone temu połączeniu odpowiedziały w {own:.0} ms, 1.1.1.1 w {public:.0} ms."
+        ),
+    }
+}
+
+pub fn f_syslog_other(count: usize) -> String {
+    match current() {
+        Lang::En => format!("Windows logged {count} network event(s) during the scan"),
+        Lang::Pl => format!("Zdarzenia sieciowe w dzienniku Windows w trakcie skanu: {count}"),
+    }
+}
+
+pub fn f_syslog_other_detail(list: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "{list}. These may belong to another adapter (a VPN, a virtual switch), so they are \
+             shown here and not counted against this connection."
+        ),
+        Lang::Pl => format!(
+            "{list}. Mogą dotyczyć innej karty (VPN, przełącznik wirtualny), więc są tu pokazane, \
+             ale nie liczą się przeciwko temu połączeniu."
+        ),
     }
 }
 
