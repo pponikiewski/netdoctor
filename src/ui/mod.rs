@@ -227,6 +227,12 @@ pub struct App {
     pub scanning: bool,
     pub scan_label: String,
     pub scan_progress: f32,
+    /// The steps the running scan has reported, in order, for its checklist.
+    pub scan_steps: Vec<String>,
+    /// When the scan on screen finished, and the one before it, so a scan
+    /// after a fix can say what changed.
+    pub scan_at: Option<f64>,
+    pub prev_scan: Option<diag::PrevScan>,
     /// Whether the scan saturates the line to look for bufferbloat. On by
     /// default: it is the check that answers the question people actually ask.
     pub deep_scan: bool,
@@ -390,6 +396,9 @@ impl App {
             scanning: false,
             scan_label: crate::i18n::diag_scan_hint().into(),
             scan_progress: 0.0,
+            scan_steps: Vec::new(),
+            scan_at: None,
+            prev_scan: None,
             deep_scan: false,
             scan_held: false,
             long_secs: 0,
@@ -505,11 +514,21 @@ impl App {
         while let Ok(job) = self.rx.try_recv() {
             match job {
                 Job::ScanProgress(label, frac) => {
+                    match self.scan_steps.last_mut() {
+                        Some(last) if *last == label => {}
+                        Some(last) if diag::same_step(last, &label) => last.clone_from(&label),
+                        _ => self.scan_steps.push(label.clone()),
+                    }
                     self.scan_label = label;
                     self.scan_progress = frac;
                 }
                 Job::ScanDone(scan) => {
                     let scan = *scan;
+                    if let Some(at) = self.scan_at.filter(|_| !self.findings.is_empty()) {
+                        self.prev_scan =
+                            Some(diag::PrevScan::of(at, &self.verdict, &self.measurements));
+                    }
+                    self.scan_at = Some(crate::store::now());
                     self.findings = scan.findings;
                     self.verdict = scan.verdict;
                     self.measurements = scan.measurements;

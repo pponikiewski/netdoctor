@@ -27,6 +27,36 @@ use windows::Win32::Networking::WinSock::{AF_INET, AF_UNSPEC, SOCKADDR_IN};
 const IF_TYPE_IEEE80211: u32 = 71;
 const IF_TYPE_ETHERNET_CSMACD: u32 = 6;
 const IF_TYPE_SOFTWARE_LOOPBACK: u32 = 24;
+const IF_TYPE_PPP: u32 = 23;
+const IF_TYPE_PROP_VIRTUAL: u32 = 53;
+const IF_TYPE_TUNNEL: u32 = 131;
+
+/// Words in an adapter's description that name a VPN. Most VPN clients
+/// install an adapter that reports itself as Ethernet, so the interface type
+/// alone misses them.
+const VPN_WORDS: [&str; 12] = [
+    "vpn",
+    "wireguard",
+    "wintun",
+    "tap-windows",
+    "tap adapter",
+    "openvpn",
+    "nordlynx",
+    "anyconnect",
+    "fortinet",
+    "globalprotect",
+    "zerotier",
+    "tailscale",
+];
+
+/// Whether the adapter traffic leaves through is a tunnel rather than the
+/// card itself. Then the "router" a scan pings is the far end of the tunnel,
+/// and every number it takes includes the trip there.
+fn is_tunnel(if_type: u32, desc: &str) -> bool {
+    let desc = desc.to_lowercase();
+    matches!(if_type, IF_TYPE_PPP | IF_TYPE_PROP_VIRTUAL | IF_TYPE_TUNNEL)
+        || VPN_WORDS.iter().any(|w| desc.contains(w))
+}
 
 // wlan_intf_opcode_* from wlanapi.h. The windows crate exposes these as a
 // struct-wrapped i32 whose constants are not all generated, so we name them.
@@ -65,6 +95,8 @@ pub struct NetState {
     pub gateway: Option<Ipv4Addr>,
     pub dns_servers: Vec<Ipv4Addr>,
     pub up: bool,
+    /// The routed adapter is a VPN or another tunnel. See [`is_tunnel`].
+    pub tunnel: bool,
     // Wi-Fi only
     pub ssid: String,
     pub bssid: String,
@@ -225,6 +257,7 @@ fn read_adapters() -> NetState {
                 if_index: a.Anonymous1.Anonymous.IfIndex,
                 link_speed_mbps: a.TransmitLinkSpeed / 1_000_000,
                 up: a.OperStatus == IF_OPER_STATUS(1),
+                tunnel: is_tunnel(a.IfType, &wide_to_string(a.Description.0)),
                 ..Default::default()
             };
 
@@ -694,6 +727,18 @@ fn rcode_name(code: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_vpn_is_told_apart_by_its_type_or_its_name_and_a_card_is_not() {
+        assert!(is_tunnel(IF_TYPE_TUNNEL, "Microsoft Teredo"));
+        assert!(is_tunnel(IF_TYPE_PROP_VIRTUAL, "Some virtual adapter"));
+        // Reports itself as Ethernet, and is a VPN.
+        assert!(is_tunnel(IF_TYPE_ETHERNET_CSMACD, "TAP-Windows Adapter V9"));
+        assert!(is_tunnel(IF_TYPE_ETHERNET_CSMACD, "WireGuard Tunnel"));
+        assert!(is_tunnel(IF_TYPE_ETHERNET_CSMACD, "NordLynx Tunnel"));
+        assert!(!is_tunnel(IF_TYPE_ETHERNET_CSMACD, "Realtek PCIe GbE Family Controller"));
+        assert!(!is_tunnel(IF_TYPE_IEEE80211, "Intel(R) Wi-Fi 6 AX201 160MHz"));
+    }
 
     #[test]
     fn a_dns_query_is_built_the_way_the_wire_expects() {

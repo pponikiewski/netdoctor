@@ -13,7 +13,8 @@ use std::sync::Arc;
 use eframe::egui;
 
 use super::{
-    App, Job, FG, FG_DIM, GREEN, RED, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_TITLE, YELLOW,
+    button, button_ex, card, status_dot, App, Emphasis, Job, ACCENT, BG2, BG3, FG, FG_DIM, GREEN,
+    RED, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_LEAD, T_META, T_TITLE, YELLOW,
 };
 use crate::diagnose::{self, Ipv6State, Link, LinkState, Segment, Severity, Verdict};
 use crate::i18n;
@@ -38,22 +39,113 @@ fn segment_colour(seg: Segment) -> egui::Color32 {
     }
 }
 
+/// What the last scan found, kept when the next one replaces it, so a scan
+/// run after a fix can say whether the fix moved anything.
+#[derive(Debug, Clone)]
+pub struct PrevScan {
+    at: f64,
+    segment: Segment,
+    router_ms: Option<f64>,
+    internet_ms: Option<f64>,
+}
+
+impl PrevScan {
+    pub fn of(at: f64, verdict: &Verdict, m: &diagnose::Measurements) -> Self {
+        let avg = |s: &Option<crate::store::Stats>| s.as_ref().and_then(|s| s.avg);
+        PrevScan {
+            at,
+            segment: verdict.segment,
+            router_ms: avg(&m.gateway),
+            internet_ms: avg(&m.internet),
+        }
+    }
+}
+
+/// Whether two progress labels are the same step saying how far it got. The
+/// long measurement reports "Long measurement: 0:45 of 5:00" every second,
+/// and a checklist of those would be three hundred lines long.
+pub fn same_step(a: &str, b: &str) -> bool {
+    match (a.split_once(':'), b.split_once(':')) {
+        (Some((x, _)), Some((y, _))) => x == y,
+        _ => false,
+    }
+}
+
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    header(app, ui);
+    ui.add_space(S_MD);
+
+    // What was clicked is decided while the page reads `app`, and applied
+    // once it is done reading.
+    let mut jump_to: Option<String> = None;
+    let mut picked: Option<usize> = None;
+    let mut fix: Option<String> = None;
+    let mut ask_ai = false;
+
+    // One scroll for the whole report. The findings list used to scroll on
+    // its own under a fixed verdict, which was fine for a card and a list;
+    // with the chain and the numbers above it, a second scroll inside the
+    // first is a list nobody finds the bottom of.
+    let view: &App = app;
+    egui::ScrollArea::vertical().id_salt("diag").auto_shrink([false, false]).show(ui, |ui| {
+        if view.scanning {
+            running_card(view, ui);
+        }
+        if view.findings.is_empty() {
+            if !view.scanning {
+                empty_card(ui);
+            }
+            return;
+        }
+        verdict_card(view, ui, &mut jump_to);
+        ai_card(view, ui, &mut ask_ai);
+        chain_card(view, ui);
+        if let Some(run) = &view.measurements.long {
+            long_card(run, ui);
+        }
+        measure_card(view, ui);
+        findings(view, ui, &mut picked, &mut fix);
+    });
+
+    if ask_ai {
+        start_ai(app);
+    }
+    if let Some(id) = jump_to.or(fix) {
+        open_tweak(app, &id);
+    } else if let Some(i) = picked {
+        app.selected_finding = Some(i);
+    }
+}
+
+/// The title, the controls, and what running them costs.
+fn header(app: &mut App, ui: &mut egui::Ui) {
+    ui.label(egui::RichText::new(i18n::diag_title()).size(T_LEAD).strong().color(FG));
+    ui.add_space(S_XS);
+    ui.label(egui::RichText::new(i18n::diag_blurb()).size(T_BODY).color(FG_DIM));
+    ui.add_space(S_MD);
+
     ui.horizontal(|ui| {
-        // Not while the load test runs: a scan beside it measures the test,
+        // A checkbox and a combo box are shorter than the app's buttons, so
+        // in a centred row they sat below them.
+        ui.spacing_mut().interact_size.y = super::BTN_H;
+        // Not while the speed test runs: a scan beside it measures the test,
         // and its own load step would saturate the line a second time.
-        let scan = ui.add_enabled(
-            !app.scanning && !app.bloat_running,
-            egui::Button::new(i18n::diag_btn_scan()).fill(super::ACCENT),
-        );
-        let scan = if app.bloat_running {
-            scan.on_disabled_hover_text(i18n::diag_busy_load())
-        } else {
-            scan
-        };
+        let blocked = app.scanning || app.bloat_running;
+        let label =
+            if app.findings.is_empty() { i18n::diag_btn_scan() } else { i18n::diag_btn_rescan() };
+        let scan = button_ex(ui, label, Emphasis::Primary, !blocked, 0.0);
+        let scan =
+            if app.bloat_running { scan.on_hover_text(i18n::diag_busy_load()) } else { scan };
         if scan.clicked() {
             start_scan(app);
         }
+        if app.scanning
+            && app.long_secs > 0
+            && button(ui, i18n::diag_btn_stop(), Emphasis::Secondary).clicked()
+        {
+            app.scan_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        ui.add_space(S_SM);
         ui.add_enabled(!app.scanning, egui::Checkbox::new(&mut app.deep_scan, i18n::diag_deep()))
             .on_hover_text(i18n::diag_deep_hint());
 
@@ -79,66 +171,87 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .on_hover_text(i18n::diag_duration_hint());
         });
 
-        if app.scanning && app.long_secs > 0 && ui.button(i18n::diag_btn_stop()).clicked() {
-            app.scan_cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        // The report carries the scan on screen, so it is offered once there
+        // is one to carry.
+        if !app.findings.is_empty() {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let label = if app.report_busy {
+                    i18n::hist_report_saving()
+                } else {
+                    i18n::live_btn_report()
+                };
+                if button_ex(ui, label, Emphasis::Ghost, !app.report_busy, 0.0).clicked() {
+                    let range = app.report_range;
+                    super::report::save_in_background(app, range);
+                }
+            });
         }
-        ui.label(egui::RichText::new(&app.scan_label).size(T_BODY).color(FG_DIM));
     });
 
-    // The same warning the load test tab carries. The box used to be ticked
+    // The same warning the speed test tab carries. The box used to be ticked
     // from the start and the main button then pulled up to a gigabyte with
     // nothing on this screen saying so.
-    if app.deep_scan {
-        ui.label(egui::RichText::new(i18n::bloat_cost_warning()).size(T_BODY).color(YELLOW));
-    }
-    if app.scanning {
-        ui.add(egui::ProgressBar::new(app.scan_progress).desired_height(6.0));
-    }
-    ui.add_space(S_SM);
-
-    if app.findings.is_empty() {
-        ui.label(egui::RichText::new(i18n::diag_no_scan_yet()).size(T_HEAD).color(FG_DIM));
-        return;
-    }
-
-    // What was clicked is decided while the page reads `app`, and applied
-    // once it is done reading.
-    let mut jump_to: Option<String> = None;
-    let mut picked: Option<usize> = None;
-    let mut fix: Option<String> = None;
-
-    // One scroll for the whole report. The findings list used to scroll on
-    // its own under a fixed verdict, which was fine for a card and a list;
-    // with the chain and the numbers above it, a second scroll inside the
-    // first is a list nobody finds the bottom of.
-    let mut ask_ai = false;
-    let view: &App = app;
-    egui::ScrollArea::vertical().id_salt("diag").auto_shrink([false, false]).show(ui, |ui| {
-        verdict_card(view, ui, &mut jump_to);
-        ui.add_space(S_MD);
-        ai_card(view, ui, &mut ask_ai);
-        ui.add_space(S_MD);
-        chain_card(view, ui);
-        ui.add_space(S_MD);
-        if let Some(run) = &view.measurements.long {
-            long_card(run, ui);
-            ui.add_space(S_MD);
-        }
-        measure_card(view, ui);
-        ui.add_space(S_LG);
-        ui.label(egui::RichText::new(i18n::findings_heading()).size(T_BODY).color(FG_DIM));
-        ui.add_space(S_SM);
-        findings(view, ui, &mut picked, &mut fix);
+    ui.add_space(S_XS);
+    ui.horizontal(|ui| {
+        let (dot, text) = if app.deep_scan {
+            (YELLOW, i18n::bloat_cost_warning())
+        } else {
+            (FG_DIM, i18n::diag_quick_note())
+        };
+        status_dot(ui, dot, 3.5);
+        ui.add(egui::Label::new(egui::RichText::new(text).size(T_META).color(FG_DIM)).wrap());
     });
+}
 
-    if ask_ai {
-        start_ai(app);
-    }
-    if let Some(id) = jump_to.or(fix) {
-        open_tweak(app, &id);
-    } else if let Some(i) = picked {
-        app.selected_finding = Some(i);
-    }
+/// The running scan: the bar, and every step it has reached, the current one
+/// lit. A bar alone says how far, not what it is doing.
+fn running_card(app: &App, ui: &mut egui::Ui) {
+    card(ui, i18n::diag_running_title(), |ui| {
+        ui.add(egui::ProgressBar::new(app.scan_progress).desired_height(6.0));
+        ui.add_space(S_SM);
+        let n = app.scan_steps.len();
+        for (i, step) in app.scan_steps.iter().enumerate() {
+            let current = i + 1 == n;
+            ui.horizontal(|ui| {
+                status_dot(ui, if current { ACCENT } else { GREEN }, 3.5);
+                ui.label(egui::RichText::new(step).size(T_BODY).color(if current {
+                    FG
+                } else {
+                    FG_DIM
+                }));
+            });
+        }
+    });
+}
+
+/// Before the first scan: what it will look at, in the order it looks.
+fn empty_card(ui: &mut egui::Ui) {
+    card(ui, i18n::diag_empty_title(), |ui| {
+        let steps = [
+            i18n::diag_empty_1(),
+            i18n::diag_empty_2(),
+            i18n::diag_empty_3(),
+            i18n::diag_empty_4(),
+            i18n::diag_empty_5(),
+        ];
+        for (i, step) in steps.iter().enumerate() {
+            ui.horizontal_top(|ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(18.0, T_BODY + 4.0), egui::Sense::hover());
+                ui.painter().text(
+                    rect.left_top() + egui::vec2(0.0, 1.0),
+                    egui::Align2::LEFT_TOP,
+                    format!("{}.", i + 1),
+                    egui::FontId::proportional(T_BODY),
+                    ACCENT,
+                );
+                ui.add(egui::Label::new(egui::RichText::new(*step).size(T_BODY).color(FG)).wrap());
+            });
+            ui.add_space(S_XS);
+        }
+        ui.add_space(S_SM);
+        ui.label(egui::RichText::new(i18n::diag_scan_hint()).size(T_META).color(FG_DIM));
+    });
 }
 
 /// The optional second opinion. Off, it is one line saying it exists; on, it
@@ -147,14 +260,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 fn ai_card(app: &App, ui: &mut egui::Ui, ask: &mut bool) {
     let Some(_) = crate::ai::key(&app.settings) else {
         ui.label(egui::RichText::new(i18n::ai_off_hint()).size(super::T_META).color(FG_DIM));
+        ui.add_space(S_MD);
         return;
     };
     let model = crate::ai::model(&app.settings);
 
-    card(ui, |ui| {
-        ui.label(egui::RichText::new(i18n::ai_heading()).size(T_BODY).color(FG_DIM));
-        ui.add_space(S_SM);
-
+    card(ui, i18n::ai_heading(), |ui| {
         match &app.ai_answer {
             Some(Ok(text)) => {
                 ui.label(egui::RichText::new(text).size(T_BODY).color(FG));
@@ -185,7 +296,7 @@ fn ai_card(app: &App, ui: &mut egui::Ui, ask: &mut bool) {
             }
             let label =
                 if app.ai_answer.is_some() { i18n::ai_btn_again() } else { i18n::ai_btn_ask() };
-            if ui.add_enabled(!app.scanning, egui::Button::new(label)).clicked() {
+            if button_ex(ui, label, Emphasis::Secondary, !app.scanning, 0.0).clicked() {
                 *ask = true;
             }
         });
@@ -232,105 +343,119 @@ fn findings(app: &App, ui: &mut egui::Ui, picked: &mut Option<usize>, fix: &mut 
     let findings = &app.findings;
     let selected_finding = app.selected_finding;
 
-    // A list beside its detail pane when there is room, one above the other
-    // when there is not. Half of a narrow window is not enough for either:
-    // the findings wrap onto three lines each and the explanation beside them
-    // becomes a column of single words.
-    let narrow = super::is_narrow(ui);
-    let mut list = |ui: &mut egui::Ui| {
-        ui.vertical(|ui| {
-            let mut row = |ui: &mut egui::Ui, i: usize, f: &crate::diagnose::Finding| {
-                let hit = ui
-                    .push_id(&f.key, |ui| {
-                        ui.selectable_label(
-                            selected_finding == Some(i),
-                            egui::RichText::new(format!("{:>8}  {}", f.severity.label(), f.title))
-                                .color(severity_colour(f.severity))
-                                .size(T_HEAD),
-                        )
-                    })
-                    .inner;
-                if hit.clicked() {
-                    *picked = Some(i);
-                }
-            };
+    card(ui, i18n::findings_heading(), |ui| {
+        // A list beside its detail pane when there is room, one above the
+        // other when there is not. Half of a narrow window is not enough for
+        // either: the findings wrap onto three lines each and the
+        // explanation beside them becomes a column of single words.
+        let narrow = super::is_narrow(ui);
+        let mut list = |ui: &mut egui::Ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                let mut row = |ui: &mut egui::Ui, i: usize, f: &crate::diagnose::Finding| {
+                    let colour = severity_colour(f.severity);
+                    let first = f.detail.lines().next().unwrap_or("");
+                    let hit = ui
+                        .push_id(&f.key, |ui| {
+                            super::list_row(
+                                ui,
+                                44.0,
+                                selected_finding == Some(i),
+                                colour,
+                                &f.title,
+                                false,
+                                Some((f.severity.label(), colour)),
+                                &[(first, FG_DIM)],
+                            )
+                        })
+                        .inner;
+                    if hit.clicked() {
+                        *picked = Some(i);
+                    }
+                };
 
-            // Anything that needs attention stays in the open.
-            let mut healthy = Vec::new();
-            for (i, f) in findings.iter().enumerate() {
-                if f.severity == Severity::Good {
-                    healthy.push(i);
-                } else {
-                    row(ui, i, f);
+                // Anything that needs attention stays in the open.
+                let mut healthy = Vec::new();
+                for (i, f) in findings.iter().enumerate() {
+                    if f.severity == Severity::Good {
+                        healthy.push(i);
+                    } else {
+                        row(ui, i, f);
+                    }
                 }
-            }
 
-            // The rest is not a result, it is a reassurance. Worth being able
-            // to open, never worth pushing the real findings off the screen.
-            if !healthy.is_empty() {
-                ui.add_space(S_SM);
-                egui::CollapsingHeader::new(
-                    egui::RichText::new(i18n::diag_checked_ok(healthy.len()))
-                        .size(T_BODY)
-                        .color(FG_DIM),
-                )
-                .id_salt("healthy")
+                // The rest is not a result, it is a reassurance. Worth being
+                // able to open, never worth pushing the real findings off the
+                // screen.
+                if !healthy.is_empty() {
+                    ui.add_space(S_SM);
+                    egui::CollapsingHeader::new(
+                        egui::RichText::new(i18n::diag_checked_ok(healthy.len()))
+                            .size(T_BODY)
+                            .color(FG_DIM),
+                    )
+                    .id_salt("healthy")
+                    .show(ui, |ui| {
+                        for i in healthy {
+                            row(ui, i, &findings[i]);
+                        }
+                    });
+                }
+            });
+        };
+
+        let mut detail = |ui: &mut egui::Ui| {
+            egui::Frame::none()
+                .fill(BG3)
+                .rounding(6.0)
+                .inner_margin(egui::Margin::same(S_MD))
                 .show(ui, |ui| {
-                    for i in healthy {
-                        row(ui, i, &findings[i]);
-                    }
-                });
-            }
-        });
-    };
-
-    let mut detail = |ui: &mut egui::Ui| {
-        egui::Frame::none()
-            .fill(super::BG2)
-            .rounding(6.0)
-            .inner_margin(egui::Margin::same(S_MD))
-            .show(ui, |ui| {
-                ui.set_min_height(if narrow { 160.0 } else { 240.0 });
-                match selected_finding.and_then(|i| findings.get(i)) {
-                    None => {
-                        ui.label(egui::RichText::new(i18n::diag_select_finding()).color(FG_DIM));
-                    }
-                    Some(f) => {
-                        ui.label(
-                            egui::RichText::new(&f.title)
-                                .size(T_TITLE)
-                                .strong()
-                                .color(severity_colour(f.severity)),
-                        );
-                        ui.add_space(S_SM);
-                        if !f.detail.is_empty() {
-                            ui.label(egui::RichText::new(&f.detail).size(T_BODY).color(FG));
+                    ui.set_min_width(ui.available_width());
+                    match selected_finding.and_then(|i| findings.get(i)) {
+                        None => {
+                            ui.label(
+                                egui::RichText::new(i18n::diag_select_finding())
+                                    .size(T_BODY)
+                                    .color(FG_DIM),
+                            );
+                        }
+                        Some(f) => {
+                            ui.label(
+                                egui::RichText::new(&f.title)
+                                    .size(T_TITLE)
+                                    .strong()
+                                    .color(severity_colour(f.severity)),
+                            );
                             ui.add_space(S_SM);
-                        }
-                        if !f.advice.is_empty() {
-                            ui.label(egui::RichText::new(&f.advice).size(T_BODY).color(FG_DIM));
-                        }
-                        if let Some(id) = &f.tweak_id {
-                            ui.add_space(S_MD);
-                            if ui.button(i18n::diag_btn_fix()).clicked() {
-                                *fix = Some(id.clone());
+                            if !f.detail.is_empty() {
+                                ui.label(egui::RichText::new(&f.detail).size(T_BODY).color(FG));
+                                ui.add_space(S_SM);
+                            }
+                            if !f.advice.is_empty() {
+                                ui.label(egui::RichText::new(&f.advice).size(T_BODY).color(FG_DIM));
+                            }
+                            if let Some(id) = &f.tweak_id {
+                                ui.add_space(S_MD);
+                                if button(ui, i18n::diag_btn_fix(), Emphasis::Secondary).clicked() {
+                                    *fix = Some(id.clone());
+                                }
                             }
                         }
                     }
-                }
-            });
-    };
+                });
+        };
 
-    if narrow {
-        list(ui);
-        ui.add_space(S_MD);
-        detail(ui);
-    } else {
-        ui.columns(2, |cols| {
-            list(&mut cols[0]);
-            detail(&mut cols[1]);
-        });
-    }
+        if narrow {
+            list(ui);
+            ui.add_space(S_MD);
+            detail(ui);
+        } else {
+            ui.columns(2, |cols| {
+                list(&mut cols[0]);
+                detail(&mut cols[1]);
+            });
+        }
+    });
 }
 
 /// The colour a link is drawn in: the fault's colour on the link the verdict
@@ -372,10 +497,7 @@ fn chain_card(app: &App, ui: &mut egui::Ui) {
     let fault = app.verdict.segment.link_index();
     let fault_colour = segment_colour(app.verdict.segment);
 
-    card(ui, |ui| {
-        ui.label(egui::RichText::new(i18n::chain_heading()).size(T_BODY).color(FG_DIM));
-        ui.add_space(S_SM);
-
+    card(ui, i18n::chain_heading(), |ui| {
         let w = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 84.0), egui::Sense::hover());
         let painter = ui.painter_at(rect);
@@ -459,10 +581,7 @@ fn measure_card(app: &App, ui: &mut egui::Ui) {
     let links = diagnose::chain(&app.findings, m);
     let has = |key: &str| app.findings.iter().any(|f| f.key == key);
 
-    card(ui, |ui| {
-        ui.label(egui::RichText::new(i18n::measure_heading()).size(T_BODY).color(FG_DIM));
-        ui.add_space(S_SM);
-
+    card(ui, i18n::measure_heading(), |ui| {
         if let Some(why) = &m.blind {
             ui.label(egui::RichText::new(i18n::measure_blind()).size(T_BODY).color(YELLOW));
             ui.label(egui::RichText::new(why).size(T_BODY).color(FG));
@@ -503,7 +622,7 @@ fn measure_card(app: &App, ui: &mut egui::Ui) {
                     match &link.state {
                         LinkState::Measured(s) => {
                             let ms = |v: Option<f64>| {
-                                v.map(|v| format!("{v:.1} ms")).unwrap_or_else(|| "–".into())
+                                v.map(|v| format!("{v:.1} ms")).unwrap_or_else(|| "-".into())
                             };
                             let loss_colour = if s.loss_pct > 0.0 { YELLOW } else { FG };
                             ui.label(super::figure(s.count.to_string(), T_BODY, FG));
@@ -581,6 +700,11 @@ fn measure_card(app: &App, ui: &mut egui::Ui) {
             (Some(own), None) => format!("{} / {}", ms(own), i18n::link_silent()),
             _ => i18n::measure_none().into(),
         };
+        let route = match &m.vpn {
+            Some(name) => i18n::measure_route_vpn(name),
+            None => i18n::measure_route_direct().to_string(),
+        };
+        let proxy = m.proxy.clone().unwrap_or_else(|| i18n::word_none().to_string());
         let syslog = if m.syslog.is_empty() {
             i18n::measure_syslog_none().to_string()
         } else {
@@ -595,6 +719,8 @@ fn measure_card(app: &App, ui: &mut egui::Ui) {
         egui::Grid::new("measure_other").spacing([S_LG, S_SM]).show(ui, |ui| {
             for (k, v) in [
                 (i18n::measure_medium(), medium),
+                (i18n::measure_route(), route),
+                (i18n::measure_proxy(), proxy),
                 (i18n::measure_dns(), dns),
                 (i18n::measure_dns_public(), dns_public),
                 (i18n::measure_tcp(), tcp),
@@ -617,10 +743,7 @@ const LONG_CHOICES: [usize; 3] = [0, 120, 300];
 /// Where each second's trouble started, over the whole run, and the list of
 /// drops with the times a provider will ask for.
 fn long_card(run: &LongRun, ui: &mut egui::Ui) {
-    card(ui, |ui| {
-        ui.label(egui::RichText::new(i18n::long_heading()).size(T_BODY).color(FG_DIM));
-        ui.add_space(S_SM);
-
+    card(ui, i18n::long_heading(), |ui| {
         // The strip: one row per link, one column per second.
         let rows = [
             (i18n::measure_leg_router(), Segment::Lan),
@@ -737,28 +860,25 @@ fn long_card(run: &LongRun, ui: &mut egui::Ui) {
     });
 }
 
-/// The panel every section of the report sits on.
-fn card(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_MD)).show(
-        ui,
-        |ui| {
-            ui.set_min_width(ui.available_width());
-            body(ui);
-        },
-    );
-}
-
 /// The verdict: one segment, how sure the scan is, what it costs, and the
 /// short ordered plan. This is the part most users will read and nothing else.
 fn verdict_card(app: &App, ui: &mut egui::Ui, jump_to: &mut Option<String>) {
     let v: &Verdict = &app.verdict;
     let colour = segment_colour(v.segment);
 
-    egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_MD)).show(
-        ui,
-        |ui| {
+    let panel = egui::Frame::none()
+        .fill(BG2)
+        .rounding(6.0)
+        .inner_margin(egui::Margin { left: S_LG + 4.0, right: S_LG, top: S_LG, bottom: S_LG })
+        .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.label(egui::RichText::new(i18n::verdict_heading()).size(T_BODY).color(FG_DIM));
+            let when = app.scan_at.map(diagnose::format_clock).unwrap_or_default();
+            ui.label(
+                egui::RichText::new(i18n::verdict_meta(&when, &scan_where(&app.scan_net)))
+                    .size(T_META)
+                    .color(FG_DIM),
+            );
+            ui.add_space(S_XS);
             ui.label(
                 egui::RichText::new(i18n::verdict_confident(
                     v.segment.label(),
@@ -768,44 +888,73 @@ fn verdict_card(app: &App, ui: &mut egui::Ui, jump_to: &mut Option<String>) {
                 .strong()
                 .color(colour),
             );
-
             if let Some(split) = &v.split {
-                ui.add_space(S_SM);
+                ui.add_space(S_XS);
                 ui.label(egui::RichText::new(split).size(T_BODY).color(FG_DIM));
             }
-
             ui.add_space(S_MD);
-            ui.label(egui::RichText::new(i18n::verdict_cost_heading()).size(T_BODY).color(FG_DIM));
             ui.label(egui::RichText::new(&v.cost).size(T_HEAD).color(FG));
+
+            if let Some(prev) = &app.prev_scan {
+                ui.add_space(S_SM);
+                ui.label(egui::RichText::new(since(prev, app)).size(T_META).color(FG_DIM));
+            }
 
             if v.actions.is_empty() {
                 return;
             }
-            ui.add_space(S_LG);
+            ui.add_space(S_MD);
             ui.label(
-                egui::RichText::new(i18n::verdict_actions_heading()).size(T_BODY).color(FG_DIM),
+                egui::RichText::new(i18n::verdict_actions_heading())
+                    .size(T_BODY)
+                    .strong()
+                    .color(FG_DIM),
             );
             for (n, action) in v.actions.iter().enumerate() {
                 ui.add_space(S_SM);
                 ui.horizontal_top(|ui| {
                     ui.label(
                         egui::RichText::new(format!("{}.", n + 1))
-                            .size(T_HEAD)
+                            .size(T_BODY)
                             .strong()
                             .color(colour),
                     );
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(&action.text).size(T_BODY).color(FG));
                         if let Some(id) = &action.tweak_id {
-                            if ui.button(i18n::diag_btn_fix()).clicked() {
+                            ui.add_space(S_XS);
+                            if button(ui, i18n::diag_btn_fix(), Emphasis::Secondary).clicked() {
                                 *jump_to = Some(id.clone());
                             }
                         }
                     });
                 });
             }
-        },
+        });
+    // Painted once the panel's size is known, like the other verdicts.
+    let rect = panel.response.rect;
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(rect.min, egui::vec2(4.0, rect.height())),
+        egui::Rounding { nw: 6.0, sw: 6.0, ne: 0.0, se: 0.0 },
+        colour,
     );
+    ui.add_space(S_MD);
+}
+
+/// The connection the scan ran on, as a person names it.
+fn scan_where(net: &crate::probe::netstate::NetState) -> String {
+    match net.medium {
+        Medium::Wifi if !net.ssid.is_empty() => format!("Wi-Fi {}", net.ssid),
+        _ => net.medium.label().to_string(),
+    }
+}
+
+/// What the scan before this one found, and how the two pings moved since.
+fn since(prev: &PrevScan, app: &App) -> String {
+    let avg = |s: &Option<crate::store::Stats>| s.as_ref().and_then(|s| s.avg);
+    let router = prev.router_ms.zip(avg(&app.measurements.gateway));
+    let internet = prev.internet_ms.zip(avg(&app.measurements.internet));
+    i18n::verdict_since(&diagnose::format_clock(prev.at), prev.segment.label(), router, internet)
 }
 
 fn open_tweak(app: &mut App, id: &str) {
@@ -816,6 +965,7 @@ fn open_tweak(app: &mut App, id: &str) {
 
 fn start_scan(app: &mut App) {
     app.scanning = true;
+    app.scan_steps.clear();
     app.scan_progress = 0.0;
     app.scan_label = i18n::diag_scan_starting().into();
     // The load test saturates the line. Anything the monitor sampled during it
@@ -844,4 +994,16 @@ fn start_scan(app: &mut App) {
         let scan = diagnose::scan(&net, &store, &settings, deep, long, Some(progress));
         let _ = tx.send(Job::ScanDone(Box::new(scan)));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_step_reporting_its_progress_is_one_step_and_two_steps_are_two() {
+        assert!(same_step("Long measurement: 0:05 of 5:00", "Long measurement: 0:06 of 5:00"));
+        assert!(!same_step("Checking IPv6", "Checking MTU"));
+        assert!(!same_step("Long measurement: 0:05 of 5:00", "Checking MTU"));
+    }
 }

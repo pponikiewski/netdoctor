@@ -225,6 +225,10 @@ pub struct Measurements {
     pub dns_public_ms: Option<f64>,
     /// Connection faults Windows itself logged while the scan ran.
     pub syslog: Vec<SysEvent>,
+    /// The adapter traffic leaves through, when it is a VPN or another tunnel.
+    pub vpn: Option<String>,
+    /// The proxy (or its configuration script) Windows hands to programs.
+    pub proxy: Option<String>,
 }
 
 /// What an IPv6 connection attempt found.
@@ -456,6 +460,9 @@ pub fn scan(
     say(i18n::step_power(), 0.10);
     out.extend(check_power(net, store, settings));
 
+    say(i18n::step_route(), 0.12);
+    out.extend(check_route(net, &mut m));
+
     // Every probe that touches the wire runs at once. Partly for the twenty
     // seconds it saves, but mainly because the segment split is a subtraction
     // between three measurements: taking them ten seconds apart, across a link
@@ -521,7 +528,15 @@ pub fn scan(
 
     // Worst first, stable within a severity so related findings stay together.
     out.sort_by_key(|f| std::cmp::Reverse(f.severity));
-    let verdict = judge(&out, &m, settings);
+    let mut verdict = judge(&out, &m, settings);
+    // Through a tunnel every link the verdict names is the tunnel's, not the
+    // user's line. The first thing worth doing is to measure without it.
+    if m.vpn.is_some() {
+        verdict
+            .actions
+            .insert(0, Action { text: i18n::verdict_vpn_first().into(), tweak_id: None });
+        verdict.actions.truncate(3);
+    }
     Scan { findings: out, verdict, measurements: m }
 }
 
@@ -915,6 +930,49 @@ fn corrupting(c: &LinkCounters) -> bool {
     c.packets >= LINK_MIN_PACKETS && c.errors > 0 && error_pct(c) >= LINK_ERROR_PCT
 }
 
+/// Where the traffic actually goes: straight out of the card, or into a VPN.
+/// Also whether Windows sends programs through a proxy, which a ping never
+/// uses and a browser always does.
+fn check_route(net: &NetState, m: &mut Measurements) -> Vec<Finding> {
+    let mut out = Vec::new();
+    if net.tunnel {
+        let name = if net.adapter_desc.is_empty() { &net.adapter_name } else { &net.adapter_desc };
+        m.vpn = Some(name.clone());
+        out.push(
+            Finding::new("vpn", i18n::f_vpn(), Severity::Warn, i18n::f_vpn_detail(name))
+                .advise(i18n::f_vpn_advice()),
+        );
+    }
+    const KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+    use crate::winreg::{self, Root};
+    let proxy = proxy_from(
+        winreg::read_dword(Root::CurrentUser, KEY, "ProxyEnable").ok().flatten(),
+        winreg::read_string(Root::CurrentUser, KEY, "ProxyServer").ok().flatten(),
+        winreg::read_string(Root::CurrentUser, KEY, "AutoConfigURL").ok().flatten(),
+    );
+    if let Some(p) = &proxy {
+        out.push(
+            Finding::new("proxy", i18n::f_proxy(), Severity::Info, i18n::f_proxy_detail(p))
+                .advise(i18n::f_proxy_advice()),
+        );
+    }
+    m.proxy = proxy;
+    out
+}
+
+/// The proxy Windows is set to use, read from the three values that decide
+/// it: a server only counts while it is switched on, a configuration script
+/// counts whenever it is set.
+fn proxy_from(
+    enable: Option<u32>,
+    server: Option<String>,
+    script: Option<String>,
+) -> Option<String> {
+    let server = server.filter(|s| !s.trim().is_empty() && enable == Some(1));
+    let script = script.filter(|s| !s.trim().is_empty());
+    server.or(script)
+}
+
 fn check_medium(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
     if net.adapter_name.is_empty() {
         return vec![Finding::new(
@@ -948,13 +1006,21 @@ fn check_medium(net: &NetState, _s: &Store, _cfg: &Settings) -> Vec<Finding> {
             i18n::f_wired_detail(&net.adapter_name, net.link_speed_mbps),
         )
         .advise(i18n::f_wired_advice())],
-        _ => vec![Finding::new(
+        Medium::Wifi => vec![Finding::new(
             "medium",
             i18n::f_wifi(),
             Severity::Info,
             i18n::f_wifi_detail(&net.adapter_name, &net.ssid, net.link_speed_mbps),
         )
         .advise(i18n::f_wifi_advice())],
+        // A tunnel or an adapter of another kind. Calling it Wi-Fi, as this
+        // used to, sent a VPN user off to move closer to the router.
+        Medium::Unknown => vec![Finding::new(
+            "medium",
+            i18n::f_other_medium(),
+            Severity::Info,
+            i18n::f_other_medium_detail(&net.adapter_name, &net.adapter_desc),
+        )],
     }
 }
 
@@ -2101,6 +2167,17 @@ pub fn civil_from_days(z: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_proxy_counts_only_while_switched_on_and_a_script_whenever_it_is_set() {
+        let s = |v: &str| Some(v.to_string());
+        assert_eq!(proxy_from(Some(1), s("10.0.0.1:8080"), None), s("10.0.0.1:8080"));
+        assert_eq!(proxy_from(Some(0), s("10.0.0.1:8080"), None), None);
+        assert_eq!(proxy_from(None, s("10.0.0.1:8080"), None), None);
+        assert_eq!(proxy_from(Some(1), s("  "), None), None);
+        assert_eq!(proxy_from(Some(0), None, s("http://wpad/wpad.dat")), s("http://wpad/wpad.dat"));
+        assert_eq!(proxy_from(None, None, None), None);
+    }
 
     fn wired(mbps: u64) -> NetState {
         NetState { medium: Medium::Ethernet, link_speed_mbps: mbps, ..Default::default() }

@@ -463,28 +463,93 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // diagnose tab
     // -----------------------------------------------------------------------
     diag_scan_hint =>
-        "A scan takes a few seconds; with the load test, about 30.",
-        "Skan trwa kilka sekund, z testem obciążeniowym około 30.";
+        "A quick scan takes about 30 seconds; with the load test, about 50.",
+        "Szybki skan trwa około 30 sekund, z testem obciążenia około 50.";
     diag_scan_done => "Scan complete.", "Skan zakończony.";
     diag_scan_starting => "Starting…", "Uruchamianie…";
     diag_btn_scan => "Run scan", "Uruchom skan";
-    diag_no_scan_yet =>
-        "No scan yet. The scan splits the chain — this PC, the router, the provider's first hop, \
-         the open internet — and measures where latency and loss are actually introduced. It \
-         checks that real TCP traffic gets through and not just ping, and compares everything \
-         against this machine's own history rather than a generic threshold. With the load \
-         test it also saturates the line to see whether latency survives a download.",
-        "Jeszcze nie było skanu. Skan rozcina łańcuch — ten komputer, router, pierwszy węzeł \
-         dostawcy, otwarty internet — i mierzy, gdzie naprawdę powstaje opóźnienie i gdzie giną \
-         pakiety. Sprawdza, czy przechodzi realny ruch TCP, a nie tylko ping, i porównuje \
-         wszystko z własną historią tego komputera zamiast ze sztywnym progiem. Z testem \
-         obciążeniowym dodatkowo obciąża łącze, żeby sprawdzić, czy opóźnienie przeżyje \
-         pobieranie.";
+    diag_title =>
+        "Connection diagnosis",
+        "Diagnoza połączenia";
+    diag_blurb =>
+        "The scan checks every link of the connection, from the network card to the internet, and \
+         names the one where the problem starts.",
+        "Skan sprawdza każde ogniwo połączenia, od karty sieciowej po internet, i wskazuje to, na \
+         którym zaczyna się problem.";
+    diag_btn_rescan =>
+        "Scan again",
+        "Skanuj ponownie";
+    diag_quick_note =>
+        "Without the load test the scan sends only pings and a few small connections.",
+        "Bez testu obciążenia skan wysyła tylko pingi i kilka małych połączeń.";
+    diag_running_title =>
+        "Scan in progress",
+        "Trwa skan";
+    diag_empty_title =>
+        "What the scan checks",
+        "Co sprawdza skan";
+    diag_empty_1 =>
+        "Connection: the network card, the Wi-Fi signal and band, power saving, a VPN and a \
+         proxy.",
+        "Połączenie: karta sieciowa, sygnał i pasmo Wi-Fi, oszczędzanie energii, VPN i proxy.";
+    diag_empty_2 =>
+        "Path: ping and loss on every link at once, from this PC to the router, the provider and \
+         the internet.",
+        "Trasa: ping i straty na każdym odcinku naraz, od komputera do routera, dostawcy i \
+         internetu.";
+    diag_empty_3 =>
+        "Services: DNS (yours and a public one), IPv6, MTU and a real connection on port 443.",
+        "Usługi: DNS (Twój i publiczny), IPv6, MTU i prawdziwe połączenie na porcie 443.";
+    diag_empty_4 =>
+        "Optionally, the load test: whether the ping survives a download and an upload.",
+        "Opcjonalnie test obciążenia: czy ping wytrzymuje pobieranie i wysyłanie.";
+    diag_empty_5 =>
+        "Context: this line's usual ping from the last 7 days, the outage history and the Windows \
+         log from the scan.",
+        "Kontekst: typowy ping tego łącza z ostatnich 7 dni, historia awarii i dziennik Windows z \
+         czasu skanu.";
+    measure_route =>
+        "Route",
+        "Trasa";
+    measure_route_direct =>
+        "directly through the card",
+        "bezpośrednio przez kartę";
+    measure_proxy =>
+        "Windows proxy",
+        "Proxy w Windows";
+    verdict_vpn_first =>
+        "Turn the VPN off and scan again: this result measures the VPN, not your own line.",
+        "Wyłącz VPN i uruchom skan ponownie: ten wynik mierzy VPN, a nie Twoje łącze.";
+    step_route =>
+        "Checking VPN and proxy",
+        "Sprawdzanie VPN i proxy";
+    f_vpn =>
+        "Traffic goes through a VPN",
+        "Ruch idzie przez VPN";
+    f_vpn_advice =>
+        "Every number in this scan includes the trip to the VPN server, and the \"router\" is the \
+         VPN's own end. To diagnose your own line, turn the VPN off and scan again.",
+        "Każdy wynik tego skanu zawiera drogę do serwera VPN, a „router” to koniec tunelu VPN. \
+         Aby zdiagnozować własne łącze, wyłącz VPN i uruchom skan ponownie.";
+    f_proxy =>
+        "Windows sends programs through a proxy",
+        "Windows kieruje programy przez proxy";
+    f_proxy_advice =>
+        "Browsers use it and pings do not, so pages can fail while ping works. If it is not \
+         needed, turn it off in Settings > Network and internet > Proxy.",
+        "Korzystają z niego przeglądarki, a pingi nie, więc strony mogą nie działać, choć ping \
+         działa. Jeśli nie jest potrzebne, wyłącz je w Ustawieniach > Sieć i Internet > Serwer \
+         proxy.";
+    f_other_medium =>
+        "Connected through another adapter",
+        "Połączenie przez inną kartę";
     diag_select_finding =>
         "Select a finding to see what it means.",
         "Wybierz wynik, żeby zobaczyć, co oznacza.";
     diag_btn_fix => "Fix this", "Napraw to";
-    diag_deep => "Include the load test", "Dołącz test obciążeniowy";
+    diag_deep =>
+        "Include the load test",
+        "Dołącz test obciążenia";
     diag_deep_hint =>
         "Adds about 20 seconds and briefly saturates the line. Without it the scan cannot see \
          bufferbloat, which is the usual reason a fast connection feels slow.",
@@ -733,7 +798,6 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // the verdict: which segment of the chain is at fault, and what it costs
     // -----------------------------------------------------------------------
     verdict_heading => "Where the problem is", "Gdzie leży problem";
-    verdict_cost_heading => "What it costs you", "Ile Cię to kosztuje";
     verdict_actions_heading => "What to do, in order", "Co zrobić, po kolei";
     chain_heading => "The connection, link by link", "Połączenie, ogniwo po ogniwie";
     chain_note =>
@@ -782,9 +846,15 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Czasy to pełny przelot do końca danego odcinka, nie sam odcinek.";
     findings_heading => "Individual checks", "Poszczególne kontrole";
     f_long_failed => "The long measurement could not run", "Długi pomiar nie mógł się odbyć";
-    step_dns_compare => "Comparing DNS with a public resolver", "Porównuję DNS z publicznym";
-    step_ipv6 => "Checking IPv6", "Sprawdzam IPv6";
-    step_syslog => "Reading the Windows log", "Czytam dziennik Windows";
+    step_dns_compare =>
+        "Comparing DNS with a public resolver",
+        "Porównanie DNS z publicznym";
+    step_ipv6 =>
+        "Checking IPv6",
+        "Sprawdzanie IPv6";
+    step_syslog =>
+        "Reading the Windows log",
+        "Odczyt dziennika Windows";
     f_ipv6_ok_detail =>
         "A connection over IPv6 opened. Programs that prefer IPv6 get it without waiting.",
         "Połączenie przez IPv6 się otworzyło. Programy, które wolą IPv6, dostają je bez czekania.";
@@ -912,7 +982,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     seg_internet => "Beyond the provider", "Poza dostawcą";
     seg_dns => "In DNS", "W DNS";
     seg_config => "In this machine's settings", "W ustawieniach tego komputera";
-    seg_healthy => "Nowhere — the chain is sound", "Nigdzie — łańcuch jest sprawny";
+    seg_healthy =>
+        "Nowhere: the connection is sound",
+        "Nigdzie: połączenie jest sprawne";
     seg_unmeasured => "Not established: the scan could not ping", "Nie ustalono: skan nie mógł pingować";
     cost_unmeasured =>
         "Unknown. The pings that cut the chain into segments could not be sent, so this scan \
@@ -943,16 +1015,16 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Przez ten odcinek w tej chwili nic nie przechodzi, więc wszystko, co od niego zależy, \
          stoi, a nie działa wolno.";
     cost_intermittent =>
-        "Everything measures clean right now, so the fault is not constant — but it was recorded \
-         breaking within the last 24 hours. A scan is a thirty-second window; the outage history \
-         is the better evidence here.",
-        "W tej chwili wszystko mierzy się czysto, więc usterka nie jest stała — ale w ciągu \
-         ostatnich 24 godzin zapisano jej wystąpienia. Skan to okno trzydziestu sekund; lepszym \
-         dowodem jest tutaj historia awarii.";
+        "Everything measures clean right now, so the fault is not constant, but outages were \
+         recorded in the last 24 hours. A scan covers only half a minute; the outage history is \
+         the better evidence here.",
+        "W tej chwili wszystko mierzy się czysto, więc usterka nie jest stała, ale w ciągu \
+         ostatnich 24 godzin zapisano awarie. Skan obejmuje tylko pół minuty; lepszym dowodem \
+         jest tu historia awarii.";
     cost_config =>
-        "The line itself measures clean. What is left are settings on this machine that work \
-         against it — worth changing, but not the reason for a bad call.",
-        "Samo łącze mierzy się czysto. Zostają ustawienia na tym komputerze, które mu szkodzą — \
+        "The line itself measures clean. What is left are settings on this computer that work \
+         against it: worth changing, but not the cause of a bad call.",
+        "Samo łącze mierzy się czysto. Zostają ustawienia na tym komputerze, które mu szkodzą: \
          warto je zmienić, ale to nie one psują rozmowę.";
 
     // -----------------------------------------------------------------------
@@ -965,12 +1037,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Routery na trasie nie odpowiadają na wygasłe pakiety, więc nie da się rozdzielić \
          opóźnienia między Twój router a dostawcę. Reszta tego skanu pozostaje w mocy.";
     f_local_hop_advice =>
-        "This hop is still your own equipment — a second router, a mesh node, or a modem left in \
-         router mode. Its latency counts as your network, not the provider's, which is why the \
-         split above charges it to the LAN.",
-        "Ten węzeł to nadal Twój własny sprzęt — drugi router, węzeł mesh albo modem zostawiony w \
-         trybie routera. Jego opóźnienie liczy się jako Twoja sieć, a nie dostawcy, i dlatego \
-         podział powyżej przypisuje je do LAN-u.";
+        "This hop is still your own equipment: a second router, a mesh node, or a modem left in \
+         router mode. Its latency counts as your network, not the provider's, so the split above \
+         charges it to the LAN.",
+        "Ten węzeł to nadal Twój własny sprzęt: drugi router, węzeł mesh albo modem w trybie \
+         routera. Jego opóźnienie liczy się jako Twoja sieć, a nie dostawcy, dlatego podział \
+         powyżej przypisuje je do LAN-u.";
     f_local_hop_slow_advice =>
         "A second box of your own is adding this delay before the traffic even leaves the house. \
          Putting it into bridge mode, or removing it from the chain, recovers the whole amount.",
@@ -989,12 +1061,12 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
 
     f_tcp_blocked => "Ping works but real traffic does not", "Ping działa, ale ruch realny już nie";
     f_tcp_blocked_advice =>
-        "ICMP gets through and TCP on port 443 does not. That is a captive portal waiting for a \
-         login, a firewall, or a proxy — not a broken line. Open any page in a browser and see \
-         what answers.",
-        "ICMP przechodzi, a TCP na porcie 443 już nie. To captive portal czekający na \
-         zalogowanie, firewall albo proxy — nie zepsute łącze. Otwórz dowolną stronę w \
-         przeglądarce i zobacz, co odpowie.";
+        "ICMP gets through and TCP on port 443 does not. That points to a login page waiting on a \
+         public network (captive portal), a firewall or a proxy, not a broken line. Open any page \
+         in a browser to check.",
+        "ICMP przechodzi, a TCP na porcie 443 już nie. To wskazuje na stronę logowania w sieci \
+         publicznej (captive portal), firewall albo proxy, a nie na zepsute łącze. Sprawdzisz to, \
+         otwierając dowolną stronę w przeglądarce.";
     f_tcp_slow_advice =>
         "The handshake takes far longer than the ping to the same place, which points at \
          filtering or an overloaded middlebox rather than at the line itself.",
@@ -1003,10 +1075,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
 
     f_load_skipped => "Behaviour under load not measured", "Nie zmierzono zachowania pod obciążeniem";
     f_load_skipped_detail =>
-        "The load test was left out of this scan. It is the single most informative check for \
-         \"the internet feels slow\", because it is the only one that reproduces the condition.",
-        "Test obciążeniowy został pominięty w tym skanie. To najbardziej wymowna pojedyncza \
-         próba przy objawie „internet działa wolno\", bo jako jedyna odtwarza warunki awarii.";
+        "The load test was left out of this scan. It is the most telling check for \"the internet \
+         feels slow\", because it is the only one that reproduces it.",
+        "Test obciążenia został pominięty w tym skanie. To najbardziej miarodajna kontrola przy \
+         objawie „internet działa wolno”, bo jako jedyna go odtwarza.";
     f_load_bad_advice =>
         "This is bufferbloat: while something downloads, everything else queues behind it. It \
          is fixed on the router with SQM or QoS, not on this machine.",
@@ -1071,19 +1143,21 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // findings: Wi-Fi quality
     // -----------------------------------------------------------------------
     f_signal_weak_advice =>
-        "At this level the card drops frames and will periodically disconnect. Move closer, \
+        "At this level the card drops frames and will disconnect now and then. Move closer, \
          reposition the router, or switch to 2.4 GHz for range at the cost of speed.",
-        "Przy takim poziomie karta gubi ramki i będzie się okresowo rozłączać. Podejdź bliżej, \
-         przestaw router albo przejdź na 2.4 GHz — zyskasz zasięg kosztem prędkości.";
+        "Przy takim poziomie karta gubi ramki i co jakiś czas się rozłącza. Przenieś komputer \
+         bliżej, przestaw router albo przejdź na 2,4 GHz: większy zasięg kosztem prędkości.";
     f_signal_mid_advice =>
         "Fine for browsing, but latency will spike under load.",
         "Do przeglądania wystarczy, ale pod obciążeniem opóźnienie będzie skakać.";
-    f_band_24 => "Running on the 2.4 GHz band", "Praca w paśmie 2.4 GHz";
+    f_band_24 =>
+        "Running on the 2.4 GHz band",
+        "Praca w paśmie 2,4 GHz";
     f_band_24_advice =>
         "2.4 GHz is shared with microwaves, Bluetooth and every neighbour. If the router offers 5 \
-         GHz, connect to that SSID instead.",
-        "Pasmo 2.4 GHz dzielisz z mikrofalówkami, Bluetoothem i każdym sąsiadem. Jeśli router \
-         udostępnia 5 GHz, połącz się z tamtym SSID.";
+         GHz, connect to that network instead.",
+        "Pasmo 2,4 GHz jest współdzielone z mikrofalówkami, Bluetooth i sieciami sąsiadów. Jeśli \
+         router udostępnia 5 GHz, połącz się z tamtą siecią.";
 
     // -----------------------------------------------------------------------
     // findings: adapter power management
@@ -1119,9 +1193,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
          Sprawdź, czy działa. NetDoctor nie proponuje jego zamiany, bo wyłączyłoby to to, do \
          czego go używasz.";
     f_dns_slow_advice =>
-        "Every new connection waits on this, which is why pages seem to stall before loading.",
-        "Każde nowe połączenie na to czeka — dlatego strony wyglądają, jakby się zawieszały przed \
-         załadowaniem.";
+        "Every new connection waits for this, which is why pages seem to stall before loading.",
+        "Każde nowe połączenie czeka na tę odpowiedź, dlatego strony wyglądają, jakby zawieszały \
+         się przed załadowaniem.";
     f_dns_unknown => "DNS timing unavailable", "Brak pomiaru czasu DNS";
     f_dns_router_only => "The router is the only DNS server", "Router jest jedynym serwerem DNS";
     f_dns_router_only_advice =>
@@ -1145,9 +1219,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     f_link_unstable => "The link to the router is unstable", "Łącze do routera jest niestabilne";
     f_link_unstable_advice =>
         "A ping to your own router should be under 5 ms with no loss. This points at the \
-         PC-to-router hop — Wi-Fi, cabling, or an overloaded router — not at the ISP.",
+         PC-to-router link: Wi-Fi, cabling or an overloaded router, not the provider.",
         "Ping do własnego routera powinien być poniżej 5 ms i bez strat. To wskazuje na odcinek \
-         komputer–router: Wi-Fi, okablowanie albo przeciążony router, a nie dostawcę.";
+         komputer-router: Wi-Fi, okablowanie albo przeciążony router, a nie dostawcę.";
     f_link_healthy => "The link to the router is healthy", "Łącze do routera jest zdrowe";
 
     // -----------------------------------------------------------------------
@@ -1159,13 +1233,15 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "If the router still answers, the fault is on the WAN/ISP side.",
         "Jeśli router nadal odpowiada, wina leży po stronie WAN/ISP.";
     f_loss_advice =>
-        "Above 2% games start to stutter and TCP throughput collapses. Check the router link \
-         first — if that is clean, the problem is further upstream.",
-        "Powyżej 2% gry zaczynają się ciąć, a przepustowość TCP się załamuje. Najpierw sprawdź \
-         łącze do routera — jeśli jest czyste, problem jest dalej w górę.";
+        "Above 2% games start to stutter and TCP throughput collapses. Check the link to the \
+         router first; if it is clean, the problem is further along.",
+        "Powyżej 2% gry zaczynają się ciąć, a przepustowość TCP spada. Najpierw sprawdź łącze do \
+         routera; jeśli jest czyste, problem leży dalej.";
     f_ping_high_advice =>
-        "Run a traceroute to see which hop the delay appears at.",
-        "Uruchom traceroute, żeby zobaczyć, na którym skoku pojawia się opóźnienie.";
+        "The link-by-link picture above shows where the delay is added; the Live tab traces the \
+         path hop by hop.",
+        "Rysunek ogniw powyżej pokazuje, gdzie powstaje opóźnienie; trasę skok po skoku pokazuje \
+         zakładka Na żywo.";
 
     // -----------------------------------------------------------------------
     // findings: MTU
@@ -1204,10 +1280,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Karta rozłączyła się z SSID. To sterownik, oszczędzanie energii albo zbyt słaby sygnał.";
     f_hist_isp => "Drops on the WAN/ISP side", "Zrywy po stronie WAN/ISP";
     f_hist_isp_advice =>
-        "The router answered but the internet did not. No Windows setting fixes this — it is \
-         evidence for a support ticket. Show them these timestamps.",
-        "Router odpowiadał, a internet nie. Żadne ustawienie Windowsa tego nie naprawi — to \
-         materiał do zgłoszenia u dostawcy. Pokaż im te znaczniki czasu.";
+        "The router answered but the internet did not. No Windows setting fixes this; save a \
+         report with these times for the provider.",
+        "Router odpowiadał, a internet nie. Żadne ustawienie Windowsa tego nie naprawi; zapisz \
+         raport z tymi godzinami dla dostawcy.";
     f_hist_dns => "DNS failures", "Awarie DNS";
     f_hist_dns_advice =>
         "The link was up but names would not resolve. Changing DNS fixes this.",
@@ -2093,6 +2169,64 @@ pub fn set_err_interval_max(max_s: u64) -> String {
 }
 
 /// A router that ignores pings addressed to itself while traffic passes.
+/// The route row when traffic goes through a tunnel.
+pub fn measure_route_vpn(name: &str) -> String {
+    match current() {
+        Lang::En => format!("through a VPN ({name})"),
+        Lang::Pl => format!("przez VPN ({name})"),
+    }
+}
+
+/// The line over the verdict: when the scan ran and on which connection.
+pub fn verdict_meta(when: &str, place: &str) -> String {
+    match current() {
+        Lang::En => format!("Scan at {when} · {place}"),
+        Lang::Pl => format!("Skan z {when} · {place}"),
+    }
+}
+
+/// What the scan before this one found, and how the ping moved since.
+pub fn verdict_since(
+    when: &str,
+    segment: &str,
+    router: Option<(f64, f64)>,
+    internet: Option<(f64, f64)>,
+) -> String {
+    let mut moved = Vec::new();
+    if let Some((a, b)) = router {
+        moved.push(format!("{} {a:.0} → {b:.0} ms", pick("router", "router")));
+    }
+    if let Some((a, b)) = internet {
+        moved.push(format!("{} {a:.0} → {b:.0} ms", pick("internet", "internet")));
+    }
+    let moved = if moved.is_empty() { String::new() } else { format!("; {}", moved.join(", ")) };
+    match current() {
+        Lang::En => format!("Previous scan at {when}: {}{moved}", segment.to_lowercase()),
+        Lang::Pl => format!("Poprzedni skan z {when}: {}{moved}", segment.to_lowercase()),
+    }
+}
+
+pub fn f_vpn_detail(name: &str) -> String {
+    match current() {
+        Lang::En => format!("Windows routes the internet through {name}."),
+        Lang::Pl => format!("Windows kieruje ruch do internetu przez {name}."),
+    }
+}
+
+pub fn f_proxy_detail(proxy: &str) -> String {
+    match current() {
+        Lang::En => format!("Set to {proxy}."),
+        Lang::Pl => format!("Ustawiony: {proxy}."),
+    }
+}
+
+pub fn f_other_medium_detail(name: &str, desc: &str) -> String {
+    if desc.is_empty() || desc == name {
+        return name.to_string();
+    }
+    format!("{name} ({desc})")
+}
+
 pub fn f_router_mute_detail(gw: &str) -> String {
     match current() {
         Lang::En => format!(
@@ -2638,8 +2772,8 @@ pub fn scan_warnings(count: usize, first: &str) -> String {
 
 pub fn verdict_confident(segment: &str, confidence: &str) -> String {
     match current() {
-        Lang::En => format!("{segment} — {confidence}"),
-        Lang::Pl => format!("{segment} — {confidence}"),
+        Lang::En => format!("{segment} ({confidence})"),
+        Lang::Pl => format!("{segment} ({confidence})"),
     }
 }
 
@@ -2801,8 +2935,8 @@ pub fn f_tcp_detail(host: &str, ms: f64, ping: f64) -> String {
 
 pub fn f_tcp_blocked_detail(host: &str, err: &str) -> String {
     match current() {
-        Lang::En => format!("Could not open {host}:443 — {err}"),
-        Lang::Pl => format!("Nie udało się otworzyć {host}:443 — {err}"),
+        Lang::En => format!("Could not open {host}:443: {err}"),
+        Lang::Pl => format!("Nie udało się otworzyć {host}:443: {err}"),
     }
 }
 
@@ -3163,7 +3297,7 @@ pub fn f_apipa_detail(adapter: &str, ip: &str) -> String {
              The link is up; the router never handed out an address."
         ),
         Lang::Pl => format!(
-            "{adapter} nadała sobie adres {ip} — Windows robi tak, gdy żaden serwer DHCP nie \
+            "{adapter} nadała sobie adres {ip}, co Windows robi, gdy żaden serwer DHCP nie \
              odpowiada. Łącze działa, ale router nie przydzielił adresu."
         ),
     }
@@ -3536,7 +3670,7 @@ pub fn cause_title(code: &str) -> String {
         "signal_fade" => ("The signal faded away", "Sygnał stopniowo zanikał"),
         "airtime_24ghz" => (
             "Strong signal on 2.4 GHz, and it dropped anyway",
-            "Mocny sygnał w paśmie 2.4 GHz, a łącze i tak padło",
+            "Mocny sygnał w paśmie 2,4 GHz, a łącze i tak padło",
         ),
         "router_side" => (
             "The radio was fine, the router side was not",

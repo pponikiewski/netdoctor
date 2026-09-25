@@ -202,7 +202,7 @@ one English label that would silently fail everywhere else.
   each say on hover what they are and what a bad value there points at.
   Folded away under *Technical details*: the path hop by hop with a verdict on
   which one the trouble starts at, and traceroute.
-- **Diagnose** — nine checks: adapter and medium (on a cable, also whether
+- **Diagnose**: nine checks: adapter and medium (on a cable, also whether
   it is corrupting frames and what speed it negotiated), Wi-Fi quality and band,
   adapter power management, DNS, the link to the router, internet latency and
   loss, MTU, TCP settings, and the recorded outage history; also whether IPv6
@@ -210,7 +210,10 @@ one English label that would silently fail everywhere else.
   loads slow), how your DNS compares with a public resolver asked the same
   question, and what Windows itself logged about the connection while the scan
   ran (a Wi-Fi drop logged on the card counts against the link; events that
-  may belong to a VPN or virtual adapter are shown but never blamed). It opens with the
+  may belong to a VPN or virtual adapter are shown but never blamed). It also
+  says when the traffic goes through a VPN, in which case every number includes
+  the trip to the VPN server and the first thing to do is to scan without it,
+  and when Windows sends programs through a proxy. It opens with the
   verdict, then draws the chain *this PC → router → provider → internet* with
   the milliseconds and loss each link added and the link at fault marked, then
   a table of every reading (samples sent, loss, min / avg / max, jitter per
@@ -223,7 +226,9 @@ one English label that would silently fail everywhere else.
   with the time to the second. A single lost second is recorded but blames
   nothing; drops found this way outrank the outage history in the verdict, and
   a quiet run does not clear that history. It can be stopped early and keeps
-  what it recorded.
+  what it recorded. A second scan shows what the one before it found and how
+  the ping to the router and to the internet moved since, which is how to see
+  whether a fix did anything. The report can be saved from the tab.
   Optionally, with your own [OpenRouter](https://openrouter.ai/keys) key in
   the settings, a button asks a language model (DeepSeek V4 Flash by default)
   to explain the result in plain words. Nothing is sent until you press it, the
@@ -465,7 +470,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-375 tests, covering the failure-blame logic, the statistics, the registry layer,
+378 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable
