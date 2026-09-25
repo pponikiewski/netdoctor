@@ -91,3 +91,18 @@ Przegląd z kodu i na żywo (podstawiony `cs2.exe`, zrzut ekranu 2560x1080).
 - [x] Ustawienia nakładki działają od kliknięcia (`Settings::take_overlay`), zapis po puszczeniu myszy
 - [~] 6. „Internet” to Cloudflare/Google, nie serwer gry. ODRZUCONE przez użytkownika 2026-09-24: ping do serwera LoL/VALORANT niemierzalny z zewnątrz (Riot Direct milczy na ICMP, Vanguard), CS2 przez przekaźniki Valve; Hearthstone (TCP) możliwy, ale niechciany
 - [ ] 7. DNS w trakcie meczu na czerwono; rozmiar bez skalowania DPI (niesprawdzone przy 150%)
+
+## Audyt funkcji 2 (2026-09-25)
+
+Wynik: `prompts/audyt-wynik-2026-09-25.md`. 12 z 13 ustaleń z 23.09 potwierdzone w kodzie jako naprawione, #10 (VPN) nadal otwarte.
+
+- [x] G: każda przyczyna ma tytuł i poradę w obu językach. `cause::Code` + wyczerpujący `match` w i18n; przyczyna bez tekstów nie kompiluje się (sprawdzone próbnym wariantem, E0004), test `every_cause_has_words_in_both_languages`. Nie oglądane na ekranie Historii ani w raporcie
+- [x] B: zmiana cofnięta przed awarią nie jest `after_tweak` (test w `cause.rs`, 4 przypadki)
+- [x] H: długi pomiar nie liczy braku odpowiedzi routera jako zerwania LAN, gdy internet w tej sekundzie odpowiadał (test w `longrun.rs`). Nie sprawdzone na prawdziwym routerze ograniczającym ICMP
+- [ ] C: przy filtrowanych pingach `past_filtered_pings` ignoruje `dns_error` (werdykt „działa” przy awarii DNS)
+- [ ] D: Revert DNS: `servers[0]` panikuje przy `dhcp: false` i pustej liście
+- [ ] E: `router_restarted` przy samym zerwaniu sesji PPPoE wyłącza `router_wan_up`
+- [ ] F: tryb gry gubi zmianę z listy do cofnięcia, gdy `save_session` zawiedzie po udanym `apply`
+- [ ] I: wydanie bez `SHA256SUMS` instaluje się bez sumy kontrolnej
+- [ ] Hipoteza A: antywirus lub portal kończy TCP 443 lokalnie → awaria dostawcy jako „sieć blokuje pingi”. Test: `Test-NetConnection 192.0.2.1 -Port 443` na komputerze z ESET/Kaspersky/Avast; na Windows Defender nie występuje (sprawdzone)
+- [ ] Hipoteza J: rekomendacja kanałów 149-165 niedostępnych w części routerów w PL

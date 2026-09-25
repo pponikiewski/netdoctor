@@ -32,6 +32,7 @@ zgadywanka.
 
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
+- 2026-09-25: drugi audyt funkcji: 12 z 13 poprawek z 23.09 potwierdzonych w kodzie; naprawione: przyczyny z routera czytelne w raporcie zamiast surowych kodów (i przyczyna bez tekstu już się nie kompiluje), cofnięta zmiana nie jest winna awarii, a długi pomiar nie obwinia sieci domowej za router, który nie odpowiada na pingi do siebie.
 - 2026-09-25: zakładka Na żywo przebudowana: od kiedy trwa stan, przyciski w podsumowaniu, czytelny wykres, awarie bez spowolnień.
 - 2026-09-25: rodzaj łącza i prędkość z umowy w Ustawieniach, czytelne wyjaśnienie AI z wykonalnymi krokami, raport jako PDF z datą w wybranym folderze.
 - 2026-09-25: Diagnostyka wykrywa VPN i proxy, porównuje wynik z poprzednim skanem i ma wygląd spójny z resztą aplikacji.
