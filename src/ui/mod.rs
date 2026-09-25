@@ -1171,8 +1171,16 @@ pub fn steady<R>(
         // the padded height would feed the padding back in and let the block
         // creep taller every frame.
         let used = ui.min_rect().bottom() - top;
+        // Stretched to the exact edge, not padded with `add_space`: that
+        // counts from the cursor, which already sits an item gap under the
+        // content, so the short layout came out one gap taller than the tall
+        // one and the block still jumped, by 8 px instead of a line.
         if held > used {
-            ui.add_space(held - used);
+            let left = ui.min_rect().left();
+            ui.expand_to_include_rect(egui::Rect::from_min_max(
+                egui::pos2(left, top),
+                egui::pos2(left, top + held),
+            ));
         }
         ui.ctx().data_mut(|d| d.insert_temp(id, (width, held.max(used))));
         inner
@@ -1730,5 +1738,35 @@ mod tests {
 
         let (_, headline) = verdict_line(&Snapshot::default(), true, NOW, SECOND);
         assert_eq!(headline, crate::i18n::mon_waiting());
+    }
+
+    #[test]
+    fn a_steady_panel_never_gives_height_back() {
+        // A header whose content is one line one second and two the next
+        // moved every tab under it by that line.
+        let ctx = egui::Context::default();
+        let mut heights = Vec::new();
+        for frame in 0..8 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 620.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                let panel = egui::TopBottomPanel::top("header").show(ctx, |ui| {
+                    steady(ui, "header", |ui| {
+                        ui.label("one");
+                        if frame % 2 == 1 {
+                            ui.label("two");
+                        }
+                    });
+                });
+                heights.push(panel.response.rect.height());
+            });
+        }
+        let tallest = heights[1];
+        assert!(heights[1..].iter().all(|h| (h - tallest).abs() < 0.5), "{heights:?}");
     }
 }

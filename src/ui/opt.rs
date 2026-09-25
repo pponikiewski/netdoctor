@@ -62,11 +62,13 @@ const CARD_HOVER: egui::Color32 = egui::Color32::from_rgb(0x21, 0x25, 0x2d);
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let tweaks = optimize::all();
-    header(app, ui);
 
+    // The header scrolls with the list: it is the top of the page, not a bar
+    // that follows the reader down past every card.
     egui::ScrollArea::vertical().id_salt("optimise_grid").auto_shrink([false, false]).show(
         ui,
         |ui| {
+            header(app, ui);
             air_card(app, ui);
             for category in optimize::Category::ALL {
                 group(app, ui, &tweaks, category);
