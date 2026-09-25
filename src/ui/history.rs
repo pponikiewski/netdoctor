@@ -61,16 +61,6 @@ const ROW_H: f32 = 54.0;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let events = app.store.recent_events(300);
-    header(app, ui, &events);
-    if clear_confirm(app, ui, &events) {
-        return;
-    }
-    if events.is_empty() {
-        card(ui, i18n::hist_list_heading(), |ui| {
-            ui.label(egui::RichText::new(i18n::hist_nothing_logged()).size(T_BODY).color(FG_DIM));
-        });
-        return;
-    }
 
     // A selection made before the list refreshed may name a row that is no
     // longer here; dropping it is better than showing the wrong outage.
@@ -79,50 +69,131 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             app.selected_outage = None;
         }
     }
+    if app.selected_outage.is_some() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        app.selected_outage = None;
+    }
+    anchor_on_change(app, ui);
+
+    // The list's width, animated, so opening an outage slides the list aside
+    // rather than swapping one screen for another. Fed the full width while
+    // nothing is open, so the slide starts from where the list really was.
+    let full = ui.available_width();
+    let open = app.selected_outage.and_then(|id| events.iter().find(|e| e.id == id));
+    let target = if open.is_some() { LIST_W } else { full };
+    let list_w = ui.ctx().animate_value_with_time(egui::Id::new("history_list_w"), target, 0.2);
+
+    let Some(event) = open else {
+        // Nothing open: one page, the day's summary at its top and every
+        // outage under it across the whole width. The summary scrolls away
+        // with the list instead of standing over it.
+        anchored_scroll(ui, "history_page", |ui| {
+            header(app, ui, &events);
+            if clear_confirm(app, ui, &events) {
+                return None;
+            }
+            if events.is_empty() {
+                card(ui, i18n::hist_list_heading(), |ui| {
+                    ui.label(
+                        egui::RichText::new(i18n::hist_nothing_logged()).size(T_BODY).color(FG_DIM),
+                    );
+                });
+                return None;
+            }
+            list(app, ui, &events)
+        });
+        return;
+    };
 
     if super::is_narrow(ui) {
-        // One at a time: the list, or one outage with a way back to it. Both
-        // squeezed into a narrow window left the detail a few lines tall.
-        match app.selected_outage.and_then(|id| events.iter().find(|e| e.id == id)) {
-            Some(event) => {
-                if button(ui, i18n::btn_back_to_list(), Emphasis::Ghost).clicked() {
-                    app.selected_outage = None;
-                }
-                ui.add_space(S_SM);
-                egui::ScrollArea::vertical()
-                    .id_salt("history_detail")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| detail(app, ui, event, &events));
-            }
-            None => list(app, ui, &events),
-        }
+        // One at a time: squeezed side by side into a narrow window, the
+        // detail was a few lines tall.
+        close_button(app, ui);
+        egui::ScrollArea::vertical()
+            .id_salt("history_detail")
+            .auto_shrink([false, false])
+            .show(ui, |ui| detail(app, ui, event, &events));
         return;
-    }
-
-    // Side by side there is room for both, so the newest outage is opened
-    // rather than an empty pane asking to be clicked.
-    if app.selected_outage.is_none() {
-        app.selected_outage = events.first().map(|e| e.id);
     }
 
     egui::SidePanel::left("history_list")
         .resizable(false)
-        .exact_width(LIST_W)
+        .exact_width(list_w)
         .show_separator_line(false)
         .frame(egui::Frame::none().inner_margin(egui::Margin { right: S_LG, ..Default::default() }))
-        .show_inside(ui, |ui| list(app, ui, &events));
+        .show_inside(ui, |ui| anchored_scroll(ui, "history_table", |ui| list(app, ui, &events)));
 
     egui::CentralPanel::default().frame(egui::Frame::none()).show_inside(ui, |ui| {
-        let Some(event) = app.selected_outage.and_then(|id| events.iter().find(|e| e.id == id))
-        else {
-            ui.label(egui::RichText::new(i18n::hist_select_hint()).size(T_BODY).color(FG_DIM));
-            return;
-        };
+        close_button(app, ui);
         egui::ScrollArea::vertical()
             .id_salt("history_detail")
             .auto_shrink([false, false])
             .show(ui, |ui| detail(app, ui, event, &events));
     });
+}
+
+/// The way back to the whole list, over the open outage.
+fn close_button(app: &mut App, ui: &mut egui::Ui) {
+    if button(ui, i18n::btn_back_to_list(), Emphasis::Ghost).on_hover_text("Esc").clicked() {
+        app.selected_outage = None;
+    }
+    ui.add_space(S_SM);
+}
+
+/// Where each row of the list was on screen last frame, by outage id.
+fn row_y_id() -> egui::Id {
+    egui::Id::new("history_row_y")
+}
+
+/// The selection last frame, to see it change.
+fn prev_selected_id() -> egui::Id {
+    egui::Id::new("history_prev_selected")
+}
+
+/// A row that has to land at a given height on screen in the view that is
+/// about to be drawn.
+fn anchor_id() -> egui::Id {
+    egui::Id::new("history_anchor")
+}
+
+/// When an outage is opened or closed, pins the row it concerns to where it
+/// was on screen.
+///
+/// The full list and the narrowed one are separate scroll areas, and the page
+/// has the summary above its rows. Switching between them left the narrowed
+/// list at its own old offset and then scrolled it to the clicked row, so the
+/// whole list flew up past the pointer. Now the row stays under the pointer
+/// and the list is placed around it.
+fn anchor_on_change(app: &App, ui: &mut egui::Ui) {
+    let prev: Option<Option<i64>> = ui.data(|d| d.get_temp(prev_selected_id()));
+    let now = app.selected_outage;
+    if prev == Some(now) {
+        return;
+    }
+    ui.data_mut(|d| d.insert_temp(prev_selected_id(), now));
+    // Opening pins the row opened; closing pins the one that was open.
+    let Some(key) = now.or(prev.flatten()) else {
+        return;
+    };
+    let rows: Vec<(i64, f32)> = ui.data(|d| d.get_temp(row_y_id())).unwrap_or_default();
+    if let Some((_, y)) = rows.iter().find(|(id, _)| *id == key) {
+        ui.data_mut(|d| d.insert_temp(anchor_id(), (key, *y)));
+    }
+}
+
+/// A vertical scroll area whose content can ask, by returning how far off a
+/// row is, to be shifted by that much on the next frame. The shift is set, not
+/// scrolled to, so there is nothing to watch travel.
+fn anchored_scroll(ui: &mut egui::Ui, salt: &str, add: impl FnOnce(&mut egui::Ui) -> Option<f32>) {
+    let fix = egui::Id::new(("history_fix", salt));
+    let mut area = egui::ScrollArea::vertical().id_salt(salt).auto_shrink([false, false]);
+    if let Some(y) = ui.data_mut(|d| d.remove_temp::<f32>(fix)) {
+        area = area.vertical_scroll_offset(y);
+    }
+    let out = area.show(ui, add);
+    if let Some(delta) = out.inner {
+        ui.data_mut(|d| d.insert_temp(fix, (out.state.offset.y + delta).max(0.0)));
+        ui.ctx().request_repaint();
+    }
 }
 
 /// Whether the clear-history question is on screen.
@@ -266,27 +337,47 @@ fn duration_text(e: &Event) -> String {
     }
 }
 
-fn list(app: &mut App, ui: &mut egui::Ui, events: &[Event]) {
+/// The outage rows. Returns how far the pinned row is from where it has to
+/// be, when a view change pinned one; see [`anchor_on_change`].
+fn list(app: &mut App, ui: &mut egui::Ui, events: &[Event]) -> Option<f32> {
     ui.label(
         egui::RichText::new(format!("{} · {}", i18n::hist_list_heading(), events.len()))
             .size(T_META)
             .color(FG_DIM),
     );
+    if app.selected_outage.is_none() {
+        ui.label(egui::RichText::new(i18n::hist_select_hint()).size(T_META).color(FG_DIM));
+    }
     ui.add_space(S_XS);
-    egui::ScrollArea::vertical().id_salt("history_table").auto_shrink([false, false]).show_rows(
-        ui,
-        ROW_H + 2.0,
-        events.len(),
-        |ui, range| {
-            for e in &events[range] {
-                let selected = app.selected_outage == Some(e.id);
-                if list_row(ui, e, selected).clicked() {
-                    app.selected_outage = Some(e.id);
-                }
-                ui.add_space(2.0);
+    // The frame that finds the pinned row out of place is not shown: the next
+    // one, shifted, is. One blank frame instead of one frame of the list in
+    // the wrong place.
+    let anchor: Option<(i64, f32)> = ui.data_mut(|d| d.remove_temp(anchor_id()));
+    if anchor.is_some() {
+        ui.set_invisible();
+    }
+    // Drawn in full rather than a visible slice: the list scrolls with the
+    // page above it, and a row has to be laid out to be measured. At most
+    // 300 rows, and `list_row` paints nothing for one that is off screen.
+    let mut rows = Vec::with_capacity(events.len());
+    let mut delta = None;
+    for e in events {
+        let selected = app.selected_outage == Some(e.id);
+        let resp = list_row(ui, e, selected);
+        rows.push((e.id, resp.rect.top()));
+        if let Some((id, y)) = anchor {
+            if id == e.id && (resp.rect.top() - y).abs() > 0.5 {
+                delta = Some(resp.rect.top() - y);
             }
-        },
-    );
+        }
+        if resp.clicked() {
+            // A second click on the open one closes it.
+            app.selected_outage = if selected { None } else { Some(e.id) };
+        }
+        ui.add_space(2.0);
+    }
+    ui.data_mut(|d| d.insert_temp(row_y_id(), rows));
+    delta
 }
 
 /// One outage in the list: when and how long on the first line, what kind
