@@ -83,7 +83,7 @@ fn main() -> eframe::Result<()> {
     i18n::set(cfg.effective_lang());
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("netdoctor {VERSION}");
+        say(&format!("netdoctor {VERSION}\n"));
         return Ok(());
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
@@ -115,25 +115,7 @@ fn main() -> eframe::Result<()> {
         let net = probe::netstate::read();
         let scan = diagnose::scan(&net, &store, &cfg, deep, None, None);
 
-        let v = &scan.verdict;
-        println!("{}", i18n::verdict_heading());
-        println!("  {} — {}", v.segment.label(), v.confidence.label());
-        if let Some(split) = &v.split {
-            println!("  {split}");
-        }
-        println!("  {}", v.cost);
-        for (n, a) in v.actions.iter().enumerate() {
-            println!("  {}. {}", n + 1, a.text);
-        }
-
-        println!("{}", "-".repeat(72));
-        println!("{}", diagnose::summarise(&scan.findings));
-        for f in &scan.findings {
-            println!("[{:>8}] {} :: {}", f.severity.label(), f.title, f.detail);
-            if !f.advice.is_empty() {
-                println!("           -> {}", f.advice);
-            }
-        }
+        say(&scan_text(&scan));
         std::process::exit(scan_exit_code(&scan));
     }
 
@@ -230,8 +212,46 @@ fn scan_exit_code(scan: &diagnose::Scan) -> i32 {
     }
 }
 
+/// What `--scan` prints: the verdict, then every finding.
+fn scan_text(scan: &diagnose::Scan) -> String {
+    use std::fmt::Write as _;
+    // Writing into a String cannot fail; the results are only there to be
+    // discarded.
+    let mut out = String::new();
+    let v = &scan.verdict;
+    let _ = writeln!(out, "{}", i18n::verdict_heading());
+    let _ = writeln!(out, "  {} — {}", v.segment.label(), v.confidence.label());
+    if let Some(split) = &v.split {
+        let _ = writeln!(out, "  {split}");
+    }
+    let _ = writeln!(out, "  {}", v.cost);
+    for (n, a) in v.actions.iter().enumerate() {
+        let _ = writeln!(out, "  {}. {}", n + 1, a.text);
+    }
+    let _ = writeln!(out, "{}", "-".repeat(72));
+    let _ = writeln!(out, "{}", diagnose::summarise(&scan.findings));
+    for f in &scan.findings {
+        let _ = writeln!(out, "[{:>8}] {} :: {}", f.severity.label(), f.title, f.detail);
+        if !f.advice.is_empty() {
+            let _ = writeln!(out, "           -> {}", f.advice);
+        }
+    }
+    out
+}
+
+/// Writes to standard output and lets a closed one go. `println!` panics
+/// when the reader has gone (`--scan | Select-Object -First 3` closes the
+/// pipe early), and in this build a panic is a crash dialog over a scan that
+/// had finished. The exit code still says what the scan found.
+fn say(text: &str) {
+    use std::io::Write as _;
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(text.as_bytes());
+    let _ = out.flush();
+}
+
 fn print_help() {
-    println!("netdoctor {VERSION} · {}\n\n{}", i18n::app_tagline(), i18n::cli_help());
+    say(&format!("netdoctor {VERSION} · {}\n\n{}\n", i18n::app_tagline(), i18n::cli_help()));
 }
 
 /// The release build has no console (`windows_subsystem = "windows"`) and

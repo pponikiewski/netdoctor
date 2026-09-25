@@ -56,3 +56,11 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# winit 0.30.13 unwraps a monitor handle that goes stale when a screen is
+# unplugged, and egui-winit reads the monitor every frame, so the app died
+# (crash.log, 1.5.0; rust-windowing/winit#3258). The copy in vendor/winit is
+# the published crate with that one fix; vendor/README.md says what changed
+# and when it can go.
+[patch.crates-io]
+winit = { path = "vendor/winit" }
