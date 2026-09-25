@@ -686,8 +686,8 @@ impl Tweak for FastDns {
         // as static pins the router's address, and every other network the
         // laptop joins then fails to resolve. Unknown origin, no snapshot:
         // `apply` refuses rather than guess.
-        let snapshot = match dns_set_by_hand(net) {
-            Some(by_hand) => json!({ "servers": current, "dhcp": !by_hand }),
+        let snapshot = match typed_dns(net) {
+            Some(typed) => dns_snapshot(&typed, &current),
             None => Value::Null,
         };
         State::new(text, optimal, snapshot)
@@ -741,6 +741,11 @@ impl Tweak for FastDns {
             let _ = run("ipconfig", &["/flushdns"]);
             return Ok(crate::i18n::tw_dns_reverted_dhcp().into());
         }
+        // A typed-in list with nothing in it has nothing to put back. It used
+        // to be indexed anyway and closed the app.
+        let Some(first) = servers.first() else {
+            return Err(anyhow!(crate::i18n::tw_dns_snapshot_empty()));
+        };
         run(
             "netsh",
             &[
@@ -750,7 +755,7 @@ impl Tweak for FastDns {
                 "dnsservers",
                 &format!("name={name}"),
                 "source=static",
-                &format!("address={}", servers[0]),
+                &format!("address={first}"),
                 "register=primary",
                 "validate=no",
             ],
@@ -780,12 +785,25 @@ fn split_servers(raw: &str) -> Vec<String> {
     raw.split([',', ' ']).filter(|s| !s.is_empty()).map(String::from).collect()
 }
 
-/// Whether the adapter's resolvers were typed in (`NameServer` set) rather
-/// than handed out by DHCP. `None` when the key cannot be read.
-fn dns_set_by_hand(net: &NetState) -> Option<bool> {
+/// The resolvers typed in for this adapter (`NameServer`), empty when DHCP
+/// hands them out. `None` when the key cannot be read.
+fn typed_dns(net: &NetState) -> Option<Vec<String>> {
     let key = NagleOff::key(net)?;
     let raw = winreg::read_string(Root::LocalMachine, &key, "NameServer").ok()?;
-    Some(raw.is_some_and(|r| !split_servers(&r).is_empty()))
+    Some(raw.map(|r| split_servers(&r)).unwrap_or_default())
+}
+
+/// What Revert needs: where the servers came from and, when typed in, the
+/// list as typed. That list is taken from the registry, not from the
+/// adapter's live answer: the two are read apart, and a card between
+/// networks reports none while the registry still holds the user's list.
+/// Revert then had a hand-set origin and nothing to set.
+fn dns_snapshot(typed: &[String], live: &[String]) -> Value {
+    if typed.is_empty() {
+        json!({ "servers": live, "dhcp": true })
+    } else {
+        json!({ "servers": typed, "dhcp": false })
+    }
 }
 
 /// What DHCP offers this adapter right now, kept by Windows even while a
@@ -1211,6 +1229,28 @@ mod tests {
         assert!(restore_dhcp(&legacy, &router, &router));
         assert!(!restore_dhcp(&legacy, &["9.9.9.9".to_string()], &router));
         assert!(restore_dhcp(&json!({ "servers": [] }), &[], &router));
+    }
+
+    #[test]
+    fn a_hand_set_dns_is_recorded_from_the_registry_not_the_live_card() {
+        let typed = vec!["10.0.0.53".to_string(), "10.0.0.54".to_string()];
+        // The card between networks reports nothing; the typed list is still
+        // what Revert has to put back.
+        let snap = dns_snapshot(&typed, &[]);
+        assert_eq!(snap, json!({ "servers": typed, "dhcp": false }));
+        // From DHCP: the origin is what matters, the live list is kept for
+        // reference.
+        let live = vec!["192.168.1.1".to_string()];
+        assert_eq!(dns_snapshot(&[], &live), json!({ "servers": live, "dhcp": true }));
+    }
+
+    #[test]
+    fn a_hand_set_snapshot_with_no_servers_is_refused_rather_than_indexed() {
+        // Written by the old read, which took the list from the live card.
+        // Revert returns before running anything, so this touches no adapter.
+        let snap = json!({ "servers": [], "dhcp": false });
+        let err = FastDns.revert(&NetState::default(), &snap).expect_err("nothing to restore");
+        assert_eq!(err.to_string(), crate::i18n::tw_dns_snapshot_empty());
     }
 
     #[test]

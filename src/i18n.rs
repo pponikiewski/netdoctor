@@ -1836,6 +1836,13 @@ Płaci się to raz, przy otwieraniu \
     tw_dns_applied => "DNS set to 1.1.1.1 and 8.8.8.8.", "DNS ustawiony na 1.1.1.1 i 8.8.8.8.";
     tw_dns_reverted_dhcp => "DNS returned to DHCP.", "DNS wrócił do DHCP.";
     tw_dns_reverted => "Previous DNS servers restored.", "Przywrócono poprzednie serwery DNS.";
+    tw_dns_snapshot_empty =>
+        "The saved state says the DNS servers were set by hand but lists none, so there is \
+         nothing to restore. Set them in the adapter's IPv4 properties, or choose \"Obtain DNS \
+         server address automatically\".",
+        "Zapisany stan mówi, że serwery DNS były ustawione ręcznie, ale nie zawiera żadnego, \
+         więc nie ma czego przywrócić. Ustaw je we właściwościach IPv4 karty albo wybierz \
+         „Uzyskaj adres serwera DNS automatycznie”.";
 
     // TCP autotuning
     tw_autotune_title =>
@@ -4789,6 +4796,20 @@ pub fn mon_dns_detail(err: &str) -> String {
     match current() {
         Lang::En => format!("Ping by IP works, name resolution does not: {err}"),
         Lang::Pl => format!("Ping po IP działa, rozwiązywanie nazw nie: {err}"),
+    }
+}
+
+/// The same failure on a network that filters pings: what got through was a
+/// TCP connection, and saying "ping works" would claim a reading never taken.
+pub fn mon_dns_detail_filtered(err: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "A connection by IP gets through (this network blocks pings), name resolution \
+             does not: {err}"
+        ),
+        Lang::Pl => format!(
+            "Połączenie po IP przechodzi (ta sieć blokuje pingi), rozwiązywanie nazw nie: {err}"
+        ),
     }
 }
 

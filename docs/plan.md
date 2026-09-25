@@ -99,8 +99,8 @@ Wynik: `prompts/audyt-wynik-2026-09-25.md`. 12 z 13 ustaleń z 23.09 potwierdzon
 - [x] G: każda przyczyna ma tytuł i poradę w obu językach. `cause::Code` + wyczerpujący `match` w i18n; przyczyna bez tekstów nie kompiluje się (sprawdzone próbnym wariantem, E0004), test `every_cause_has_words_in_both_languages`. Nie oglądane na ekranie Historii ani w raporcie
 - [x] B: zmiana cofnięta przed awarią nie jest `after_tweak` (test w `cause.rs`, 4 przypadki)
 - [x] H: długi pomiar nie liczy braku odpowiedzi routera jako zerwania LAN, gdy internet w tej sekundzie odpowiadał (test w `longrun.rs`). Nie sprawdzone na prawdziwym routerze ograniczającym ICMP
-- [ ] C: przy filtrowanych pingach `past_filtered_pings` ignoruje `dns_error` (werdykt „działa” przy awarii DNS)
-- [ ] D: Revert DNS: `servers[0]` panikuje przy `dhcp: false` i pustej liście
+- [x] C: przy filtrowanych pingach i przechodzącym TCP błąd DNS daje `DnsFail` z tekstem, który nie twierdzi, że ping działa (`mon_dns_detail_filtered`); test w `monitor.rs` dla IspDown/LanDown/AdapterDown. Nie sprawdzone w sieci blokującej ICMP
+- [x] D: snapshot ręcznego DNS bierze listę z rejestru (`NameServer`), nie z bieżącego odczytu karty; Revert z pustą listą zwraca błąd zamiast panikować. Testy `dns_snapshot` i odmowy w `optimize/mod.rs`; odczyt rejestru (`typed_dns`) nie ma testu
 - [ ] E: `router_restarted` przy samym zerwaniu sesji PPPoE wyłącza `router_wan_up`
 - [ ] F: tryb gry gubi zmianę z listy do cofnięcia, gdy `save_session` zawiedzie po udanym `apply`
 - [ ] I: wydanie bez `SHA256SUMS` instaluje się bez sumy kontrolnej

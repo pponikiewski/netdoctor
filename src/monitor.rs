@@ -1410,6 +1410,7 @@ fn run_loop(
         let (status, note) = past_filtered_pings(
             classify(&results, &targets, &net, &dns_error, &settings, &store, quality_window),
             tcp_vouches,
+            &dns_error,
         );
         if !matches!(status, Status::Ok | Status::Degraded) {
             last_hard = Some(ts);
@@ -1607,10 +1608,22 @@ fn answered_publicly(results: &HashMap<String, Sample>, targets: &[Resolved]) ->
 /// contradicted: the pings are filtered, the internet is not down. Reported
 /// as working, with a note that says why the latency figures are missing,
 /// rather than as an outage nobody had.
-fn past_filtered_pings(verdict: (Status, String), tcp_vouches: bool) -> (Status, String) {
+///
+/// Names still have to resolve, as they must when the pings answer: a
+/// network that filters pings and has lost its DNS used to read as working
+/// while no page opened.
+fn past_filtered_pings(
+    verdict: (Status, String),
+    tcp_vouches: bool,
+    dns_error: &str,
+) -> (Status, String) {
     match verdict.0 {
         Status::IspDown | Status::LanDown | Status::AdapterDown if tcp_vouches => {
-            (Status::Ok, i18n::mon_icmp_filtered().into())
+            if dns_error.is_empty() {
+                (Status::Ok, i18n::mon_icmp_filtered().into())
+            } else {
+                (Status::DnsFail, i18n::mon_dns_detail_filtered(dns_error))
+            }
         }
         _ => verdict,
     }
@@ -2068,11 +2081,21 @@ mod tests {
         assert!(!ok.vouches(None, later));
 
         let isp = (Status::IspDown, "n".to_string());
-        assert_eq!(past_filtered_pings(isp.clone(), true).0, Status::Ok);
-        assert_eq!(past_filtered_pings(isp, false).0, Status::IspDown);
+        assert_eq!(past_filtered_pings(isp.clone(), true, "").0, Status::Ok);
+        assert_eq!(past_filtered_pings(isp.clone(), false, "").0, Status::IspDown);
         // A verdict reached with pings answering is not the TCP probe's to change.
         let dns = (Status::DnsFail, "n".to_string());
-        assert_eq!(past_filtered_pings(dns, true).0, Status::DnsFail);
+        assert_eq!(past_filtered_pings(dns, true, "").0, Status::DnsFail);
+
+        // Pings filtered, TCP through, names not resolving: that is a DNS
+        // outage, not a working line.
+        for down in [Status::IspDown, Status::LanDown, Status::AdapterDown] {
+            let (status, note) = past_filtered_pings((down, "n".into()), true, "timeout");
+            assert_eq!(status, Status::DnsFail, "{down:?}");
+            assert_eq!(note, i18n::mon_dns_detail_filtered("timeout"));
+        }
+        // Without TCP vouching, the ping verdict stands whatever DNS says.
+        assert_eq!(past_filtered_pings(isp, false, "timeout").0, Status::IspDown);
     }
 
     #[test]
