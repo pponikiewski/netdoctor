@@ -221,6 +221,8 @@ pub struct Settings {
     pub loss_good_pct: f64,
     pub loss_ok_pct: f64,
 
+    /// Every Windows notification the app shows: outages and game mode. The
+    /// name is older than the game-mode ones and kept so saved files load.
     pub notify_on_outage: bool,
     pub start_minimised: bool,
     pub keep_days: i64,

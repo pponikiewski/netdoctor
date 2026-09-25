@@ -267,7 +267,12 @@ poprosisz.";
     set_jitter_ok => "Jitter acceptable up to", "Jitter akceptowalny do";
     set_loss_ok => "Acceptable packet loss", "Akceptowalna utrata pakietów";
 
-    set_notify => "Announce outages in the app", "Zgłaszaj awarie w aplikacji";
+    set_notify => "Show Windows notifications", "Pokazuj powiadomienia systemowe Windows";
+    set_notify_hint =>
+        "When an outage starts and ends, and when game mode switches. Outages are recorded \
+         either way.",
+        "Gdy zaczyna się i kończy awaria oraz gdy przełącza się tryb gry. Awarie są zapisywane \
+         tak czy inaczej.";
     set_start_min => "Start minimised", "Uruchamiaj zminimalizowany";
     set_autostart => "Start with Windows", "Uruchamiaj razem z Windowsem";
     set_autostart_hint =>

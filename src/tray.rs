@@ -342,8 +342,12 @@ mod imp {
             while let Ok(notice) = self.notices.try_recv() {
                 self.balloon(&notice);
             }
+            // Taken either way, so a message from while notifications were
+            // off does not pop up the moment they are turned back on.
             let game_msg = self.shared.game_msg.lock().unwrap_or_else(|p| p.into_inner()).take();
-            if let Some(body) = game_msg {
+            let notify =
+                self.shared.settings.lock().unwrap_or_else(|p| p.into_inner()).notify_on_outage;
+            if let Some(body) = game_msg.filter(|_| notify) {
                 self.info(crate::i18n::tray_game_title(), &body);
             }
         }

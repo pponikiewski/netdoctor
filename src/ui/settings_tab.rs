@@ -403,6 +403,7 @@ fn general_page(app: &mut App, ui: &mut egui::Ui) {
             &mut app.draft.notify_on_outage,
             egui::RichText::new(i18n::set_notify()).size(T_BODY),
         );
+        hint(ui, i18n::set_notify_hint());
         gap(ui);
         ui.checkbox(
             &mut app.draft.start_minimised,
