@@ -1141,8 +1141,7 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
                     stat.tip,
                 );
                 if let Some(tab) = stat.opens {
-                    let resp = resp.interact(egui::Sense::click());
-                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    if super::card_clicked(&cols[i], &resp) {
                         open = Some(tab);
                     }
                 }

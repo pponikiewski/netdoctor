@@ -681,6 +681,7 @@ impl eframe::App for App {
         }
 
         let now = ctx.input(|i| i.time);
+        quiet_tooltips_while_scrolling(ctx);
         self.drain_jobs(now);
         match self.report_done.take() {
             Some(Ok(path)) => self.toast(crate::i18n::live_report_saved(&path), GREEN, now),
@@ -1381,7 +1382,8 @@ pub fn list_row(
 ///
 /// `tip` is what the number means — not a repeat of the label. A card says
 /// "Jitter, 2.3 ms" to someone who already knows what jitter is and nothing
-/// at all to anyone else, and the second group is who this app is for.
+/// at all to anyone else, and the second group is who this app is for. It
+/// opens from the [`help_mark`] beside the label, not from the whole card.
 pub fn stat_card_ex(
     ui: &mut egui::Ui,
     label: &str,
@@ -1391,6 +1393,7 @@ pub fn stat_card_ex(
     width: Option<f32>,
     tip: &str,
 ) -> egui::Response {
+    let mut help_hovered = false;
     let response = egui::Frame::none()
         .fill(BG2)
         .rounding(6.0)
@@ -1404,7 +1407,18 @@ pub fn stat_card_ex(
                 None => ui.set_min_width(140.0),
             }
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(label).size(T_META).color(FG_DIM));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = S_XS;
+                    ui.label(egui::RichText::new(label).size(T_META).color(FG_DIM));
+                    if !tip.is_empty() {
+                        let mark = help_mark(ui);
+                        help_hovered = mark.hovered();
+                        mark.on_hover_ui(|ui| {
+                            tip_heading(ui, label);
+                            tip_prose(ui, tip);
+                        });
+                    }
+                });
                 // The value is the reason the card exists and it changes every
                 // second, so it is the one that most needs its digits to stay
                 // in place between frames.
@@ -1419,15 +1433,44 @@ pub fn stat_card_ex(
             });
         })
         .response;
+    ui.data_mut(|d| d.insert_temp(response.id.with("help"), help_hovered));
+    response
+}
 
-    if tip.is_empty() {
-        response
-    } else {
-        response.on_hover_ui(|ui| {
-            tip_heading(ui, label);
-            tip_prose(ui, tip);
-        })
+/// Whether a card from [`stat_card_ex`] that opens something was clicked,
+/// anywhere but on its help mark.
+///
+/// Not a click target laid over the card: registered after the card's
+/// content, it sat on top of the help mark and took the pointer from it, so
+/// the explanation never opened on the one card that also opens a tab.
+pub fn card_clicked(ui: &egui::Ui, card: &egui::Response) -> bool {
+    let on_help = ui.data(|d| d.get_temp::<bool>(card.id.with("help"))).unwrap_or(false);
+    if on_help || !ui.rect_contains_pointer(card.rect) {
+        return false;
     }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    ui.input(|i| i.pointer.primary_clicked())
+}
+
+/// A small "?" that opens an explanation when the pointer is on it.
+///
+/// The explanation used to open on the whole card, so running the pointer
+/// across the cards, or scrolling past them, threw paragraphs up over the
+/// figures. On a mark of its own it opens for someone who asks.
+pub fn help_mark(ui: &mut egui::Ui) -> egui::Response {
+    let size = T_META + 2.0;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    let colour = if response.hovered() { ACCENT } else { FG_DIM };
+    let painter = ui.painter();
+    painter.circle_stroke(rect.center(), size * 0.5 - 0.5, egui::Stroke::new(1.0_f32, colour));
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "?",
+        egui::FontId::new(T_MICRO, egui::FontFamily::Proportional),
+        colour,
+    );
+    response.on_hover_cursor(egui::CursorIcon::Help)
 }
 
 // ---------------------------------------------------------------------------
@@ -1676,6 +1719,27 @@ fn apply_theme(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// How long after the wheel last moved tooltips stay away.
+const SCROLL_QUIET_S: f32 = 0.3;
+
+/// Keeps tooltips from opening while the page is being scrolled.
+///
+/// egui hides them itself for `tooltip_delay` after a scroll, and the delay is
+/// zero here (see `apply_theme`), so that rule never fired: scrolling the Live
+/// tab carried card after card under a still pointer, each one opened its
+/// tooltip at once, and a tooltip that lands under the pointer takes the wheel
+/// from the page. The page stopped moving. Measured in the running app, the
+/// pointer sat over a tooltip on a wheel frame. The delay is raised for just
+/// as long as the wheel is turning, which switches that rule back on, and is
+/// zero again, instant tooltips and all, once it stops.
+fn quiet_tooltips_while_scrolling(ctx: &egui::Context) {
+    let scrolling = ctx.input(|i| i.time_since_last_scroll()) < SCROLL_QUIET_S;
+    let delay = if scrolling { SCROLL_QUIET_S } else { 0.0 };
+    if ctx.style().interaction.tooltip_delay != delay {
+        ctx.style_mut(|s| s.interaction.tooltip_delay = delay);
+    }
+}
+
 /// Name a latency figure by the same thresholds that colour it.
 ///
 /// The colour already says good-or-bad to anyone who knows the convention;
@@ -1768,5 +1832,92 @@ mod tests {
         }
         let tallest = heights[1];
         assert!(heights[1..].iter().all(|h| (h - tallest).abs() < 0.5), "{heights:?}");
+    }
+
+    #[test]
+    fn no_tooltip_opens_while_the_wheel_is_turning() {
+        // A tooltip that opens under a still pointer during a scroll takes
+        // the wheel from the page, and the page stops. Instant tooltips have
+        // to wait for the wheel, and only for the wheel.
+        let ctx = egui::Context::default();
+        ctx.style_mut(|s| {
+            s.interaction.show_tooltips_only_when_still = false;
+            s.interaction.tooltip_delay = 0.0;
+            s.interaction.tooltip_grace_time = 0.0;
+        });
+        let mut shown = Vec::new();
+        for frame in 0..60 {
+            let mut events = vec![egui::Event::PointerMoved(egui::pos2(100.0, 100.0))];
+            if (5..10).contains(&frame) {
+                events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 40.0),
+                    modifiers: Default::default(),
+                });
+            }
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 620.0),
+                )),
+                events,
+                time: Some(frame as f64 / 60.0),
+                ..Default::default()
+            };
+            let mut open = false;
+            let _ = ctx.run(input, |ctx| {
+                quiet_tooltips_while_scrolling(ctx);
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (_, resp) =
+                        ui.allocate_exact_size(egui::vec2(300.0, 300.0), egui::Sense::hover());
+                    resp.on_hover_ui(|ui| {
+                        open = true;
+                        ui.label("1.1.1.1");
+                    });
+                });
+            });
+            shown.push(open);
+        }
+        assert!(shown[3], "instant before any scrolling: {shown:?}");
+        assert!(!shown[5..=20].iter().any(|s| *s), "hidden while scrolling: {shown:?}");
+        assert!(shown[40], "back once the wheel has stopped: {shown:?}");
+    }
+
+    #[test]
+    fn a_card_explains_itself_from_its_question_mark_only() {
+        // Where on a clickable card the explanation opens, pointer by pointer.
+        let tip_at = |pos: egui::Pos2| {
+            let ctx = egui::Context::default();
+            ctx.style_mut(|s| {
+                s.interaction.show_tooltips_only_when_still = false;
+                s.interaction.tooltip_delay = 0.0;
+            });
+            let mut open = false;
+            for frame in 0..3 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 620.0),
+                    )),
+                    events: vec![egui::Event::PointerMoved(pos)],
+                    time: Some(frame as f64),
+                    ..Default::default()
+                };
+                let _ = ctx.run(input, |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let r = stat_card_ex(ui, "Jitter", "5 ms", "", FG, Some(200.0), "tip");
+                        // As the Live tab does with a card that opens a tab.
+                        let _ = card_clicked(ui, &r);
+                    });
+                    open = ctx.memory(|m| m.any_popup_open())
+                        || ctx.viewport(|v| !v.this_pass.tooltips.widget_tooltips.is_empty());
+                });
+            }
+            open
+        };
+        // The label row sits about 26 px down; somewhere along it is the mark.
+        let on_label_row = (20..200).step_by(2).any(|x| tip_at(egui::pos2(x as f32, 26.0)));
+        assert!(on_label_row, "the question mark opens the explanation");
+        assert!(!tip_at(egui::pos2(60.0, 60.0)), "the figure does not");
     }
 }

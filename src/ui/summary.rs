@@ -10,7 +10,7 @@ use eframe::egui;
 
 use super::{
     btn_width, button, button_ex, status_colour, App, Emphasis, Tab, BG2, BG3, FG, FG_DIM, GREEN,
-    RED, S_LG, S_MD, S_SM, S_XS, T_BODY, T_META, T_TITLE, YELLOW,
+    RED, S_MD, S_SM, S_XS, T_BODY, T_META, T_TITLE, YELLOW,
 };
 use crate::i18n;
 use crate::monitor::{Seen, Status};
@@ -219,25 +219,37 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, summary: &Summary, note: &str, sin
     let panel = egui::Frame::none()
         .fill(BG2)
         .rounding(6.0)
-        .inner_margin(egui::Margin { left: S_LG + 4.0, right: S_LG, top: S_LG, bottom: S_LG })
+        .inner_margin(egui::Margin { left: S_MD + 4.0, right: S_MD, top: S_MD, bottom: S_MD })
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            // Held steady above the buttons, so they stay where the pointer
-            // left them when the note or the "since" line comes and goes.
-            super::steady(ui, "summary_text", |ui| {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(summary.say).size(T_TITLE).strong().color(FG),
-                    )
-                    .wrap(),
+            // The answer and the controls share the top row: the buttons had
+            // a row of their own under everything else, which cost the panel
+            // a row's height and put them as far from the sentence as they
+            // could be. Buttons first, from the right; the answer takes what
+            // is left and wraps in it.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                actions(app, ui, summary.action);
+                ui.add_space(S_MD);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 0.0),
+                    egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+                    |ui| {
+                        ui.label(egui::RichText::new(summary.say).size(T_TITLE).strong().color(FG));
+                        if let Some(s) = since {
+                            ui.add_space(S_SM);
+                            ui.label(
+                                egui::RichText::new(since_text(s, now)).size(T_META).color(FG_DIM),
+                            );
+                        }
+                    },
                 );
-                if let Some(s) = since {
-                    ui.add_space(S_XS);
-                    ui.label(egui::RichText::new(since_text(s, now)).size(T_META).color(FG_DIM));
-                }
-                ui.add_space(S_MD);
-                chain(ui, wifi, summary);
-                ui.add_space(S_MD);
+            });
+            ui.add_space(S_SM);
+            chain(ui, wifi, summary);
+            // Held per state: a note that comes and goes within one state
+            // does not move the cards, and the room a worse state needed is
+            // not kept once the line is healthy again.
+            super::steady(ui, ("summary_text", summary.say), |ui| {
                 ui.add(
                     egui::Label::new(egui::RichText::new(summary.todo).size(T_BODY).color(FG))
                         .wrap(),
@@ -250,8 +262,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, summary: &Summary, note: &str, sin
                     );
                 }
             });
-            ui.add_space(S_MD);
-            actions(app, ui, summary.action);
         });
     // The state's colour down the left edge, as on the Diagnose verdict.
     let rect = panel.response.rect;
@@ -266,56 +276,50 @@ fn actions(app: &mut App, ui: &mut egui::Ui, action: Option<Action>) {
     // A pause held by a running load test or scan is not the user's to lift,
     // and a Resume that does nothing is worse than none.
     let action = action.filter(|a| *a != Action::Resume || app.monitor.is_paused());
-    ui.horizontal(|ui| {
-        if let Some(action) = action {
-            let label = match action {
-                Action::Resume => i18n::live_btn_resume(),
-                Action::Diagnose => i18n::sum_btn_diagnose(),
-                Action::Report if app.report_busy => i18n::hist_report_saving(),
-                Action::Report => i18n::sum_btn_report(),
-            };
-            if button(ui, label, Emphasis::Primary).clicked() {
-                match action {
-                    Action::Resume => app.monitor.set_paused(false),
-                    Action::Diagnose => app.tab = Tab::Diagnose,
-                    Action::Report => {
-                        super::report::save_in_background(app, super::report::Range::Day)
-                    }
-                }
+    // Laid right to left by the caller: the report at the far edge, the pause
+    // beside it, the one thing to do about the state nearest the sentence.
+    ui.spacing_mut().item_spacing.x = S_XS;
+    // The last day, as it always was; the History tab picks a range.
+    // Not twice when the main button already is the report.
+    if action != Some(Action::Report) {
+        let label =
+            if app.report_busy { i18n::hist_report_saving() } else { i18n::live_btn_report() };
+        if button_ex(ui, label, Emphasis::Ghost, !app.report_busy, 0.0).clicked() {
+            super::report::save_in_background(app, super::report::Range::Day);
+        }
+    }
+    // Not beside a main button that already says Resume. The width is the
+    // longer label's, so the row holds still when it flips.
+    if action != Some(Action::Resume) {
+        let paused = app.monitor.is_paused();
+        let label = if paused { i18n::live_btn_resume() } else { i18n::live_btn_pause() };
+        let w = btn_width(ui, i18n::live_btn_pause()).max(btn_width(ui, i18n::live_btn_resume()));
+        if button_ex(ui, label, Emphasis::Secondary, true, w).clicked() {
+            app.monitor.set_paused(!paused);
+        }
+    }
+    if let Some(action) = action {
+        let label = match action {
+            Action::Resume => i18n::live_btn_resume(),
+            Action::Diagnose => i18n::sum_btn_diagnose(),
+            Action::Report if app.report_busy => i18n::hist_report_saving(),
+            Action::Report => i18n::sum_btn_report(),
+        };
+        if button(ui, label, Emphasis::Primary).clicked() {
+            match action {
+                Action::Resume => app.monitor.set_paused(false),
+                Action::Diagnose => app.tab = Tab::Diagnose,
+                Action::Report => super::report::save_in_background(app, super::report::Range::Day),
             }
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // The last day, as it always was; the History tab picks a range.
-            // Not twice when the main button already is the report.
-            if action != Some(Action::Report) {
-                let label = if app.report_busy {
-                    i18n::hist_report_saving()
-                } else {
-                    i18n::live_btn_report()
-                };
-                if button_ex(ui, label, Emphasis::Ghost, !app.report_busy, 0.0).clicked() {
-                    super::report::save_in_background(app, super::report::Range::Day);
-                }
-            }
-            // Not beside a main button that already says Resume. The width
-            // is the longer label's, so the row holds still when it flips.
-            if action != Some(Action::Resume) {
-                let paused = app.monitor.is_paused();
-                let label = if paused { i18n::live_btn_resume() } else { i18n::live_btn_pause() };
-                let w = btn_width(ui, i18n::live_btn_pause())
-                    .max(btn_width(ui, i18n::live_btn_resume()));
-                if button_ex(ui, label, Emphasis::Secondary, true, w).clicked() {
-                    app.monitor.set_paused(!paused);
-                }
-            }
-        });
-    });
+    }
 }
 
 /// This computer, the router and the internet, joined by the two links the
 /// verdict is about, each coloured and named by its state.
 fn chain(ui: &mut egui::Ui, wifi: bool, s: &Summary) {
-    let height = 58.0;
+    // The captions sit 22 px under the bar; this is them and a little air.
+    let height = 46.0;
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
     let p = ui.painter_at(rect);
