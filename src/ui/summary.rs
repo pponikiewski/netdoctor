@@ -222,34 +222,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, summary: &Summary, note: &str, sin
         .inner_margin(egui::Margin { left: S_MD + 4.0, right: S_MD, top: S_MD, bottom: S_MD })
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            // The answer and the controls share the top row: the buttons had
-            // a row of their own under everything else, which cost the panel
-            // a row's height and put them as far from the sentence as they
-            // could be. Buttons first, from the right; the answer takes what
-            // is left and wraps in it.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                actions(app, ui, summary.action);
-                ui.add_space(S_MD);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), 0.0),
-                    egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
-                    |ui| {
-                        ui.label(egui::RichText::new(summary.say).size(T_TITLE).strong().color(FG));
-                        if let Some(s) = since {
-                            ui.add_space(S_SM);
-                            ui.label(
-                                egui::RichText::new(since_text(s, now)).size(T_META).color(FG_DIM),
-                            );
-                        }
-                    },
-                );
-            });
+            // Held, like the text below, so a longer answer that wraps when
+            // trouble starts does not push the chain and the tab down.
+            super::steady(ui, "summary_top", |ui| top_row(app, ui, summary, since, now));
             ui.add_space(S_SM);
             chain(ui, wifi, summary);
-            // Held per state: a note that comes and goes within one state
-            // does not move the cards, and the room a worse state needed is
-            // not kept once the line is healthy again.
-            super::steady(ui, ("summary_text", summary.say), |ui| {
+            // The room is the longest advice's, not the current one's: the
+            // panel used to be held per state, so the moment trouble started
+            // the text grew by a line or two and every card and the chart
+            // under it jumped down, and back up when it passed. One height for
+            // every state costs a line of air when all is well and buys a tab
+            // that holds still exactly when the user is watching it.
+            let reserved = reserved_text_height(ui);
+            super::steady(ui, "summary_text", |ui| {
+                ui.set_min_height(reserved);
                 ui.add(
                     egui::Label::new(egui::RichText::new(summary.todo).size(T_BODY).color(FG))
                         .wrap(),
@@ -270,6 +256,72 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, summary: &Summary, note: &str, sin
         egui::Rounding { nw: 6.0, sw: 6.0, ne: 0.0, se: 0.0 },
         summary.colour,
     );
+}
+
+/// The answer and the controls, sharing one row.
+///
+/// The buttons had a row of their own under everything else, which cost the
+/// panel a row's height and put them as far from the sentence as they could
+/// be. Buttons first, from the right; the answer takes what is left and wraps
+/// in it.
+fn top_row(app: &mut App, ui: &mut egui::Ui, summary: &Summary, since: Option<Since>, now: f64) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+        actions(app, ui, summary.action);
+        ui.add_space(S_MD);
+        // The time always goes under the answer, never beside it. Beside it,
+        // it stayed on the line after a short healthy answer and dropped to
+        // a line of its own after a longer one, so the panel grew the moment
+        // trouble started; and wrapped in place it broke inside the duration.
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = S_XS * 0.5;
+                ui.label(egui::RichText::new(summary.say).size(T_TITLE).strong().color(FG));
+                let text = since.map(|s| since_text(s, now)).unwrap_or_default();
+                // Drawn empty when there is no time to name, so the row keeps
+                // its height either way.
+                ui.label(egui::RichText::new(text).size(T_META).color(FG_DIM));
+            },
+        );
+    });
+}
+
+/// Every piece of advice the panel can show, in the current language.
+fn all_todos() -> [&'static str; 15] {
+    [
+        i18n::sum_ok_todo(),
+        i18n::sum_slow_todo(),
+        i18n::sum_slow_local_todo(),
+        i18n::sum_slow_weak_todo(),
+        i18n::sum_dns_todo(),
+        i18n::sum_isp_todo(),
+        i18n::sum_lan_wifi_todo(),
+        i18n::sum_lan_cable_todo(),
+        i18n::sum_adapter_wifi_todo(),
+        i18n::sum_adapter_cable_todo(),
+        i18n::sum_paused_todo(),
+        i18n::sum_waiting_todo(),
+        i18n::sum_blind_todo(),
+        i18n::sum_unrecorded_todo(),
+        i18n::sum_stale_todo(),
+    ]
+}
+
+/// The height the advice and the monitor's note need at this width in the
+/// worst case: the longest advice, plus one line of note under it.
+///
+/// A note longer than a line still grows the block, and `steady` then keeps
+/// that height until the width changes.
+fn reserved_text_height(ui: &egui::Ui) -> f32 {
+    let width = ui.available_width();
+    let body = egui::FontId::proportional(T_BODY);
+    let todo = all_todos()
+        .iter()
+        .map(|t| ui.fonts(|f| f.layout(t.to_string(), body.clone(), FG, width).size().y))
+        .fold(0.0, f32::max);
+    let note = ui.fonts(|f| f.row_height(&egui::FontId::proportional(T_META)));
+    todo + S_XS + note
 }
 
 fn actions(app: &mut App, ui: &mut egui::Ui, action: Option<Action>) {
