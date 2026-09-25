@@ -849,6 +849,17 @@ impl App {
         // the same space.
         let reserved = if self.elevated { 140.0 } else { 300.0 };
 
+        // Held steady: this panel moving moves every tab under it.
+        steady(ui, "header", |ui| self.header_row(ui, colour, headline, reserved));
+    }
+
+    fn header_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        colour: egui::Color32,
+        headline: &str,
+        reserved: f32,
+    ) {
         ui.horizontal_top(|ui| {
             ui.add_space(2.0);
             status_dot(ui, colour, 7.0);
@@ -1128,6 +1139,45 @@ pub const NARROW: f32 = 860.0;
 
 pub fn is_narrow(ui: &egui::Ui) -> bool {
     ui.available_width() < NARROW
+}
+
+/// Draws `add` and holds the block at the tallest height it has needed at
+/// this width.
+///
+/// The readings in the header, the summary, the cards and the legend change
+/// every second, and in a small window a slightly longer one wraps onto
+/// another line. The block then grew by a line and shrank back a second
+/// later, and everything drawn under it jumped with it. Held, the block can
+/// grow when something longer than ever before arrives, but it never shrinks,
+/// so nothing under it moves back. A different width starts over, since the
+/// old height says nothing about the new layout.
+///
+/// ponytail: the height is kept in memory, so each start of the app learns
+/// it again; persist it per width if the first growth is a problem too.
+pub fn steady<R>(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let id = ui.make_persistent_id(id_salt);
+    let width = ui.available_width();
+    let (was_width, held): (f32, f32) = ui.ctx().data(|d| d.get_temp(id)).unwrap_or((width, 0.0));
+    let held = if (was_width - width).abs() < 0.5 { held } else { 0.0 };
+
+    ui.vertical(|ui| {
+        let top = ui.min_rect().top();
+        let inner = add(ui);
+        // The content's own height, measured before any padding: recording
+        // the padded height would feed the padding back in and let the block
+        // creep taller every frame.
+        let used = ui.min_rect().bottom() - top;
+        if held > used {
+            ui.add_space(held - used);
+        }
+        ui.ctx().data_mut(|d| d.insert_temp(id, (width, held.max(used))));
+        inner
+    })
+    .inner
 }
 
 /// How wide a tooltip carrying prose is allowed to get.

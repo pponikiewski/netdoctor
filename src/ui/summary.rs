@@ -222,26 +222,34 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, summary: &Summary, note: &str, sin
         .inner_margin(egui::Margin { left: S_LG + 4.0, right: S_LG, top: S_LG, bottom: S_LG })
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.add(
-                egui::Label::new(egui::RichText::new(summary.say).size(T_TITLE).strong().color(FG))
-                    .wrap(),
-            );
-            if let Some(s) = since {
-                ui.add_space(S_XS);
-                ui.label(egui::RichText::new(since_text(s, now)).size(T_META).color(FG_DIM));
-            }
-            ui.add_space(S_MD);
-            chain(ui, wifi, summary);
-            ui.add_space(S_MD);
-            ui.add(
-                egui::Label::new(egui::RichText::new(summary.todo).size(T_BODY).color(FG)).wrap(),
-            );
-            if !note.is_empty() {
-                ui.add_space(S_XS);
+            // Held steady above the buttons, so they stay where the pointer
+            // left them when the note or the "since" line comes and goes.
+            super::steady(ui, "summary_text", |ui| {
                 ui.add(
-                    egui::Label::new(egui::RichText::new(note).size(T_META).color(FG_DIM)).wrap(),
+                    egui::Label::new(
+                        egui::RichText::new(summary.say).size(T_TITLE).strong().color(FG),
+                    )
+                    .wrap(),
                 );
-            }
+                if let Some(s) = since {
+                    ui.add_space(S_XS);
+                    ui.label(egui::RichText::new(since_text(s, now)).size(T_META).color(FG_DIM));
+                }
+                ui.add_space(S_MD);
+                chain(ui, wifi, summary);
+                ui.add_space(S_MD);
+                ui.add(
+                    egui::Label::new(egui::RichText::new(summary.todo).size(T_BODY).color(FG))
+                        .wrap(),
+                );
+                if !note.is_empty() {
+                    ui.add_space(S_XS);
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(note).size(T_META).color(FG_DIM))
+                            .wrap(),
+                    );
+                }
+            });
             ui.add_space(S_MD);
             actions(app, ui, summary.action);
         });

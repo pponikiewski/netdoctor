@@ -61,7 +61,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
     };
     super::summary::show(app, ui, &summary, &note, since);
     ui.add_space(S_MD);
-    cards(app, ui);
+    super::steady(ui, "live_cards", |ui| cards(app, ui));
     ui.add_space(S_MD);
     plot(app, ui);
     ui.add_space(S_MD);
@@ -752,74 +752,76 @@ fn plot_body(app: &mut App, ui: &mut egui::Ui) {
     // names grew from the left -- the two collided the moment a target had a
     // long name. Two rows cost eight pixels and cannot collide.
     let mut toggled: Option<String> = None;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(S_XS + 2.0, S_XS);
-        for (key, label, colour, scope) in &all {
-            let on = !app.hidden_series.contains(key);
+    super::steady(ui, "live_legend", |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(S_XS + 2.0, S_XS);
+            for (key, label, colour, scope) in &all {
+                let on = !app.hidden_series.contains(key);
 
-            // The last reading, shown on the chip. This is the number the
-            // user came to the legend for; making them hover for it was the
-            // legend keeping its own contents secret.
-            let sample = app.last.results.get(key);
-            let value = match sample {
-                Some(s) => match (&s.rtt_ms, &s.error) {
-                    (Some(rtt), _) => {
-                        Some((format!("{rtt:.0} ms"), latency_colour(*rtt, &app.settings)))
-                    }
-                    (None, Some(_)) => Some((i18n::live_hover_lost().to_string(), RED)),
-                    (None, None) => None,
-                },
-                None => None,
-            };
+                // The last reading, shown on the chip. This is the number the
+                // user came to the legend for; making them hover for it was the
+                // legend keeping its own contents secret.
+                let sample = app.last.results.get(key);
+                let value = match sample {
+                    Some(s) => match (&s.rtt_ms, &s.error) {
+                        (Some(rtt), _) => {
+                            Some((format!("{rtt:.0} ms"), latency_colour(*rtt, &app.settings)))
+                        }
+                        (None, Some(_)) => Some((i18n::live_hover_lost().to_string(), RED)),
+                        (None, None) => None,
+                    },
+                    None => None,
+                };
 
-            let resp = legend_chip(ui, *colour, label, value, on);
+                let resp = legend_chip(ui, *colour, label, value, on);
 
-            // Four lines crossing each other is the state this chart is in
-            // most of the time, and the question is usually about one of
-            // them. Clicking its name takes the rest away.
-            if resp.clicked() {
-                toggled = Some(key.clone());
-            }
-
-            // The reading, then what this target is and what a high figure on
-            // it means. The number alone was the part nobody could use: four
-            // lines of milliseconds say nothing until you know which stretch
-            // of the path each one measures.
-            let reading = match sample {
-                Some(s) => match (&s.rtt_ms, &s.error) {
-                    (Some(rtt), _) => (
-                        format!("{rtt:.2} ms, {}", super::latency_verdict(*rtt, &app.settings)),
-                        latency_colour(*rtt, &app.settings),
-                    ),
-                    (None, Some(err)) => (err.clone(), RED),
-                    (None, None) => (i18n::live_no_data().to_string(), FG_DIM),
-                },
-                None => (i18n::live_no_data().to_string(), FG_DIM),
-            };
-            let meaning = i18n::live_target_meaning(key, *scope);
-            let hint = if on { i18n::live_series_toggle() } else { i18n::live_series_show() };
-            let label = label.clone();
-            resp.on_hover_ui(move |ui| {
-                ui.set_max_width(super::TIP_WIDTH);
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(&label).size(T_HEAD).color(FG).strong());
-                    ui.label(figure(&reading.0, T_BODY, reading.1));
-                });
-                ui.add_space(S_XS);
-                ui.separator();
-                ui.add_space(S_SM);
-                if !meaning.is_empty() {
-                    super::tip_prose(ui, meaning);
-                    ui.add_space(S_SM);
+                // Four lines crossing each other is the state this chart is in
+                // most of the time, and the question is usually about one of
+                // them. Clicking its name takes the rest away.
+                if resp.clicked() {
+                    toggled = Some(key.clone());
                 }
-                ui.label(
-                    egui::RichText::new(hint)
-                        .size(T_MICRO)
-                        .italics()
-                        .color(ACCENT.linear_multiply(0.85)),
-                );
-            });
-        }
+
+                // The reading, then what this target is and what a high figure on
+                // it means. The number alone was the part nobody could use: four
+                // lines of milliseconds say nothing until you know which stretch
+                // of the path each one measures.
+                let reading = match sample {
+                    Some(s) => match (&s.rtt_ms, &s.error) {
+                        (Some(rtt), _) => (
+                            format!("{rtt:.2} ms, {}", super::latency_verdict(*rtt, &app.settings)),
+                            latency_colour(*rtt, &app.settings),
+                        ),
+                        (None, Some(err)) => (err.clone(), RED),
+                        (None, None) => (i18n::live_no_data().to_string(), FG_DIM),
+                    },
+                    None => (i18n::live_no_data().to_string(), FG_DIM),
+                };
+                let meaning = i18n::live_target_meaning(key, *scope);
+                let hint = if on { i18n::live_series_toggle() } else { i18n::live_series_show() };
+                let label = label.clone();
+                resp.on_hover_ui(move |ui| {
+                    ui.set_max_width(super::TIP_WIDTH);
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(&label).size(T_HEAD).color(FG).strong());
+                        ui.label(figure(&reading.0, T_BODY, reading.1));
+                    });
+                    ui.add_space(S_XS);
+                    ui.separator();
+                    ui.add_space(S_SM);
+                    if !meaning.is_empty() {
+                        super::tip_prose(ui, meaning);
+                        ui.add_space(S_SM);
+                    }
+                    ui.label(
+                        egui::RichText::new(hint)
+                            .size(T_MICRO)
+                            .italics()
+                            .color(ACCENT.linear_multiply(0.85)),
+                    );
+                });
+            }
+        })
     });
 
     ui.add_space(S_SM);
