@@ -334,7 +334,9 @@ An outage is only recorded if the monitor is running when it happens. So:
   Quit from the icon's menu to stop it.
 - **Windows notifies you** when an outage is serious enough to be recorded
   (three failed readings in a row, and not merely slow), and again when the
-  line comes back, with how long it was down. Turn it off in Settings.
+  line comes back, with how long it was down. **Settings → General → Show
+  Windows notifications** turns these off together with game mode's; outages
+  are recorded either way.
 
 ## Game mode
 
