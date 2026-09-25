@@ -56,11 +56,12 @@ pub struct Release {
     pub size: u64,
     /// The `SHA256SUMS` the release workflow hangs next to the binary.
     ///
-    /// `None` for a release published before the updater learned to read it.
-    /// Those still install on the shape checks alone, which is what they were
-    /// verified by when they were current; refusing them would break updating
-    /// *from* an old build, which is the one case an updater exists for.
-    pub sums_url: Option<String>,
+    /// Required. It used to be optional, for releases published before the
+    /// updater read it, but an update is always newer than the build taking
+    /// it, and the workflow has published the file since before the first
+    /// tagged release. The exception only ever let through a release that
+    /// had its checksum file taken away.
+    pub sums_url: String,
 }
 
 /// How far along an update is. One value rather than a handful of booleans,
@@ -121,7 +122,12 @@ pub fn check() -> Result<Option<Release>> {
     // Parsed by hand rather than through ureq's `into_json`, which is behind a
     // default feature this crate does not ask for by name.
     let api: ApiRelease = serde_json::from_str(&body)?;
+    release_from(api, env!("CARGO_PKG_VERSION"))
+}
 
+/// The release in an API answer, if it is one this build should install.
+/// Apart from [`check`] so it can be tested without the network.
+fn release_from(api: ApiRelease, current: &str) -> Result<Option<Release>> {
     // `releases/latest` already excludes both, but a repo can be configured to
     // surface a prerelease and that is not something to push at everyone.
     if api.draft || api.prerelease {
@@ -129,7 +135,7 @@ pub fn check() -> Result<Option<Release>> {
     }
 
     let version = normalise(&api.tag_name);
-    if !is_newer(&version, env!("CARGO_PKG_VERSION")) {
+    if !is_newer(&version, current) {
         return Ok(None);
     }
 
@@ -137,7 +143,8 @@ pub fn check() -> Result<Option<Release>> {
         .assets
         .iter()
         .find(|a| a.name.eq_ignore_ascii_case(SUMS))
-        .map(|a| a.browser_download_url.clone());
+        .map(|a| a.browser_download_url.clone())
+        .ok_or_else(|| anyhow!(i18n::upd_err_no_sums(&version, SUMS)))?;
 
     let asset = api
         .assets
@@ -330,10 +337,7 @@ fn verify(path: &Path, rel: &Release) -> Result<()> {
         bail!(i18n::upd_err_not_exe());
     }
 
-    let Some(url) = &rel.sums_url else {
-        return Ok(());
-    };
-    let sums = ureq::get(url)
+    let sums = ureq::get(&rel.sums_url)
         .set("User-Agent", UA)
         .timeout(Duration::from_secs(15))
         .call()?
@@ -481,6 +485,35 @@ mod tests {
             "a checksum file that never names the asset verifies nothing"
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    fn api(assets: &[&str]) -> ApiRelease {
+        ApiRelease {
+            tag_name: "v99.0.0".into(),
+            body: String::new(),
+            html_url: "https://example.invalid/release".into(),
+            draft: false,
+            prerelease: false,
+            assets: assets
+                .iter()
+                .map(|name| ApiAsset {
+                    name: name.to_string(),
+                    browser_download_url: format!("https://example.invalid/{name}"),
+                    size: 0,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_release_without_its_checksum_file_is_refused() {
+        let err = release_from(api(&[ASSET]), "1.0.0").expect_err("nothing to verify against");
+        assert!(err.to_string().contains(SUMS), "{err}");
+
+        let rel = release_from(api(&[ASSET, SUMS]), "1.0.0").unwrap().expect("newer");
+        assert_eq!(rel.sums_url, format!("https://example.invalid/{SUMS}"));
+        // Not newer: nothing to install, so nothing to refuse either.
+        assert!(release_from(api(&[ASSET]), "99.0.0").unwrap().is_none());
     }
 
     #[test]

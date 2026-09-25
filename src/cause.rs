@@ -107,6 +107,7 @@ codes! {
     LogCleanIsp => "log_clean_isp",
     RouterWanDown => "router_wan_down",
     RouterRestarted => "router_restarted",
+    WanSessionRestarted => "wan_session_restarted",
     WanNewIp => "wan_new_ip",
     RouterWanUp => "router_wan_up",
 }
@@ -410,11 +411,22 @@ fn router_rules(event: &Event, router: &[RouterReading], out: &mut Vec<Cause>) {
             .is_some_and(|c| c >= start - ROUTER_CLOCK_SLACK_S && c <= end + ROUTER_CLOCK_SLACK_S)
     });
     if restarted {
-        out.push(Cause::new(
-            Code::RouterRestarted,
-            Confidence::Likely,
-            i18n::ev_router_restarted(),
-        ));
+        // An outage filed under the provider is one the router answered
+        // pings through: the monitor relabels it "lan" once the router stays
+        // silent for a run of sweeps, and a reboot takes far longer than
+        // that. A counter that started again inside it is the connection to
+        // the provider being set up anew, not the box restarting, and saying
+        // "the router restarted" pointed the support call at the household.
+        // ponytail: rests on the monitor's relabelling, which takes
+        // `outage_after_fails` sweeps (3 s at the defaults); a user who sets
+        // 15 s and 100 sweeps could fit a reboot inside a provider outage.
+        // Record per-sweep gateway replies with the outage if that matters.
+        let (code, evidence) = if event.scope == "isp" {
+            (Code::WanSessionRestarted, i18n::ev_wan_session_restarted())
+        } else {
+            (Code::RouterRestarted, i18n::ev_router_restarted())
+        };
+        out.push(Cause::new(code, Confidence::Likely, evidence));
     }
 
     let before = router.iter().rev().find(|r| r.ts < start).and_then(|r| r.ip_tag.as_ref());
@@ -853,6 +865,22 @@ mod tests {
     }
 
     #[test]
+    fn a_counter_restart_in_a_provider_outage_is_the_session_not_the_router() {
+        // Filed under the provider: the router answered pings throughout, so
+        // it did not reboot. Its counter starting again is the WAN session.
+        let o = event("isp", serde_json::json!({}), 300.0);
+        let router =
+            [reading(990.0, "Connected", 50_000, "a"), reading(1_320.0, "Connected", 60, "b")];
+        let causes =
+            analyse(&o.row, Evidence::from_context(&o.ctx).as_ref(), &[], &[], &[], &router);
+        let codes: Vec<&str> = causes.iter().map(|c| c.code.key()).collect();
+        assert!(codes.contains(&"wan_session_restarted"), "{codes:?}");
+        assert!(!codes.contains(&"router_restarted"), "{codes:?}");
+        // The link did go down, so it is not "connected throughout".
+        assert!(!codes.contains(&"router_wan_up"), "{codes:?}");
+    }
+
+    #[test]
     fn a_router_connected_throughout_puts_the_break_past_it_and_silence_says_nothing() {
         let o = event("isp", serde_json::json!({}), 300.0);
         let router = [
@@ -864,7 +892,9 @@ mod tests {
         assert!(causes.iter().any(|c| c.code == "router_wan_up"));
         // No readings at all: not "connected", nothing.
         let none = analyse(&o.row, Evidence::from_context(&o.ctx).as_ref(), &[], &[], &[], &[]);
-        assert!(none.iter().all(|c| !c.code.key().starts_with("router") && c.code != "wan_new_ip"));
+        assert!(none.iter().all(|c| !c.code.key().starts_with("router")
+            && c.code != "wan_new_ip"
+            && c.code != "wan_session_restarted"));
     }
 
     #[test]

@@ -3949,6 +3949,10 @@ pub(crate) fn cause_title_pair(code: Code) -> (&'static str, &'static str) {
             "The router or its connection to the provider restarted",
             "Router albo jego połączenie z dostawcą uruchomiło się ponownie",
         ),
+        Code::WanSessionRestarted => (
+            "The connection to the provider was set up again",
+            "Połączenie z dostawcą zostało zestawione od nowa",
+        ),
         Code::WanNewIp => (
             "The router came back with a new public address",
             "Router wrócił z nowym adresem publicznym",
@@ -4211,6 +4215,15 @@ pub(crate) fn cause_advice_pair(code: Code) -> (&'static str, &'static str) {
              sprawdź, czy się nie przegrzewa i czy zasilacz jest sprawny, i zapytaj dostawcę, czy \
              zrywa sesję.",
         ),
+        Code::WanSessionRestarted => (
+            "The router went on answering pings, so the router itself did not restart; its \
+             session with the provider was dropped and set up again. That happens on the provider's side or on \
+             the line, not in the house. Give the provider the times from the report and ask \
+             why the session was dropped.",
+            "Router dalej odpowiadał na pingi, więc sam się nie restartował; jego sesja u \
+             dostawcy została zerwana i nawiązana od nowa. Dzieje się to po stronie dostawcy albo na linii, nie w \
+             domu. Przekaż dostawcy godziny z raportu i zapytaj, dlaczego sesja została zerwana.",
+        ),
         Code::WanNewIp => (
             "A new public address means the session with the provider was set up again. That \
              happens when the router restarts or the provider ends the session; the report's \
@@ -4379,6 +4392,15 @@ pub fn ev_router_restarted() -> String {
          connection to the provider, restarted",
         "licznik czasu działania routera ruszył od nowa w trakcie awarii: uruchomił się ponownie \
          router albo jego połączenie z dostawcą",
+    )
+}
+
+pub fn ev_wan_session_restarted() -> String {
+    pick(
+        "the router's uptime counter started again during an outage in which the router went on \
+         answering pings: its connection to the provider was set up anew, not the router itself",
+        "licznik czasu działania routera ruszył od nowa w trakcie awarii, w której router dalej \
+         odpowiadał na pingi: od nowa zestawione zostało połączenie z dostawcą, a nie sam router",
     )
 }
 
@@ -5324,6 +5346,19 @@ pub fn upd_err_no_asset(version: &str, asset: &str) -> String {
     match current() {
         Lang::En => format!("Release {version} has no {asset} attached to it."),
         Lang::Pl => format!("Wydanie {version} nie ma dołączonego pliku {asset}."),
+    }
+}
+
+pub fn upd_err_no_sums(version: &str, sums: &str) -> String {
+    match current() {
+        Lang::En => format!(
+            "Release {version} has no {sums}, so the download could not be verified. Not \
+             installing it; download it from the releases page if you trust it."
+        ),
+        Lang::Pl => format!(
+            "Wydanie {version} nie ma pliku {sums}, więc pobranego pliku nie da się sprawdzić. \
+             Nie instaluję go; jeśli mu ufasz, pobierz je ze strony wydań."
+        ),
     }
 }
 

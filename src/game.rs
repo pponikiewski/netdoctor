@@ -334,13 +334,21 @@ pub fn prepare(net: &NetState) -> Result<Session> {
     let path = session_path();
     let mut done = Session::default();
     save_session(&path, &done)?;
+    // A change that took effect but could not be written down would be left
+    // in place for good: ending the session undoes only what the file lists.
+    // So one that cannot be recorded is undone on the spot.
     for id in &wanted.tweaks {
         let Some(t) = tweaks.iter().find(|t| t.id() == id) else { continue };
         match optimize::apply(t.as_ref(), net) {
             Ok(msg) => {
                 log(id, "apply", &msg);
                 done.tweaks.push(id.clone());
-                save_session(&path, &done)?;
+                recorded_or_undone(save_session(&path, &done), || {
+                    match optimize::revert(t.as_ref(), net) {
+                        Ok(msg) => log(id, "revert", &msg),
+                        Err(e) => log(id, "revert_failed", &e.to_string()),
+                    }
+                })?;
             }
             Err(e) => log(id, "apply_failed", &e.to_string()),
         }
@@ -348,13 +356,24 @@ pub fn prepare(net: &NetState) -> Result<Session> {
     for name in &wanted.services {
         if service::stop(name).is_ok() {
             done.services.push(name.clone());
-            save_session(&path, &done)?;
+            recorded_or_undone(save_session(&path, &done), || {
+                let _ = service::start(name);
+            })?;
         }
     }
     if done.is_empty() {
         let _ = std::fs::remove_file(&path);
     }
     Ok(done)
+}
+
+/// Passes on whether a change was written into the session, undoing the
+/// change first when it was not.
+fn recorded_or_undone<T, E>(saved: Result<T, E>, undo: impl FnOnce()) -> Result<T, E> {
+    if saved.is_err() {
+        undo();
+    }
+    saved
 }
 
 /// Undoes what the recorded session changed. What could not be undone stays
@@ -573,6 +592,19 @@ mod service {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_change_that_cannot_be_recorded_is_undone_on_the_spot() {
+        let mut undone = false;
+        let r: Result<(), &str> = recorded_or_undone(Err("disk full"), || undone = true);
+        assert_eq!(r, Err("disk full"), "the failure still reaches the caller");
+        assert!(undone, "nothing would undo it later: the session file does not list it");
+
+        let mut undone = false;
+        let r: Result<(), &str> = recorded_or_undone(Ok(()), || undone = true);
+        assert_eq!(r, Ok(()));
+        assert!(!undone, "recorded, so the session's end undoes it");
+    }
 
     #[test]
     fn games_are_matched_by_process_name_whatever_the_case() {
