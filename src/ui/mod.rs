@@ -698,18 +698,26 @@ impl eframe::App for App {
         // labels and whatever the tab draws share one left edge. They were
         // at 16, 12 and 14 before, which is not a visible misalignment so
         // much as a permanent faint wrongness down the side of the window.
+        // No separator of egui's own under the header or the tabs: the header
+        // and its tabs are one block, and the only rule is the one the tabs
+        // draw, which egui's line would otherwise be painted over, taking a
+        // pixel off the selected tab's underline.
         egui::TopBottomPanel::top("header")
+            .show_separator_line(false)
             .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(GUTTER, S_MD)))
             .show(ctx, |ui| self.header(ui));
 
         egui::TopBottomPanel::top("tabs")
+            .show_separator_line(false)
             .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(GUTTER, 0.0)))
             .show(ctx, |ui| {
                 // Wrapped, not a plain row: six tab names in a narrow window
                 // run past the right edge, and the ones that fall off are
                 // Outage history and Settings -- navigation that vanishes
                 // rather than moving is navigation that looks missing.
+                let rule = ui.painter().add(egui::Shape::Noop);
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(S_XS, 0.0);
                     for (tab, label) in [
                         (Tab::Live, crate::i18n::tab_live()),
                         (Tab::Diagnose, crate::i18n::tab_diagnose()),
@@ -727,28 +735,7 @@ impl eframe::App for App {
                         } else {
                             label.to_string()
                         };
-                        // Weight and colour carry the selection, and an
-                        // underline anchors it to the rule below. The tinted
-                        // pill egui gives a selected `selectable_label` reads
-                        // as a pressed button, which is the wrong promise for
-                        // something that is already the current view.
-                        let text = egui::RichText::new(label).size(T_HEAD).color(if selected {
-                            FG
-                        } else {
-                            FG_DIM
-                        });
-                        let text = if selected { text.strong() } else { text };
-
-                        let response = ui.selectable_label(selected, text);
-                        if selected {
-                            let r = response.rect;
-                            ui.painter().hline(
-                                r.x_range(),
-                                r.bottom() + 3.0,
-                                egui::Stroke::new(2.0_f32, ACCENT),
-                            );
-                        }
-                        if response.clicked() {
+                        if tab_button(ui, &label, selected).clicked() {
                             self.tab = tab;
                             if tab == Tab::Optimise {
                                 self.refresh_tweaks();
@@ -756,16 +743,20 @@ impl eframe::App for App {
                         }
                     }
                 });
-                ui.add_space(S_SM);
 
                 // The rule that the selected tab's underline sits on. Without
                 // it the tab strip and the content below are one undivided
-                // field of the same colour.
+                // field of the same colour. Its slot was taken before the
+                // tabs were drawn, so the underline covers it rather than the
+                // other way round.
                 let rect = ui.max_rect();
-                ui.painter().hline(
-                    rect.x_range(),
-                    ui.cursor().top(),
-                    egui::Stroke::new(1.0_f32, LINE),
+                ui.painter().set(
+                    rule,
+                    egui::Shape::hline(
+                        rect.x_range(),
+                        ui.min_rect().bottom() - 0.5,
+                        egui::Stroke::new(1.0_f32, LINE),
+                    ),
                 );
             });
 
@@ -963,11 +954,7 @@ impl App {
             crate::probe::netstate::Medium::Wifi => {
                 // The network's name first. It is the one thing here the user
                 // chose, and the only one they would recognise at a glance.
-                facts.push(Fact::name(if n.ssid.is_empty() {
-                    "—".to_string()
-                } else {
-                    n.ssid.clone()
-                }));
+                facts.push(Fact::new(crate::i18n::word_network(), dash(n.ssid.clone()), FG));
 
                 if let Some(pct) = n.signal_pct {
                     // Signal is the only fact on this line with thresholds, so
@@ -1008,7 +995,11 @@ impl App {
                 facts.push(Fact::new(crate::i18n::word_gateway(), gateway, FG));
             }
             _ => {
-                facts.push(Fact::name(crate::i18n::word_wired().to_string()));
+                facts.push(Fact::new(
+                    crate::i18n::word_network(),
+                    crate::i18n::word_wired().to_string(),
+                    FG,
+                ));
                 facts.push(Fact::new(
                     crate::i18n::word_link(),
                     format!("{} Mbps", n.link_speed_mbps),
@@ -1035,8 +1026,7 @@ impl App {
 
 /// A labelled value in the header's connection line.
 struct Fact {
-    /// Sits in front of the value, quiet and small. Empty for a value that
-    /// names itself, like a network's SSID.
+    /// Sits above the value, quiet and small.
     label: &'static str,
     value: String,
     colour: egui::Color32,
@@ -1046,65 +1036,90 @@ impl Fact {
     fn new(label: &'static str, value: String, colour: egui::Color32) -> Self {
         Fact { label, value, colour }
     }
-
-    /// A value that needs no label.
-    fn name(value: String) -> Self {
-        Fact { label: "", value, colour: FG }
-    }
 }
 
-/// Draw the connection facts as a wrapping row of labelled values.
+/// Draw the connection facts as a wrapping row of columns, each a small label
+/// over its value.
+///
+/// The facts used to run inline, label then value then a rule then the next
+/// label, all within a few pixels of each other in two sizes of small text.
+/// Six of those in a row read as one dense string, not as six readings. As
+/// columns, the eye can run along the values alone, and the gap between
+/// columns does the separating that the painted rules were straining to do.
 ///
 /// Wrapping rather than truncating: the old single line ran off the right edge
 /// of a narrow window and took the gateway with it, and a fact you cannot see
 /// is worse than a second row.
 fn connection_row(ui: &mut egui::Ui, facts: &[Fact]) {
     ui.horizontal_wrapped(|ui| {
-        // Tighter than the app's default item spacing — a label and the value
-        // it names have to read as one unit, and at S_SM they read as two.
-        ui.spacing_mut().item_spacing.x = S_XS;
+        ui.spacing_mut().item_spacing = egui::vec2(S_LG + S_XS, S_SM);
 
-        for (i, fact) in facts.iter().enumerate() {
-            if i > 0 {
-                // A painted rule instead of a `·`. The old separator was the
-                // same character used *inside* several of the values, so the
-                // boundaries between facts and the punctuation within them
-                // were indistinguishable.
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(S_SM, T_META), egui::Sense::hover());
-                ui.painter().vline(
-                    rect.center().x,
-                    egui::Rangef::new(rect.top() + 1.0, rect.bottom() - 1.0),
-                    egui::Stroke::new(1.0_f32, LINE),
-                );
-            }
-
-            // One widget per fact, not two.
-            //
-            // A wrapping row breaks between widgets, so a label and its value
-            // drawn separately are two things the layout is free to put on
-            // different lines -- and it did, leaving "adapter" at the end of
-            // one line and "Wi-Fi" alone at the start of the next. Composing
-            // both runs into a single laid-out job makes the pair atomic:
-            // the row can wrap around it but never through it.
+        for fact in facts {
+            // One widget per fact, not two, so the row can wrap around a
+            // column but never through it and leave a label on one line with
+            // its value on the next. `extend` keeps the label from wrapping
+            // the job itself into the space left on the current line.
             let mut job = egui::text::LayoutJob::default();
-            let gap = if fact.label.is_empty() {
-                0.0
-            } else {
-                append(&mut job, 0.0, fact.label, T_MICRO, FG_DIM, false);
-                // The gap goes in as the value's leading space rather than as
-                // a run containing a space character: a whitespace-only run
-                // between two runs of different fonts collapsed to nothing,
-                // and "karta" ran straight into "Wi-Fi".
-                S_XS
-            };
+            append(&mut job, 0.0, fact.label, T_MICRO, FG_DIM, false);
+            append(&mut job, 0.0, "\n", T_MICRO, FG_DIM, false);
             // Monospaced, like every other measurement in the app: these
             // refresh as the link changes, and proportional digits make the
             // whole row shuffle sideways when one of them does.
-            append(&mut job, gap, &fact.value, T_META, fact.colour, true);
-            ui.label(job);
+            append(&mut job, 0.0, &fact.value, T_BODY, fact.colour, true);
+            ui.add(egui::Label::new(job).extend());
         }
     });
+}
+
+/// One tab in the strip under the header.
+///
+/// Drawn by hand rather than as a `selectable_label`: egui fills a selected
+/// one with a tinted pill, which reads as a pressed button, and the underline
+/// that was added on top of the pill floated a few pixels above the rule it
+/// was meant to sit on. Here the selection is the text's colour and an accent
+/// bar lying on the rule itself, so the current tab reads as the page you are
+/// on, joined to the content under it.
+fn tab_button(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    // Equal room above and below the text, so the label sits in the middle of
+    // the strip instead of hugging the header or the rule.
+    let pad = egui::vec2(S_MD, S_SM + 2.0);
+    let underline = 2.0;
+    let galley = ui.painter().layout_no_wrap(
+        label.to_string(),
+        egui::FontId::proportional(T_HEAD),
+        FG, // Recoloured when painted.
+    );
+    let size = galley.size() + 2.0 * pad + egui::vec2(0.0, underline);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
+    });
+
+    if ui.is_rect_visible(rect) {
+        let hovered = response.hovered() && !selected;
+        let colour = if selected || hovered { FG } else { FG_DIM };
+        let text_pos = egui::pos2(rect.left() + pad.x, rect.top() + pad.y);
+        ui.painter().galley(text_pos, galley, colour);
+
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + S_XS, rect.bottom() - underline),
+            rect.right_bottom() - egui::vec2(S_XS, 0.0),
+        );
+        if selected {
+            ui.painter().rect_filled(
+                bar,
+                egui::Rounding { nw: 1.0, ne: 1.0, sw: 0.0, se: 0.0 },
+                ACCENT,
+            );
+        } else if hovered {
+            // A hint of where the bar would go, not the bar itself.
+            ui.painter().rect_filled(bar, 0.0, LINE);
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(rect.shrink(1.0), 4.0, egui::Stroke::new(1.0_f32, ACCENT));
+        }
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Adds one run to a fact's layout job, in the app's own type scale.

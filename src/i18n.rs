@@ -151,8 +151,9 @@ strings! {
     word_router => "Router", "Router";
     word_isp_resolver => "ISP resolver", "Resolver ISP";
     // Labels for the header's connection facts. Short on purpose: each one
-    // sits directly in front of the value it names, so it only has to say
-    // which value this is, not explain it.
+    // sits directly above the value it names, so it only has to say which
+    // value this is, not explain it.
+    word_network => "network", "sieć";
     word_signal => "signal", "sygnał";
     word_channel => "channel", "kanał";
     word_gateway => "gateway", "brama";
