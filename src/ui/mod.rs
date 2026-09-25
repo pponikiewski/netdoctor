@@ -205,7 +205,7 @@ pub enum Job {
     /// The AI's reading of a scan, with the generation of the scan it was
     /// asked about, so an answer landing after a rescan is dropped rather
     /// than shown beside numbers it never saw.
-    AiDone(u64, Result<String, String>),
+    AiDone(u64, Result<crate::ai::Explanation, String>),
 }
 
 pub struct App {
@@ -247,7 +247,7 @@ pub struct App {
     /// Counts finished scans; see [`Job::AiDone`].
     pub scan_gen: u64,
     /// The AI's answer about the scan on screen, when one was asked for.
-    pub ai_answer: Option<Result<String, String>>,
+    pub ai_answer: Option<Result<crate::ai::Explanation, String>>,
     pub ai_running: bool,
     /// The connection as it was when the scan on screen started. The AI
     /// report masks this network's name, not whichever one is current.

@@ -110,6 +110,92 @@ impl OverlayContent {
     }
 }
 
+/// What kind of line the user has. Only the user knows: a radio antenna or an
+/// LTE modem is plain Ethernet to this computer, and most routers report
+/// "Ethernet" over UPnP as well. Guessing it would be the confident wrong
+/// answer this app exists to avoid, so it is asked for and `Unknown` changes
+/// nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LineKind {
+    #[default]
+    Unknown,
+    Fibre,
+    Cable,
+    Dsl,
+    Radio,
+    Mobile,
+    SatelliteLeo,
+    SatelliteGeo,
+}
+
+impl LineKind {
+    pub const ALL: [LineKind; 8] = [
+        LineKind::Unknown,
+        LineKind::Fibre,
+        LineKind::Cable,
+        LineKind::Dsl,
+        LineKind::Radio,
+        LineKind::Mobile,
+        LineKind::SatelliteLeo,
+        LineKind::SatelliteGeo,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LineKind::Unknown => i18n::line_unknown(),
+            LineKind::Fibre => i18n::line_fibre(),
+            LineKind::Cable => i18n::line_cable(),
+            LineKind::Dsl => i18n::line_dsl(),
+            LineKind::Radio => i18n::line_radio(),
+            LineKind::Mobile => i18n::line_mobile(),
+            LineKind::SatelliteLeo => i18n::line_sat_leo(),
+            LineKind::SatelliteGeo => i18n::line_sat_geo(),
+        }
+    }
+
+    /// The ping to a nearby public server (1.1.1.1) that a healthy line of
+    /// this kind usually has, low and high, in ms. `None` when not known.
+    // ponytail: one range per kind, from typical Polish home lines. A line
+    // outside it is flagged, not failed; this machine's own seven-day
+    // history outranks it wherever there is one.
+    pub fn typical_ms(self) -> Option<(f64, f64)> {
+        match self {
+            LineKind::Unknown => None,
+            LineKind::Fibre => Some((1.0, 15.0)),
+            LineKind::Cable => Some((8.0, 30.0)),
+            LineKind::Dsl => Some((10.0, 40.0)),
+            LineKind::Radio => Some((10.0, 50.0)),
+            LineKind::Mobile => Some((25.0, 80.0)),
+            LineKind::SatelliteLeo => Some((25.0, 70.0)),
+            LineKind::SatelliteGeo => Some((500.0, 800.0)),
+        }
+    }
+
+    /// How many ms the provider's first hop may add before it counts as
+    /// slow. On fibre it is a few; on a radio or mobile link the hop into
+    /// the provider is the radio hop itself.
+    pub fn first_hop_allowance_ms(self) -> f64 {
+        match self {
+            LineKind::Fibre => 15.0,
+            LineKind::Cable => 25.0,
+            LineKind::Dsl => 30.0,
+            LineKind::Unknown | LineKind::Radio => 40.0,
+            LineKind::SatelliteLeo => 50.0,
+            LineKind::Mobile => 60.0,
+            LineKind::SatelliteGeo => 700.0,
+        }
+    }
+
+    /// Whether the line's own radio is a likely suspect when the provider's
+    /// side is at fault.
+    pub fn is_wireless(self) -> bool {
+        matches!(
+            self,
+            LineKind::Radio | LineKind::Mobile | LineKind::SatelliteLeo | LineKind::SatelliteGeo
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Target {
     pub key: String,
@@ -166,6 +252,15 @@ pub struct Settings {
     /// `None` until the user picks one, which lets the first run follow the
     /// Windows UI language without freezing that choice in the file.
     pub lang: Option<Lang>,
+
+    /// The kind of line, as the user describes it. See [`LineKind`].
+    pub line_kind: LineKind,
+    /// The speeds the plan promises, in Mbps. 0 means not given.
+    pub plan_down_mbps: f64,
+    pub plan_up_mbps: f64,
+
+    /// Where reports are saved. Empty means [`default_report_dir`].
+    pub report_dir: String,
 }
 
 impl Default for Settings {
@@ -200,8 +295,18 @@ impl Default for Settings {
             ai_model: String::new(),
 
             lang: None,
+            line_kind: LineKind::Unknown,
+            plan_down_mbps: 0.0,
+            plan_up_mbps: 0.0,
+            report_dir: String::new(),
         }
     }
+}
+
+/// Documents\NetDoctor: where a person looks for a file they saved. The
+/// report used to go next to the database in AppData, which nobody browses.
+pub fn default_report_dir() -> PathBuf {
+    dirs::document_dir().unwrap_or_else(data_dir).join(APP_NAME)
 }
 
 pub fn data_dir() -> PathBuf {
@@ -319,6 +424,21 @@ impl Settings {
         std::time::Duration::from_millis(self.probe_interval_ms.clamp(300, MAX_PROBE_INTERVAL_MS))
     }
 
+    /// The folder reports are saved in.
+    pub fn report_dir_path(&self) -> PathBuf {
+        let chosen = self.report_dir.trim();
+        if chosen.is_empty() {
+            default_report_dir()
+        } else {
+            PathBuf::from(chosen)
+        }
+    }
+
+    /// The plan's speed one way, when the user gave it.
+    pub fn plan(&self, upload: bool) -> Option<f64> {
+        Some(if upload { self.plan_up_mbps } else { self.plan_down_mbps }).filter(|v| *v > 0.0)
+    }
+
     /// Why these settings must not be saved, if they must not.
     pub fn refusal(&self) -> Option<String> {
         if self.probe_interval_ms < 300 {
@@ -421,6 +541,22 @@ pub fn resolve_target(text: &str) -> Option<Ipv4Addr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_known_line_has_a_range_and_an_unknown_one_claims_none() {
+        assert_eq!(LineKind::default(), LineKind::Unknown);
+        assert!(LineKind::Unknown.typical_ms().is_none());
+        for k in LineKind::ALL.into_iter().skip(1) {
+            let (lo, hi) = k.typical_ms().unwrap_or((1.0, 0.0));
+            assert!(lo < hi, "{k:?}");
+            assert!(k.first_hop_allowance_ms() > 0.0);
+        }
+        // Unknown keeps the threshold the scan always used.
+        assert_eq!(LineKind::Unknown.first_hop_allowance_ms(), 40.0);
+        let s = Settings { plan_down_mbps: 300.0, ..Settings::default() };
+        assert_eq!(s.plan(false), Some(300.0));
+        assert_eq!(s.plan(true), None);
+    }
 
     #[test]
     fn the_overlay_applies_alone_and_leaves_the_rest_of_the_draft() {

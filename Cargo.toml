@@ -24,6 +24,7 @@ dirs = "5"
 # alternative was BCrypt through the windows crate: no new dependency, fifty
 # lines of unsafe FFI for a hash. This repo is trying to have less of that.
 sha2 = "0.10"
+printpdf = { version = "0.12", default-features = false }
 
 [dependencies.windows]
 version = "0.58"

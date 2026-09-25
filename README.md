@@ -233,8 +233,11 @@ one English label that would silently fail everywhere else.
   the settings, a button asks a language model (DeepSeek V4 Flash by default)
   to explain the result in plain words. Nothing is sent until you press it, the
   exact text sent can be read first, and your network's name, the access
-  point's MAC and public addresses are masked. The answer is labelled as an
-  interpretation; the verdict from the measurements stays the answer.
+  point's MAC and public addresses are masked. The answer is laid out in four
+  parts (the problem, what it rests on, what to do, what the scan could not
+  tell), and its steps are only ones you can take yourself or tell your
+  provider. It is labelled as an interpretation; the verdict from the
+  measurements stays the answer.
 - **Speed test**: download and upload speed in Mbps and the idle ping,
   filled in live while the test runs, plus bufferbloat: idle latency
   versus latency with the link
@@ -282,21 +285,28 @@ one English label that would silently fail everywhere else.
   it, whether it came back with a new public address, or whether the router
   thought it was up throughout and the break was further out. A router that
   does not answer adds nothing, and silence is never read as "connected".
-  **Save report** here writes a text file for a support ticket over the range
+  **Save report** here writes a PDF for a support ticket over the range
   you pick (24 hours, 7 or 30 days, or everything kept): how much of it was
   actually watched, totals per kind of outage, and for each outage its cause
   and the evidence behind it, the Windows log around it, the path hop by hop
-  as it was when it began, and the minute before it. Outages recorded before
-  the app started storing the path with them have none, and say so.
+  as it was when it began, and the minute before it. Periods of poor quality
+  follow as a list, one line each. Outages recorded before the app started
+  storing the path with them have none, and say so. Each report is its own
+  file, dated in its name, in Documents\NetDoctor unless you pick another
+  folder in Settings.
   The list and the selected outage sit side by side. Its lead-up is two
   plots on one time axis: round trip to the router and to the internet in
   ms, with unanswered pings marked, and the Wi-Fi signal in dBm, with the
   outage shaded on both. **Clear history** deletes every finished outage
   after asking, and names the report as the way to keep a copy; an outage
   still in progress and the measurements behind the live chart are kept.
-- **Settings** — probe cadence (300 ms to 30 s; slower and a sleeping machine
-  could not be told from an outage), thresholds, extra ping targets (your game
-  server, for instance), autostart, updates. Split into pages, with the save
+- **Settings**: your line (fibre, cable, DSL, radio, LTE / 5G, satellite, or
+  don't know) and your plan's speeds, which the app cannot read for itself: the
+  line sets the ping to expect until the app has its own history and fits the
+  advice to it, and the speed test reports its result as a share of the plan.
+  Also probe cadence (300 ms to 30 s; slower and a sleeping machine could not
+  be told from an outage), thresholds, extra ping targets (your game server,
+  for instance), the folder reports are saved in, autostart, updates. Split into pages, with the save
   bar pinned under every page: it says when something is not saved yet, and
   Ctrl+S saves.
 
@@ -470,7 +480,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-378 tests, covering the failure-blame logic, the statistics, the registry layer,
+385 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable
@@ -508,7 +518,6 @@ cargo test a_real_outage -- --ignored --nocapture
   If you set an OpenRouter key, it is stored here in plain text
   (`OPENROUTER_API_KEY` in the environment works too and keeps it out of the file)
 - `tweak_snapshots.json` — prior state for every applied change
-- `netdoctor-report.txt` — written by "Save report"
 
 Measurements older than the configured retention (14 days by default) are
 pruned automatically. Recorded outages are kept for a year, so a report can

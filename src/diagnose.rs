@@ -34,7 +34,7 @@ use crate::monitor;
 use crate::probe::eventlog::{self, Kind as LogKind, SysEvent};
 use crate::probe::icmp;
 use crate::probe::netstate::{self, LinkCounters, Medium, NetState};
-use crate::settings::Settings;
+use crate::settings::{LineKind, Settings};
 use crate::store::{self, Stats, Store};
 
 /// Where the scan aims everything that has to leave the building.
@@ -229,6 +229,9 @@ pub struct Measurements {
     pub vpn: Option<String>,
     /// The proxy (or its configuration script) Windows hands to programs.
     pub proxy: Option<String>,
+    /// Outages of the last 24 hours by the local hour they started in.
+    /// Periods of degraded quality are left out: they are not breaks.
+    pub outage_hours: [usize; 24],
 }
 
 /// What an IPv6 connection attempt found.
@@ -512,7 +515,7 @@ pub fn scan(
     }
 
     say(i18n::step_history(), 0.94);
-    out.extend(check_history(net, store, settings));
+    out.extend(check_history(net, store, settings, &mut m));
 
     if let Some(opts) = long {
         out.extend(check_long(opts, settings, outer.clone(), &mut m));
@@ -537,7 +540,27 @@ pub fn scan(
             .insert(0, Action { text: i18n::verdict_vpn_first().into(), tweak_id: None });
         verdict.actions.truncate(3);
     }
+    // On a radio, mobile or satellite line the hop into the provider is the
+    // line's own radio, and its antenna is the first thing to look at.
+    if settings.line_kind.is_wireless()
+        && matches!(verdict.segment, Segment::Isp | Segment::Uplink)
+        && verdict.actions.len() < 3
+    {
+        verdict
+            .actions
+            .push(Action { text: i18n::line_advice(settings.line_kind), tweak_id: None });
+    }
     Scan { findings: out, verdict, measurements: m }
+}
+
+/// How many real outages started in each local hour of the day.
+fn outage_hours(events: &[store::Event]) -> [usize; 24] {
+    let mut hours = [0usize; 24];
+    for e in events.iter().filter(|e| matches!(e.scope.as_str(), "lan" | "adapter" | "isp" | "dns"))
+    {
+        hours[local_hour(e.ts_start) as usize] += 1;
+    }
+    hours
 }
 
 /// Turn the measurements into one segment, one cost and an ordered plan.
@@ -665,7 +688,7 @@ pub fn judge(findings: &[Finding], m: &Measurements, cfg: &Settings) -> Verdict 
         // history to compare against, not an override for when we do.
         let latency_is_a_fault = match m.baseline {
             Some((usual, _)) => total > usual * 1.6 && total - usual > 15.0,
-            None => has("ping"),
+            None => has("ping") || has("line_slow"),
         };
         if latency_is_a_fault {
             let seg = if lan >= isp && lan >= far {
@@ -1330,7 +1353,7 @@ fn report_wire(
     match &wire.blind {
         None => {
             out.extend(report_link(net, wire, m));
-            out.extend(report_edge(wire, m));
+            out.extend(report_edge(wire, cfg, m));
             out.extend(report_internet(store, cfg, wire, m));
         }
         Some(why) => {
@@ -1401,7 +1424,7 @@ fn report_link(net: &NetState, wire: &Wire, m: &mut Measurements) -> Vec<Finding
 /// makes the rest of the scan able to assign blame at all: without it, every
 /// millisecond past the gateway is one undivided lump, and "your Wi-Fi" and
 /// "your provider" look identical.
-fn report_edge(wire: &Wire, m: &mut Measurements) -> Vec<Finding> {
+fn report_edge(wire: &Wire, cfg: &Settings, m: &mut Measurements) -> Vec<Finding> {
     let Some(edge) = &wire.edge else {
         return vec![Finding::new(
             "edge_unknown",
@@ -1450,7 +1473,7 @@ fn report_edge(wire: &Wire, m: &mut Measurements) -> Vec<Finding> {
     if loss > 2.0 {
         vec![Finding::new("edge", i18n::f_edge_lossy(loss), Severity::Warn, detail)
             .advise(i18n::f_edge_lossy_advice())]
-    } else if added > 40.0 {
+    } else if added > cfg.line_kind.first_hop_allowance_ms() {
         vec![Finding::new("edge", i18n::f_edge_slow(added), Severity::Warn, detail)
             .advise(i18n::f_edge_slow_advice())]
     } else {
@@ -1553,7 +1576,29 @@ fn report_internet(
     if out.is_empty() {
         out.push(Finding::new("internet", i18n::f_net_ok(avg), Severity::Good, detail));
     }
+    out.extend(check_line_kind(cfg.line_kind, avg, m.baseline.is_some()));
     out
+}
+
+/// The ping held against what a healthy line of the user's kind usually has.
+/// Where this machine has its own history that history decides, so above the
+/// range is then only worth noting; without one, it is a warning.
+fn check_line_kind(kind: LineKind, avg: f64, has_history: bool) -> Option<Finding> {
+    let (lo, hi) = kind.typical_ms()?;
+    let detail = i18n::f_line_detail();
+    // Some headroom: a range is typical, not a guarantee.
+    Some(if avg <= hi * 1.25 {
+        Finding::new(
+            "line_kind",
+            i18n::f_line_ok(avg, kind.label(), lo, hi),
+            Severity::Good,
+            detail,
+        )
+    } else {
+        let severity = if has_history { Severity::Info } else { Severity::Warn };
+        Finding::new("line_slow", i18n::f_line_slow(avg, kind.label(), hi), severity, detail)
+            .advise(i18n::line_advice(kind))
+    })
 }
 
 /// Ping proves a path exists. It does not prove anything the user cares about
@@ -2033,8 +2078,14 @@ fn syslog_finding(faults: &[SysEvent], on_wifi: bool) -> Option<Finding> {
     })
 }
 
-fn check_history(_net: &NetState, store: &Store, _cfg: &Settings) -> Vec<Finding> {
+fn check_history(
+    _net: &NetState,
+    store: &Store,
+    _cfg: &Settings,
+    m: &mut Measurements,
+) -> Vec<Finding> {
     let events = store.events_since(24.0 * 3600.0);
+    m.outage_hours = outage_hours(&events);
     if events.is_empty() {
         // An empty history is only good news for the part of the day that
         // was watched. Minutes after a first start it is no news at all.
@@ -2114,6 +2165,14 @@ pub fn format_clock(ts: f64) -> String {
     format!("{:02}:{:02}", local / 3600, (local % 3600) / 60)
 }
 
+/// Local date and time safe for a file name: "2026-09-25 14-32".
+pub fn file_stamp(ts: f64) -> String {
+    let t = ts as i64 + local_utc_offset_secs();
+    let (y, m, d) = civil_from_days(t.div_euclid(86400));
+    let secs = t.rem_euclid(86400);
+    format!("{y:04}-{m:02}-{d:02} {:02}-{:02}", secs / 3600, (secs % 3600) / 60)
+}
+
 pub fn format_datetime(ts: f64) -> String {
     let offset = local_utc_offset_secs();
     let t = ts as i64 + offset;
@@ -2167,6 +2226,22 @@ pub fn civil_from_days(z: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ping_is_read_against_the_line_it_is_on() {
+        let _guard = i18n::test_lock();
+        // 35 ms is a healthy radio line and a slow fibre one.
+        let radio = check_line_kind(LineKind::Radio, 35.0, false);
+        assert_eq!(radio.map(|f| f.severity), Some(Severity::Good));
+        let fibre = check_line_kind(LineKind::Fibre, 35.0, false);
+        assert_eq!(fibre.as_ref().map(|f| f.severity), Some(Severity::Warn));
+        assert_eq!(fibre.map(|f| f.key), Some("line_slow".to_string()));
+        // With its own history the machine decides; the range only notes it.
+        let noted = check_line_kind(LineKind::Fibre, 35.0, true);
+        assert_eq!(noted.map(|f| f.severity), Some(Severity::Info));
+        // Not knowing the line claims nothing about it.
+        assert!(check_line_kind(LineKind::Unknown, 35.0, false).is_none());
+    }
 
     #[test]
     fn a_proxy_counts_only_while_switched_on_and_a_script_whenever_it_is_set() {
@@ -2573,7 +2648,7 @@ mod tests {
         let net = NetState::default();
         let cfg = Settings::default();
         let sev = |s: &Store| {
-            check_history(&net, s, &cfg)
+            check_history(&net, s, &cfg, &mut Measurements::default())
                 .iter()
                 .find(|f| f.key == "hist_lan")
                 .map(|f| f.severity)
@@ -2849,7 +2924,12 @@ mod tests {
             (0..300).map(|i| (t - i as f64, "cloudflare".to_string(), Some(12.0), true)).collect();
         store.add_samples(&rows).unwrap();
 
-        let f = check_history(&NetState::default(), &store, &Settings::default());
+        let f = check_history(
+            &NetState::default(),
+            &store,
+            &Settings::default(),
+            &mut Measurements::default(),
+        );
         assert_eq!(f.len(), 1);
         assert_ne!(f[0].severity, Severity::Good, "{f:?}");
         assert!(f[0].title.contains("5 min") || f[0].detail.contains("5 min"), "{f:?}");
@@ -2860,7 +2940,12 @@ mod tests {
             .map(|i| (t - (i * 30) as f64, "cloudflare".to_string(), Some(12.0), true))
             .collect();
         store.add_samples(&day).unwrap();
-        let f = check_history(&NetState::default(), &store, &Settings::default());
+        let f = check_history(
+            &NetState::default(),
+            &store,
+            &Settings::default(),
+            &mut Measurements::default(),
+        );
         assert_eq!(f[0].severity, Severity::Good, "{f:?}");
     }
 

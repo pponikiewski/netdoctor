@@ -543,6 +543,69 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     f_other_medium =>
         "Connected through another adapter",
         "Połączenie przez inną kartę";
+    set_sec_line =>
+        "Your line",
+        "Twoje łącze";
+    set_line_kind =>
+        "Kind of line",
+        "Rodzaj łącza";
+    set_line_hint =>
+        "The app cannot tell this by itself: a radio antenna or an LTE modem looks like plain \
+         Ethernet to this computer. The kind sets the ping to expect until the app has its own \
+         history, and fits the advice to the line.",
+        "Aplikacja nie rozpozna tego sama: antena radiowa czy modem LTE wyglądają dla komputera \
+         jak zwykły Ethernet. Rodzaj łącza wyznacza oczekiwany ping, dopóki aplikacja nie ma \
+         własnej historii, i dopasowuje porady do łącza.";
+    set_plan_down =>
+        "Plan speed: download",
+        "Prędkość z umowy: pobieranie";
+    set_plan_up =>
+        "Plan speed: upload",
+        "Prędkość z umowy: wysyłanie";
+    set_plan_hint =>
+        "0 means not given. The speed test compares its result with it.",
+        "0 oznacza, że nie podano. Test prędkości porówna z nią swój wynik.";
+    line_unknown =>
+        "Don't know",
+        "Nie wiem";
+    line_fibre =>
+        "Fibre",
+        "Światłowód";
+    line_cable =>
+        "Cable (cable TV network)",
+        "Kablowe (sieć telewizji kablowej)";
+    line_dsl =>
+        "DSL (phone line)",
+        "DSL (linia telefoniczna)";
+    line_radio =>
+        "Radio (antenna on the building)",
+        "Radiowe (antena na budynku)";
+    line_mobile =>
+        "LTE / 5G",
+        "LTE / 5G";
+    line_sat_leo =>
+        "Satellite (Starlink and similar)",
+        "Satelitarne (Starlink i podobne)";
+    line_sat_geo =>
+        "Satellite (geostationary)",
+        "Satelitarne (geostacjonarne)";
+    f_line_detail =>
+        "The range is what a healthy line of this kind usually has to a nearby server (1.1.1.1). \
+         The kind of line is set in Settings > Measurement.",
+        "Zakres to typowy ping zdrowego łącza tego rodzaju do pobliskiego serwera (1.1.1.1). \
+         Rodzaj łącza ustawia się w Ustawieniach > Pomiar.";
+    measure_line =>
+        "Kind of line",
+        "Rodzaj łącza";
+    measure_line_unset =>
+        "not given (Settings > Measurement)",
+        "nie podano (Ustawienia > Pomiar)";
+    rep_line =>
+        "Line",
+        "Łącze";
+    rep_plan =>
+        "Plan",
+        "Pakiet";
     diag_select_finding =>
         "Select a finding to see what it means.",
         "Wybierz wynik, żeby zobaczyć, co oznacza.";
@@ -948,16 +1011,33 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     long_col_where => "Where", "Gdzie";
     long_col_len => "Length", "Długość";
     long_no_episodes => "No drops or spikes recorded.", "Nie zapisano zrywów ani skoków.";
-    ai_heading => "Second opinion (AI)", "Drugi głos (AI)";
+    ai_heading =>
+        "AI explanation",
+        "Wyjaśnienie AI";
     ai_off_hint =>
-        "Optional: paste your own OpenRouter key in Settings and a language model will explain \
-         this result in plain words.",
-        "Opcjonalnie: wklej własny klucz OpenRouter w Ustawieniach, a model językowy wyjaśni \
-         ten wynik prostymi słowami.";
-    ai_btn_ask => "Ask AI about this result", "Zapytaj AI o ten wynik";
-    ai_btn_again => "Ask again", "Zapytaj ponownie";
+        "Optional: with your own OpenRouter key in Settings, a language model can explain this \
+         result in plain words.",
+        "Opcjonalnie: z własnym kluczem OpenRouter w Ustawieniach model językowy wyjaśni ten \
+         wynik prostymi słowami.";
+    ai_sec_why =>
+        "What it rests on",
+        "Na czym to opiera";
+    ai_sec_steps =>
+        "What to do",
+        "Co zrobić";
+    ai_sec_unknown =>
+        "What the scan could not tell",
+        "Czego skan nie ustalił";
+    ai_btn_ask =>
+        "Explain with AI",
+        "Wyjaśnij z AI";
+    ai_btn_again =>
+        "Explain again",
+        "Wyjaśnij ponownie";
     ai_preview => "Show exactly what will be sent", "Pokaż dokładnie, co zostanie wysłane";
-    ai_running => "The model is reading the results…", "Model czyta wyniki…";
+    ai_running =>
+        "The model is reading the scan…",
+        "Model analizuje wynik skanu…";
     ai_err_no_key => "No OpenRouter key. Paste one in Settings.", "Brak klucza OpenRouter. Wklej go w Ustawieniach.";
     ai_err_empty => "it was empty", "była pusta";
     set_sec_ai => "AI explanation (optional)", "Wyjaśnienie AI (opcjonalne)";
@@ -1584,6 +1664,24 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // padded to a fixed width by the caller, so they stay aligned whatever
     // their length.
     // -----------------------------------------------------------------------
+    rep_file_stem =>
+        "NetDoctor report",
+        "NetDoctor raport";
+    set_sec_reports =>
+        "Reports",
+        "Raporty";
+    set_report_dir_hint =>
+        "Reports are saved as PDF files with the date in the name, in this folder:",
+        "Raporty zapisują się jako pliki PDF z datą w nazwie, w tym folderze:";
+    set_btn_change_dir =>
+        "Change…",
+        "Zmień…";
+    set_btn_open_dir =>
+        "Open folder",
+        "Otwórz folder";
+    set_btn_default_dir =>
+        "Use the default",
+        "Przywróć domyślny";
     rep_title => "NetDoctor report", "Raport NetDoctor";
     rep_sec_connection => "CONNECTION", "POŁĄCZENIE";
     rep_sec_measurements => "MEASUREMENTS (last hour)", "POMIARY (ostatnia godzina)";
@@ -2225,6 +2323,94 @@ pub fn f_other_medium_detail(name: &str, desc: &str) -> String {
         return name.to_string();
     }
     format!("{name} ({desc})")
+}
+
+pub fn f_line_ok(avg: f64, kind: &str, lo: f64, hi: f64) -> String {
+    match current() {
+        Lang::En => {
+            format!("Ping {avg:.0} ms is typical for this line: {kind} ({lo:.0}-{hi:.0} ms)")
+        }
+        Lang::Pl => {
+            format!("Ping {avg:.0} ms jest typowy dla tego łącza: {kind} ({lo:.0}-{hi:.0} ms)")
+        }
+    }
+}
+
+pub fn f_line_slow(avg: f64, kind: &str, hi: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "Ping {avg:.0} ms is higher than typical for this line: {kind} (up to {hi:.0} ms)"
+        ),
+        Lang::Pl => format!(
+            "Ping {avg:.0} ms jest wyższy niż typowy dla tego łącza: {kind} (do {hi:.0} ms)"
+        ),
+    }
+}
+
+/// What to look at first on a line of this kind when the ping is high or the
+/// provider's side is at fault.
+pub fn line_advice(kind: crate::settings::LineKind) -> String {
+    use crate::settings::LineKind as K;
+    // Only what the user can do themselves, or tell the provider. An antenna
+    // or a modem the provider manages is out of their reach, so advice to
+    // look inside one is advice they cannot follow.
+    let (en, pl) = match kind {
+        K::Fibre => (
+            "On fibre a high ping is usually the Wi-Fi or the router: connect this computer to the router with a cable and scan again. If it is the same on a cable, report it to the provider with a saved report.",
+            "Na światłowodzie wysoki ping to zwykle Wi-Fi albo router: podłącz komputer kablem do routera i uruchom skan ponownie. Jeśli na kablu jest tak samo, zgłoś to dostawcy z zapisanym raportem.",
+        ),
+        K::Cable => (
+            "On a cable line the ping usually rises in the evening, when neighbours share the same network segment. Scan again at another time; if mornings are fine and evenings are not, report it to the provider with a saved report.",
+            "Na łączu kablowym ping rośnie zwykle wieczorem, gdy sąsiedzi korzystają z tego samego segmentu sieci. Uruchom skan o innej porze; jeśli rano jest dobrze, a wieczorem źle, zgłoś to dostawcy z zapisanym raportem.",
+        ),
+        K::Dsl => (
+            "On DSL the ping depends on the phone line. Plug the modem straight into the main phone socket, without splitters or extension cables, and scan again; if that does not help, report the line to the provider with a saved report.",
+            "Na DSL ping zależy od stanu linii telefonicznej. Podłącz modem bezpośrednio do głównego gniazdka, bez rozgałęźników i przedłużaczy, i uruchom skan ponownie; jeśli nie pomoże, zgłoś linię dostawcy z zapisanym raportem.",
+        ),
+        K::Radio => (
+            "On a radio line the problem is usually the signal between the antenna and the operator's station: weather, leaves, a shifted antenna. Check that the cables to the antenna's power adapter are plugged in firmly; if it keeps happening, save a report and tell the operator the radio signal is unstable.",
+            "Na łączu radiowym problem leży zwykle w sygnale między anteną a stacją operatora: pogoda, liście, przesunięta antena. Sprawdź, czy kable do zasilacza anteny są dobrze wpięte; jeśli problem się powtarza, zapisz raport i zgłoś operatorowi niestabilny sygnał radiowy.",
+        ),
+        K::Mobile => (
+            "On LTE / 5G moving the modem helps most: by a window, higher up, away from thick walls. Scan again after moving it; the cell is often busy in the evening, so compare with another time too.",
+            "Na LTE / 5G najwięcej daje przestawienie modemu: przy oknie, wyżej, z dala od grubych ścian. Uruchom skan po przestawieniu; wieczorem komórka bywa przeciążona, więc porównaj też z inną porą.",
+        ),
+        K::SatelliteLeo => (
+            "On satellite the dish needs a clear view of the sky: trees and buildings cause short drops. The operator's own app shows what blocks it.",
+            "Na łączu satelitarnym antena potrzebuje czystego nieba: drzewa i budynki powodują krótkie przerwy. Aplikacja operatora pokazuje, co ją zasłania.",
+        ),
+        K::SatelliteGeo => (
+            "On a geostationary link the high ping comes from the distance to the satellite and cannot be lowered; fast-paced games will not play well on it.",
+            "Na łączu geostacjonarnym wysoki ping wynika z odległości do satelity i nie da się go obniżyć; szybkie gry nie będą na nim działać dobrze.",
+        ),
+        K::Unknown => ("", ""),
+    };
+    pick(en, pl)
+}
+
+/// Under a good grade, when the plan is known and the test fell short of it.
+pub fn bloat_plan_caveat(pct: f64, plan: f64) -> String {
+    match current() {
+        Lang::En => format!(
+            "The test reached {pct:.0}% of your plan's {plan:.0} Mbps, so the line may not have been full and the grade may be better than the line."
+        ),
+        Lang::Pl => format!(
+            "Test osiągnął {pct:.0}% z {plan:.0} Mbps z umowy, więc łącze mogło nie być zapchane i ocena może być lepsza niż łącze."
+        ),
+    }
+}
+
+/// Under a speed: how much of the plan it is.
+pub fn bloat_speed_plan(pct: f64, plan: f64) -> String {
+    match current() {
+        Lang::En => format!("{pct:.0}% of the plan's {plan:.0} Mbps"),
+        Lang::Pl => format!("{pct:.0}% z {plan:.0} Mbps z umowy"),
+    }
+}
+
+pub fn rep_plan_line(down: Option<f64>, up: Option<f64>) -> String {
+    let v = |x: Option<f64>| x.map_or_else(|| "?".to_string(), |x| format!("{x:.0}"));
+    format!("{} / {} Mbps", v(down), v(up))
 }
 
 pub fn f_router_mute_detail(gw: &str) -> String {
@@ -3790,11 +3976,11 @@ pub fn cause_advice(code: &str) -> String {
         ),
         "router_side" => (
             "The signal was strong and steady until the outage, so the Wi-Fi link was fine. Check \
-             the router: uptime, temperature, firmware, and whether other devices lose the \
-             connection at the same time.",
+             whether other devices lose the connection at the same time, make sure the router is \
+             not hot or covered, and restart it.",
             "Sygnał był mocny i stabilny aż do awarii, więc łącze Wi-Fi działało poprawnie. \
-             Sprawdź router: czas pracy, temperaturę, firmware i to, czy inne urządzenia tracą \
-             połączenie w tym samym czasie.",
+             Sprawdź, czy inne urządzenia tracą połączenie w tym samym czasie, czy router nie \
+             jest gorący albo zasłonięty, i uruchom go ponownie.",
         ),
         "marginal_link" => (
             "The connection broke on a weak signal and came back on a much stronger one, so it \
@@ -4668,6 +4854,26 @@ pub fn live_outages_24h(count: usize) -> String {
 }
 
 /// Where the report file landed.
+/// The footer of a PDF report page.
+pub fn pdf_page(n: usize, total: usize) -> String {
+    match current() {
+        Lang::En => format!("NetDoctor · page {n} of {total}"),
+        Lang::Pl => format!("NetDoctor · strona {n} z {total}"),
+    }
+}
+
+/// Heading over the list of periods of poor quality, after the outages.
+pub fn rep_slow_heading(count: usize) -> String {
+    match current() {
+        Lang::En => {
+            format!("PERIODS OF POOR QUALITY ({count}): the connection worked, with loss or lag")
+        }
+        Lang::Pl => format!(
+            "OKRESY POGORSZONEJ JAKOŚCI ({count}): połączenie działało, ale ze stratami lub lagami"
+        ),
+    }
+}
+
 pub fn live_report_saved(path: &str) -> String {
     match current() {
         Lang::En => format!("Report saved to {path}"),

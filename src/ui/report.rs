@@ -70,6 +70,7 @@ pub fn save_in_background(app: &mut App, range: Range) {
     let tail = tail(app);
     let store = Arc::clone(&app.store);
     let keep_days = app.settings.keep_days;
+    let dir = app.settings.report_dir_path();
     let tx = app.tx.clone();
     std::thread::spawn(move || {
         let to = store::now();
@@ -78,7 +79,7 @@ pub fn save_in_background(app: &mut App, range: Range) {
             let (a, b) = eventlog::span_around(e);
             eventlog::window(a, b)
         });
-        let result = write(&format!("{head}{outages}{tail}")).map_err(|e| e.to_string());
+        let result = write(&format!("{head}{outages}{tail}"), &dir).map_err(|e| e.to_string());
         let _ = tx.send(Job::ReportSaved(result));
     });
 }
@@ -93,6 +94,16 @@ fn head(app: &App) -> String {
     let _ = writeln!(out);
 
     let _ = writeln!(out, "{}", i18n::rep_sec_connection());
+    // The first two things a provider asks, and the two this computer cannot
+    // read for itself, so they are only here when the user gave them.
+    let st = &app.settings;
+    if st.line_kind != crate::settings::LineKind::Unknown {
+        let _ = writeln!(out, "  {:<14}: {}", i18n::rep_line(), st.line_kind.label());
+    }
+    if st.plan(false).is_some() || st.plan(true).is_some() {
+        let plan = i18n::rep_plan_line(st.plan(false), st.plan(true));
+        let _ = writeln!(out, "  {:<14}: {}", i18n::rep_plan(), plan);
+    }
     let _ =
         writeln!(out, "  {:<14}: {} ({})", i18n::rep_adapter(), n.adapter_name, n.medium.label());
     let _ = writeln!(out, "  {:<14}: {}", i18n::rep_driver(), n.adapter_desc);
@@ -289,8 +300,15 @@ fn outages_section(
         let _ = writeln!(out, "{line}");
     }
 
-    let n = events.len();
-    for (i, e) in events.iter().enumerate() {
+    // Breaks get the full account: cause, log, path, the minute before.
+    // Periods of poor quality are listed a line each after them. Given the
+    // full account too, a day of 320 of them buried the 19 real outages
+    // under ninety pages.
+    let slow_key = crate::monitor::Status::Degraded.key();
+    let (slow, breaks): (Vec<&Event>, Vec<&Event>) =
+        events.iter().partition(|e| e.kind == slow_key);
+    let n = breaks.len();
+    for (i, &e) in breaks.iter().enumerate() {
         let _ = writeln!(out);
         let length = e
             .duration_s()
@@ -380,6 +398,19 @@ fn outages_section(
             let _ = writeln!(out, "{IN}{line}");
         }
     }
+
+    if !slow.is_empty() {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "{}", i18n::rep_slow_heading(slow.len()));
+        for e in slow {
+            let length = e
+                .duration_s()
+                .map_or_else(|| i18n::rep_ongoing().into(), |d| format!("{d:>4.0} s"));
+            // The first sentence says what was poor; the rest is in the app.
+            let what = e.detail.split(". ").next().unwrap_or("").trim_end_matches('.');
+            let _ = writeln!(out, "  {}  {length}  {what}", format_datetime(e.ts_start));
+        }
+    }
     out
 }
 
@@ -462,18 +493,47 @@ fn signal_text(n: &NetState) -> String {
     )
 }
 
-/// Writes the report next to the database and returns the path.
-fn write(text: &str) -> Result<String> {
-    let dir = crate::settings::data_dir();
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("netdoctor-report.txt");
-    std::fs::write(&path, text)?;
+/// Writes the report into `dir` as a PDF named after the moment it was made,
+/// and returns the path. Each report is its own file: the one before is
+/// evidence too. Without a usable font it is written as plain text instead,
+/// which says the same thing.
+fn write(text: &str, dir: &std::path::Path) -> Result<String> {
+    std::fs::create_dir_all(dir)?;
+    let stem = format!("{} {}", i18n::rep_file_stem(), crate::diagnose::file_stamp(store::now()));
+    let (bytes, ext) = match crate::pdf::render(text, i18n::pdf_page) {
+        Ok(pdf) => (pdf, "pdf"),
+        Err(_) => (text.as_bytes().to_vec(), "txt"),
+    };
+    let path = free_name(dir, &stem, ext);
+    std::fs::write(&path, bytes)?;
     Ok(path.display().to_string())
+}
+
+/// `stem.ext` in `dir`, or `stem (2).ext` and so on when that is taken, so
+/// two reports in the same minute do not overwrite each other.
+fn free_name(dir: &std::path::Path, stem: &str, ext: &str) -> std::path::PathBuf {
+    let first = dir.join(format!("{stem}.{ext}"));
+    if !first.exists() {
+        return first;
+    }
+    (2..).map(|n| dir.join(format!("{stem} ({n}).{ext}"))).find(|p| !p.exists()).unwrap_or(first)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_report_in_the_same_minute_does_not_overwrite_the_first() {
+        let dir = std::env::temp_dir().join(format!("netdoctor-names-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let first = free_name(&dir, "report", "pdf");
+        let _ = std::fs::write(&first, b"x");
+        let second = free_name(&dir, "report", "pdf");
+        assert_ne!(first, second);
+        assert!(second.display().to_string().ends_with("report (2).pdf"), "{}", second.display());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use crate::probe::eventlog::Kind;
     use crate::probe::path::{HopReading, Owner};
     use std::net::Ipv4Addr;

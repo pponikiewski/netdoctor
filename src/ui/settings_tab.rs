@@ -189,6 +189,27 @@ fn page_body(app: &mut App, ui: &mut egui::Ui, page: Page) {
 
 fn measure_page(app: &mut App, ui: &mut egui::Ui) {
     let d = &mut app.draft;
+    card(ui, i18n::set_sec_line(), |ui| {
+        row(ui, i18n::set_line_kind(), |ui| {
+            egui::ComboBox::from_id_salt("line_kind").selected_text(d.line_kind.label()).show_ui(
+                ui,
+                |ui| {
+                    for k in crate::settings::LineKind::ALL {
+                        ui.selectable_value(&mut d.line_kind, k, k.label());
+                    }
+                },
+            );
+        });
+        hint(ui, i18n::set_line_hint());
+        let mbps = |ui: &mut egui::Ui, v: &mut f64| {
+            ui.add(egui::DragValue::new(v).range(0.0..=10_000.0).speed(1.0).suffix(" Mbps"));
+        };
+        row(ui, i18n::set_plan_down(), |ui| mbps(ui, &mut d.plan_down_mbps));
+        gap(ui);
+        row(ui, i18n::set_plan_up(), |ui| mbps(ui, &mut d.plan_up_mbps));
+        hint(ui, i18n::set_plan_hint());
+    });
+
     card(ui, i18n::set_sec_probing(), |ui| {
         row(ui, i18n::set_interval(), |ui| {
             ui.add(
@@ -343,6 +364,30 @@ fn general_page(app: &mut App, ui: &mut egui::Ui) {
         hint(ui, i18n::set_language_hint());
     });
 
+    card(ui, i18n::set_sec_reports(), |ui| {
+        hint(ui, i18n::set_report_dir_hint());
+        ui.add_space(S_XS);
+        let path = app.draft.report_dir_path();
+        ui.add(
+            egui::Label::new(super::figure(path.display().to_string(), T_BODY, super::FG)).wrap(),
+        );
+        ui.add_space(S_SM);
+        ui.horizontal(|ui| {
+            if button(ui, i18n::set_btn_change_dir(), Emphasis::Secondary).clicked() {
+                if let Some(chosen) = crate::folder::pick() {
+                    app.draft.report_dir = chosen;
+                }
+            }
+            if button(ui, i18n::set_btn_open_dir(), Emphasis::Ghost).clicked() {
+                crate::folder::open(&path);
+            }
+            let custom = !app.draft.report_dir.trim().is_empty();
+            if custom && button(ui, i18n::set_btn_default_dir(), Emphasis::Ghost).clicked() {
+                app.draft.report_dir.clear();
+            }
+        });
+    });
+
     card(ui, i18n::set_sec_behaviour(), |ui| {
         ui.checkbox(
             &mut app.draft.notify_on_outage,
@@ -426,12 +471,17 @@ fn page_dirty(app: &App, page: Page) -> bool {
                 || d.jitter_good_ms != s.jitter_good_ms
                 || d.jitter_ok_ms != s.jitter_ok_ms
                 || d.loss_ok_pct != s.loss_ok_pct
+                || d.line_kind != s.line_kind
+                || d.plan_down_mbps != s.plan_down_mbps
+                || d.plan_up_mbps != s.plan_up_mbps
         }
         Page::Targets => parsed_targets(&app.draft_targets) != s.extra_targets,
         // Applied as it is set, so there is never anything waiting here.
         Page::Overlay => false,
         Page::General => {
-            d.notify_on_outage != s.notify_on_outage || d.start_minimised != s.start_minimised
+            d.notify_on_outage != s.notify_on_outage
+                || d.start_minimised != s.start_minimised
+                || d.report_dir != s.report_dir
         }
         Page::Ai => d.ai_key != s.ai_key || d.ai_model != s.ai_model,
         Page::Updates => d.check_updates != s.check_updates,
@@ -484,9 +534,14 @@ fn action_bar(app: &mut App, ui: &mut egui::Ui) {
 /// user on a screen they may not read; the key is something they pasted in
 /// from elsewhere and would have to go and fetch again.
 fn restore_defaults(app: &mut App, ui: &mut egui::Ui) {
+    // The line and its plan are facts about the connection, not preferences,
+    // and restoring defaults should not make the user look them up again.
     app.draft = Settings {
         lang: app.draft.lang,
         ai_key: std::mem::take(&mut app.draft.ai_key),
+        line_kind: app.draft.line_kind,
+        plan_down_mbps: app.draft.plan_down_mbps,
+        plan_up_mbps: app.draft.plan_up_mbps,
         ..Settings::default()
     };
     app.draft_targets.clear();

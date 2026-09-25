@@ -1,5 +1,5 @@
-//! A second opinion on a finished scan, from a language model the user
-//! chose and pays for.
+//! An explanation of a finished scan, from a language model the user chose
+//! and pays for.
 //!
 //! The scan's own verdict stays the answer. It is computed from the
 //! measurements by rules that are tested; the model is not, and it is asked
@@ -47,11 +47,76 @@ pub fn model(cfg: &Settings) -> &str {
     }
 }
 
+/// The model's answer, in the four parts the tab lays out.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Explanation {
+    /// Which link is at fault and how sure that is, in a sentence or two.
+    pub problem: String,
+    /// The readings it rests on.
+    pub why: Vec<String>,
+    /// What to do, most likely to help first.
+    pub steps: Vec<String>,
+    /// What the scan could not tell.
+    pub unknown: Vec<String>,
+}
+
+/// Reads the model's reply into its parts. The prompt asks for JSON; a model
+/// that answers in prose anyway gets its prose shown, cleaned of Markdown,
+/// rather than an error for having ignored the format.
+pub fn parse_explanation(text: &str) -> Explanation {
+    let trimmed = text.trim();
+    // Some models wrap JSON in a fenced block despite being asked not to.
+    let body = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|t| t.strip_suffix("```"))
+        .unwrap_or(trimmed)
+        .trim();
+    let json = body
+        .find('{')
+        .zip(body.rfind('}'))
+        .and_then(|(a, b)| serde_json::from_str::<serde_json::Value>(&body[a..=b]).ok());
+    if let Some(v) = json.filter(|v| v["problem"].is_string()) {
+        let list = |key: &str| -> Vec<String> {
+            v[key]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        return Explanation {
+            problem: undash(v["problem"].as_str().unwrap_or_default().trim()),
+            why: list("why").iter().map(|x| undash(x)).collect(),
+            steps: list("steps").iter().map(|x| undash(x)).collect(),
+            unknown: list("unknown").iter().map(|x| undash(x)).collect(),
+        };
+    }
+    let plain: String = trimmed
+        .lines()
+        .map(|l| l.trim_start_matches('#').trim().replace("**", ""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Explanation { problem: undash(&plain), ..Default::default() }
+}
+
+/// Long dashes the model writes despite being asked not to, as the colon
+/// the rest of the app uses.
+fn undash(text: &str) -> String {
+    text.replace(" \u{2014} ", ": ")
+        .replace(" \u{2013} ", ": ")
+        .replace(['\u{2014}', '\u{2013}'], "-")
+}
+
 /// Ask the model about `scan`. Blocking; run it off the UI thread.
 ///
 /// `Err` is a sentence for the user: what failed and, where the service said,
 /// why. A failure is never dressed up as an answer.
-pub fn explain(scan: &Scan, net: &NetState, cfg: &Settings) -> Result<String, String> {
+pub fn explain(scan: &Scan, net: &NetState, cfg: &Settings) -> Result<Explanation, String> {
     let key = key(cfg).ok_or_else(|| i18n::ai_err_no_key().to_string())?;
     let body = serde_json::json!({
         "model": model(cfg),
@@ -59,7 +124,7 @@ pub fn explain(scan: &Scan, net: &NetState, cfg: &Settings) -> Result<String, St
         "max_tokens": 1400,
         "messages": [
             { "role": "system", "content": system_prompt(i18n::current()) },
-            { "role": "user", "content": report(scan, net) },
+            { "role": "user", "content": report(scan, net, cfg) },
         ],
     });
 
@@ -84,7 +149,7 @@ pub fn explain(scan: &Scan, net: &NetState, cfg: &Settings) -> Result<String, St
         }
         Err(e) => return Err(i18n::ai_err_network(&e.to_string())),
     };
-    answer_of(&text)
+    answer_of(&text).map(|t| parse_explanation(&t))
 }
 
 /// The reply's text, or why there is none.
@@ -116,7 +181,7 @@ fn system_prompt(lang: Lang) -> String {
     };
     format!(
         "You are a network engineer reading the result of a home connection diagnostic run \
-         by a Windows app. The user is not technical. Answer in {language}.\n\n\
+         by a Windows app. The user is not technical. Write every string in {language}.\n\n\
          Rules:\n\
          - The app's verdict was computed from the measurements by tested rules. Do not \
            contradict it unless a measurement below plainly shows otherwise, and if you do, \
@@ -126,22 +191,28 @@ fn system_prompt(lang: Lang) -> String {
          - Anything marked not measured, not established or ignored ping is unknown, not \
            broken. Say what is unknown instead of guessing.\n\
          - Link times are cumulative round trips to the far end of each link, not the link \
-           alone; \"this link added\" is what that link alone contributed.\n\n\
-         Write plain text, no Markdown, no tables. Use exactly these four sections, each \
-         heading on its own line:\n\
-         1. The problem: one or two sentences, which link is at fault and how sure that is.\n\
-         2. Why: the evidence, as short lines starting with \"- \".\n\
-         3. What to do: numbered steps, most likely to help first, each one something a \
-            non-technical person can do or ask their provider for.\n\
-         4. What is still unknown: what the scan could not tell, and what would settle it.\n\
-         Keep it under 250 words."
+           alone; \"this link added\" is what that link alone contributed.\n\
+         - Every step must be something the user can do themselves at home (move a device, \
+           plug in a cable, restart the router, change a setting in the app's Optimise tab, \
+           scan again at another time), or a specific thing to tell the provider. Never tell \
+           them to log into a device the provider manages (an antenna, a modem the provider \
+           locked), to change firmware, or to use a tool the app does not have.\n\
+         - The line kind, when given, is the user's own description of their connection. Read \
+           the numbers against it: 35 ms is healthy on a radio or LTE line and slow on fibre.\n\n\
+         Answer with one JSON object and nothing else: no Markdown, no code fence.\n\
+         {{\"problem\": \"one or two sentences: which link is at fault and how sure that is\", \
+         \"why\": [\"the readings this rests on, one short sentence each, with the numbers\"], \
+         \"steps\": [\"what to do, most likely to help first, one short sentence each\"], \
+         \"unknown\": [\"what the scan could not tell, and what would settle it\"]}}\n\
+         At most four items in why and in steps, at most three in unknown, each under 25 words. \
+         Do not use em dashes or en dashes; use a colon or a comma."
     )
 }
 
 /// The scan, as the text the model reads. Labels are English so the prompt
 /// reads one way; values and the findings' own words are in the user's
 /// language, exactly as the app shows them.
-pub fn report(scan: &Scan, net: &NetState) -> String {
+pub fn report(scan: &Scan, net: &NetState, cfg: &Settings) -> String {
     let m = &scan.measurements;
     let v = &scan.verdict;
     let mut out = String::new();
@@ -163,6 +234,15 @@ pub fn report(scan: &Scan, net: &NetState) -> String {
 
     line(String::new());
     line("CONNECTION".into());
+    let kind = match cfg.line_kind {
+        crate::settings::LineKind::Unknown => "not given".to_string(),
+        k => k.label().to_string(),
+    };
+    line(format!("- Line kind (as the user described it): {kind}"));
+    if let Some(down) = cfg.plan(false) {
+        let up = cfg.plan(true).map_or_else(|| "?".to_string(), |u| format!("{u:.0}"));
+        line(format!("- Plan speed: {down:.0} / {up} Mbps"));
+    }
     line(format!("- Medium: {}", m.medium.label()));
     if let Some(pct) = m.signal_pct {
         line(format!("- Wi-Fi signal: {pct}%"));
@@ -296,6 +376,18 @@ pub fn report(scan: &Scan, net: &NetState) -> String {
 
     line(String::new());
     line("INDIVIDUAL CHECKS (severity | title | detail | advice)".into());
+    let hours: Vec<String> = m
+        .outage_hours
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| **n > 0)
+        .map(|(h, n)| format!("{h:02}:00-{:02}:00 x{n}", (h + 1) % 24))
+        .collect();
+    if !hours.is_empty() {
+        line(String::new());
+        line(format!("OUTAGES BY HOUR STARTED (last 24 h, local time): {}", hours.join(", ")));
+    }
+
     for f in &scan.findings {
         line(format!("- {} | {} | {} | {}", f.severity.label(), f.title, f.detail, f.advice));
     }
@@ -380,7 +472,7 @@ mod tests {
         let mut f = Finding::new_for_test("wifi", Severity::Good);
         f.detail = "Intel: Kowalski_5G via aa:bb:cc:dd:ee:ff, edge 83.12.4.1".into();
         let scan = Scan { findings: vec![f], ..Scan::default() };
-        let r = report(&scan, &net);
+        let r = report(&scan, &net, &Settings::default());
         assert!(!r.contains("Kowalski"), "{r}");
         assert!(!r.contains("aa:bb"), "{r}");
         assert!(!r.contains("83.12.4.1"), "{r}");
@@ -393,7 +485,7 @@ mod tests {
             measurements: Measurements { blind: Some("no ICMP".into()), ..Default::default() },
             ..Scan::default()
         };
-        let r = report(&scan, &NetState::default());
+        let r = report(&scan, &NetState::default(), &Settings::default());
         assert!(r.contains("No ping could be sent: no ICMP"));
         // The three links, DNS and TCP.
         assert_eq!(r.matches(": not measured").count(), 5, "{r}");
@@ -429,10 +521,31 @@ mod tests {
         let store = crate::store::Store::open_in_memory().unwrap();
         let cfg = Settings::default();
         let scan = crate::diagnose::scan(&net, &store, &cfg, false, None, None);
-        println!("--- sent ---\n{}", report(&scan, &net));
+        println!("--- sent ---\n{}", report(&scan, &net, &cfg));
         let answer = explain(&scan, &net, &cfg).unwrap();
-        println!("--- answer ---\n{answer}");
-        assert!(!answer.is_empty());
+        println!("--- answer ---\n{answer:#?}");
+        assert!(!answer.problem.is_empty());
+    }
+
+    #[test]
+    fn an_answer_is_read_into_its_parts_and_prose_is_kept_readable() {
+        let json =
+            r#"{"problem":"The router.","why":["Loss 5%"],"steps":["Restart it"],"unknown":[]}"#;
+        let e = parse_explanation(json);
+        assert_eq!(e.problem, "The router.");
+        assert_eq!(e.why, vec!["Loss 5%".to_string()]);
+        assert_eq!(e.steps, vec!["Restart it".to_string()]);
+        // Fenced, and with a sentence in front: still the object.
+        let fenced = format!("```json\n{json}\n```");
+        assert_eq!(parse_explanation(&fenced), e);
+        assert_eq!(parse_explanation(&format!("Here you go: {json}")), e);
+        // Prose instead of JSON is shown, without the Markdown marks.
+        let prose = parse_explanation("## The problem\n**The router** is at fault.");
+        assert_eq!(prose.problem, "The problem\nThe router is at fault.");
+        assert!(prose.steps.is_empty());
+        // Dashes the model was told not to write come back as the app's colon.
+        let dashed = r#"{"problem":"Wi-Fi \u2013 not the line","why":[],"steps":[],"unknown":[]}"#;
+        assert_eq!(parse_explanation(dashed).problem, "Wi-Fi: not the line");
     }
 
     #[test]

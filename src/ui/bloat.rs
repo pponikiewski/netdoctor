@@ -127,7 +127,15 @@ fn running(app: &App, ui: &mut egui::Ui) {
         ping: mean(live, p),
         ..Dir::default()
     };
-    speed_row(ui, mean(live, Phase::Idle), dir(0, Phase::Down), dir(1, Phase::Up), Some(phase));
+    let plan = [app.settings.plan(false), app.settings.plan(true)];
+    speed_row(
+        ui,
+        mean(live, Phase::Idle),
+        dir(0, Phase::Down),
+        dir(1, Phase::Up),
+        Some(phase),
+        plan,
+    );
     ui.add_space(S_MD);
 
     card(ui, i18n::bloat_running_title(), |ui| {
@@ -181,6 +189,7 @@ fn speed_row(
     down: Dir,
     up: Dir,
     active: Option<Phase>,
+    plan: [Option<f64>; 2],
 ) -> egui::Response {
     let mbps = |v: f64| if v < 10.0 { format!("{v:.1}") } else { format!("{v:.0}") };
     let under = |d: Dir| match (d.ping, d.silent) {
@@ -244,6 +253,20 @@ fn speed_row(
                     // stay level.
                     let sub = if sub.is_empty() { "\u{a0}".to_string() } else { sub };
                     col.label(egui::RichText::new(sub).size(T_META).color(sub_colour));
+                    // The plan's share, when the user gave the plan. The line
+                    // is kept under every column once any plan is known.
+                    if plan.iter().any(Option::is_some) {
+                        let share = match phase {
+                            Phase::Down => plan[0].zip(down.mbps),
+                            Phase::Up => plan[1].zip(up.mbps),
+                            Phase::Idle => None,
+                        };
+                        let text = share.map_or_else(
+                            || "\u{a0}".to_string(),
+                            |(p, v)| i18n::bloat_speed_plan(v / p * 100.0, p),
+                        );
+                        col.label(egui::RichText::new(text).size(T_META).color(FG_DIM));
+                    }
                 }
             });
         });
@@ -296,7 +319,8 @@ fn result(app: &App, ui: &mut egui::Ui) {
         rise: u.bump_ms,
         silent: u.loaded_avg.is_none() && u.grade == Some(Grade::F),
     });
-    speed_row(ui, r.idle_avg, down, up, None);
+    let plan = [app.settings.plan(false), app.settings.plan(true)];
+    speed_row(ui, r.idle_avg, down, up, None, plan);
     ui.add_space(S_MD);
     verdict(ui, r);
     ui.add_space(S_MD);
@@ -305,7 +329,7 @@ fn result(app: &App, ui: &mut egui::Ui) {
     }
     // Unmeasured, the advice would only repeat the reason under the grade.
     if g != Grade::Unknown {
-        let advice = bandwidth::advice(r);
+        let advice = bandwidth::advice(r, app.settings.plan(false));
         card(ui, i18n::bloat_advice_title(), |ui| {
             ui.label(egui::RichText::new(&advice.lead).size(T_BODY).color(FG));
             if !advice.steps.is_empty() {
@@ -674,7 +698,7 @@ mod tests {
             let _ = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        height = speed_row(ui, Some(12.0), d, d, None).rect.height();
+                        height = speed_row(ui, Some(12.0), d, d, None, [None; 2]).rect.height();
                     });
                 });
             });

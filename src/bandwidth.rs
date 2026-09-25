@@ -513,7 +513,8 @@ impl Advice {
     }
 }
 
-pub fn advice(res: &BloatResult) -> Advice {
+/// `plan` is the download speed the user's plan promises, when they gave it.
+pub fn advice(res: &BloatResult, plan: Option<f64>) -> Advice {
     match res.grade_or_unknown() {
         Grade::Unknown => Advice {
             lead: if res.error.is_empty() {
@@ -529,10 +530,17 @@ pub fn advice(res: &BloatResult) -> Advice {
             // A good grade is only as good as the load behind it: a server
             // that tops out at 100 Mbps leaves a gigabit line idle and its
             // queue empty. The app cannot know the plan, the user does.
-            note: res.mbps.map(|down| {
-                let up = res.upload.as_ref().and_then(|u| u.mbps);
-                crate::i18n::bloat_saturation_caveat(down, up)
-            }),
+            // With the plan known the question has an answer: the line was
+            // filled, or the test reached this share of it.
+            note: match (res.mbps, plan) {
+                (Some(down), Some(plan)) => (down < plan * 0.7)
+                    .then(|| crate::i18n::bloat_plan_caveat(down / plan * 100.0, plan)),
+                (Some(down), None) => {
+                    let up = res.upload.as_ref().and_then(|u| u.mbps);
+                    Some(crate::i18n::bloat_saturation_caveat(down, up))
+                }
+                (None, _) => None,
+            },
         },
         _ => Advice {
             lead: crate::i18n::bloat_advice_intro(res.worst_bump().unwrap_or(0.0)),
@@ -565,7 +573,7 @@ mod tests {
     fn good_grades_do_not_produce_a_wall_of_advice() {
         let _guard = crate::i18n::test_lock();
         let res = BloatResult { grade: Some(Grade::A), ..Default::default() };
-        let advice = advice(&res);
+        let advice = advice(&res, None);
         assert_eq!(advice.lead, crate::i18n::bloat_advice_ok());
         assert!(advice.steps.is_empty() && advice.note.is_none());
         assert!(!advice.text().contains("SQM"));
@@ -580,7 +588,7 @@ mod tests {
             mbps: Some(78.0),
             ..Default::default()
         };
-        let text = advice(&res).text();
+        let text = advice(&res, None).text();
         assert!(text.contains("SQM"));
         assert!(text.contains("78"), "throughput should feed the cap suggestion");
     }
@@ -617,8 +625,19 @@ mod tests {
             upload: Some(Upload { mbps: Some(11.0), ..Default::default() }),
             ..Default::default()
         };
-        let text = advice(&res).text();
+        let text = advice(&res, None).text();
         assert!(text.contains("94") && text.contains("11"), "{text}");
+    }
+
+    #[test]
+    fn a_good_grade_is_held_against_the_plan_when_the_plan_is_known() {
+        let _guard = crate::i18n::test_lock();
+        let res = BloatResult { grade: Some(Grade::A), mbps: Some(94.0), ..Default::default() };
+        // Near the plan: the line was filled, nothing to add.
+        assert!(advice(&res, Some(100.0)).note.is_none());
+        // A third of it: the grade may flatter the line, and the note says how much.
+        let note = advice(&res, Some(300.0)).note.unwrap_or_default();
+        assert!(note.contains("31") && note.contains("300"), "{note}");
     }
 
     #[test]
@@ -626,7 +645,7 @@ mod tests {
         let res = BloatResult::default();
         assert_eq!(res.grade_or_unknown(), Grade::Unknown);
         let _guard = crate::i18n::test_lock();
-        assert_eq!(advice(&res).lead, crate::i18n::bloat_advice_run());
+        assert_eq!(advice(&res, None).lead, crate::i18n::bloat_advice_run());
     }
 
     #[test]

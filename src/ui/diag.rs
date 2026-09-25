@@ -267,8 +267,8 @@ fn ai_card(app: &App, ui: &mut egui::Ui, ask: &mut bool) {
 
     card(ui, i18n::ai_heading(), |ui| {
         match &app.ai_answer {
-            Some(Ok(text)) => {
-                ui.label(egui::RichText::new(text).size(T_BODY).color(FG));
+            Some(Ok(answer)) => {
+                explanation(ui, answer);
                 ui.add_space(S_SM);
                 ui.label(
                     egui::RichText::new(i18n::ai_disclaimer(model))
@@ -308,10 +308,51 @@ fn ai_card(app: &App, ui: &mut egui::Ui, ask: &mut bool) {
         )
         .id_salt("ai_payload")
         .show(ui, |ui| {
-            let payload = crate::ai::report(&scan_of(app), &app.scan_net);
+            let payload = crate::ai::report(&scan_of(app), &app.scan_net, &app.settings);
             ui.label(super::figure(payload, super::T_MICRO, FG_DIM));
         });
     });
+}
+
+/// The model's answer in its four parts: the problem as a lead, then the
+/// evidence, the steps and the unknowns as lists under their own headings.
+/// It used to be one block of text, which nobody read to the end.
+fn explanation(ui: &mut egui::Ui, e: &crate::ai::Explanation) {
+    ui.label(egui::RichText::new(&e.problem).size(T_HEAD).color(FG));
+    let section = |ui: &mut egui::Ui, heading: &str, items: &[String], numbered: bool| {
+        if items.is_empty() {
+            return;
+        }
+        ui.add_space(S_MD);
+        ui.label(egui::RichText::new(heading).size(T_BODY).strong().color(FG_DIM));
+        ui.add_space(S_XS);
+        for (i, item) in items.iter().enumerate() {
+            ui.horizontal_top(|ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(18.0, T_BODY + 4.0), egui::Sense::hover());
+                if numbered {
+                    ui.painter().text(
+                        rect.left_top() + egui::vec2(0.0, 1.0),
+                        egui::Align2::LEFT_TOP,
+                        format!("{}.", i + 1),
+                        egui::FontId::proportional(T_BODY),
+                        ACCENT,
+                    );
+                } else {
+                    ui.painter().circle_filled(
+                        rect.left_top() + egui::vec2(4.0, T_BODY * 0.6 + 1.0),
+                        2.5,
+                        FG_DIM,
+                    );
+                }
+                ui.add(egui::Label::new(egui::RichText::new(item).size(T_BODY).color(FG)).wrap());
+            });
+            ui.add_space(2.0);
+        }
+    };
+    section(ui, i18n::ai_sec_why(), &e.why, false);
+    section(ui, i18n::ai_sec_steps(), &e.steps, true);
+    section(ui, i18n::ai_sec_unknown(), &e.unknown, false);
 }
 
 /// The scan on screen, reassembled for the AI request. The clone is
@@ -700,6 +741,10 @@ fn measure_card(app: &App, ui: &mut egui::Ui) {
             (Some(own), None) => format!("{} / {}", ms(own), i18n::link_silent()),
             _ => i18n::measure_none().into(),
         };
+        let line = match app.settings.line_kind {
+            crate::settings::LineKind::Unknown => i18n::measure_line_unset().to_string(),
+            k => k.label().to_string(),
+        };
         let route = match &m.vpn {
             Some(name) => i18n::measure_route_vpn(name),
             None => i18n::measure_route_direct().to_string(),
@@ -718,6 +763,7 @@ fn measure_card(app: &App, ui: &mut egui::Ui) {
 
         egui::Grid::new("measure_other").spacing([S_LG, S_SM]).show(ui, |ui| {
             for (k, v) in [
+                (i18n::measure_line(), line),
                 (i18n::measure_medium(), medium),
                 (i18n::measure_route(), route),
                 (i18n::measure_proxy(), proxy),
