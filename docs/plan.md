@@ -101,8 +101,10 @@ Wynik: `prompts/audyt-wynik-2026-09-25.md`. 12 z 13 ustaleń z 23.09 potwierdzon
 - [x] H: długi pomiar nie liczy braku odpowiedzi routera jako zerwania LAN, gdy internet w tej sekundzie odpowiadał (test w `longrun.rs`). Nie sprawdzone na prawdziwym routerze ograniczającym ICMP
 - [x] C: przy filtrowanych pingach i przechodzącym TCP błąd DNS daje `DnsFail` z tekstem, który nie twierdzi, że ping działa (`mon_dns_detail_filtered`); test w `monitor.rs` dla IspDown/LanDown/AdapterDown. Nie sprawdzone w sieci blokującej ICMP
 - [x] D: snapshot ręcznego DNS bierze listę z rejestru (`NameServer`), nie z bieżącego odczytu karty; Revert z pustą listą zwraca błąd zamiast panikować. Testy `dns_snapshot` i odmowy w `optimize/mod.rs`; odczyt rejestru (`typed_dns`) nie ma testu
-- [ ] E: `router_restarted` przy samym zerwaniu sesji PPPoE wyłącza `router_wan_up`
-- [ ] F: tryb gry gubi zmianę z listy do cofnięcia, gdy `save_session` zawiedzie po udanym `apply`
-- [ ] I: wydanie bez `SHA256SUMS` instaluje się bez sumy kontrolnej
+- [x] E: w awarii zapisanej jako `isp` (router odpowiadał na pingi) licznik od nowa to `wan_session_restarted` („połączenie z dostawcą zestawione od nowa”), nie `router_restarted`; test w `cause.rs`. Opiera się na przepisywaniu na LAN po `outage_after_fails` odczytach (3 s przy domyślnych), oznaczone `ponytail:`
+- [x] F: zmiana lub zatrzymana usługa, której nie da się zapisać w pliku sesji, jest cofana od razu (`recorded_or_undone`, test w `game.rs`). Samo `prepare` bez testu (wymaga admina i usług)
+- [x] I: wydanie bez `SHA256SUMS` jest odrzucane (`update::release_from`, test bez sieci). Workflow publikuje plik od v1.1.0, a aktualizacja jest zawsze nowsza niż build, więc wyjątek nie był potrzebny
 - [ ] Hipoteza A: antywirus lub portal kończy TCP 443 lokalnie → awaria dostawcy jako „sieć blokuje pingi”. Test: `Test-NetConnection 192.0.2.1 -Port 443` na komputerze z ESET/Kaspersky/Avast; na Windows Defender nie występuje (sprawdzone)
 - [ ] Hipoteza J: rekomendacja kanałów 149-165 niedostępnych w części routerów w PL
+- [x] Awaria z crash.log (1.1.0): `--scan`/`--help`/`--version` do zamkniętego potoku panikowały w `println!`; teraz `say` pomija błąd zapisu. Nie sprawdzone na żywo (brak miejsca na dysku na drugi build)
+- [x] Awaria z crash.log (1.5.0): winit 0.30.13 `MonitorHandle::size` robił `unwrap` na nieważnym uchwycie monitora (błąd 1461, winit #3258), wołane co klatkę przez egui-winit. Łatka w `vendor/winit` przez `[patch.crates-io]` (wybór użytkownika zamiast restartu z hooka): `name`, `native_identifier`, `size` bez `unwrap`; `cargo tree -i winit` wskazuje kopię, clippy i testy zielone. Nie sprawdzone odłączeniem monitora

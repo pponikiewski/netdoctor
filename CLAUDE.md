@@ -15,7 +15,7 @@
 - **Build:** Cargo
 - **Lint:** clippy (warnings = errors)
 - **Format:** rustfmt, pinned by `rustfmt.toml` (`use_small_heuristics = "Max"`) — never run `cargo fmt` with a different config, it reformats the whole tree
-- **GUI:** eframe/egui 0.29 + egui_plot (glow backend, default fonts)
+- **GUI:** eframe/egui 0.29 + egui_plot (glow backend, default fonts); winit 0.30.13 patched in `vendor/winit` (see `vendor/README.md`)
 - **Storage:** rusqlite 0.32 (bundled SQLite)
 - **PDF:** printpdf 0.12, no default features (the report; fonts read from the Windows fonts folder)
 - **HTTP:** ureq 2 (tls) — the load test and the self-updater; responses are parsed with serde_json, not `into_json`, which sits behind a default feature Cargo.toml does not name
