@@ -41,10 +41,87 @@ impl Confidence {
     }
 }
 
+/// Declares [`Code`] and [`Code::ALL`] from one list, so no code can exist
+/// that `ALL` leaves out.
+macro_rules! codes {
+    ($($variant:ident => $key:literal,)*) => {
+        /// What a cause is, as a type rather than a string. The title and the
+        /// advice are an exhaustive `match` on it in [`crate::i18n`], so a new
+        /// cause without its words in both languages does not compile. As a
+        /// string it fell through to its own name, and "router_wan_down" went
+        /// into the report a provider reads.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum Code {
+            $($variant,)*
+        }
+
+        // Only the tests read these: the app names a cause through i18n.
+        #[cfg(test)]
+        impl Code {
+            pub const ALL: &'static [Code] = &[$(Code::$variant,)*];
+
+            /// The stable name the tests use. Never shown to the user.
+            pub fn key(self) -> &'static str {
+                match self {
+                    $(Code::$variant => $key,)*
+                }
+            }
+        }
+    };
+}
+
+codes! {
+    AfterTweak => "after_tweak",
+    AdapterPoweredDown => "adapter_powered_down",
+    AdapterPowerPlan => "adapter_power_plan",
+    OutOfRange => "out_of_range",
+    AdapterOrDriver => "adapter_or_driver",
+    Roaming => "roaming",
+    SignalFade => "signal_fade",
+    Airtime24ghz => "airtime_24ghz",
+    RouterSide => "router_side",
+    WeakSignal => "weak_signal",
+    MarginalLink => "marginal_link",
+    CableOrRouter => "cable_or_router",
+    IspSustained => "isp_sustained",
+    IspBrief => "isp_brief",
+    IspPattern => "isp_pattern",
+    DnsRouterOnly => "dns_router_only",
+    DnsResolver => "dns_resolver",
+    DnsOwnResolver => "dns_own_resolver",
+    LocalSaturation => "local_saturation",
+    RateCollapse => "rate_collapse",
+    TimePattern => "time_pattern",
+    NoEvidence => "no_evidence",
+    Unclear => "unclear",
+    LogSleep => "log_sleep",
+    LogResume => "log_resume",
+    LogDriverFault => "log_driver_fault",
+    LogWlanInactivity => "log_wlan_inactivity",
+    LogWlanAuth => "log_wlan_auth",
+    LogWlanApRejected => "log_wlan_ap_rejected",
+    LogWlanDeauth => "log_wlan_deauth",
+    LogDhcp => "log_dhcp",
+    LogDuplicateIp => "log_duplicate_ip",
+    LogLinkDown => "log_link_down",
+    LogCleanIsp => "log_clean_isp",
+    RouterWanDown => "router_wan_down",
+    RouterRestarted => "router_restarted",
+    WanNewIp => "wan_new_ip",
+    RouterWanUp => "router_wan_up",
+}
+
+/// Lets the tests name a cause the way they always have.
+#[cfg(test)]
+impl PartialEq<&str> for Code {
+    fn eq(&self, other: &&str) -> bool {
+        self.key() == *other
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Cause {
-    /// Stable code, translated for display. Never shown raw.
-    pub code: &'static str,
+    pub code: Code,
     pub confidence: Confidence,
     /// The numbers this verdict was read off, already localised.
     pub evidence: String,
@@ -53,7 +130,7 @@ pub struct Cause {
 }
 
 impl Cause {
-    fn new(code: &'static str, confidence: Confidence, evidence: String) -> Self {
+    fn new(code: Code, confidence: Confidence, evidence: String) -> Self {
         Cause { code, confidence, evidence, fix_tweak: None }
     }
 
@@ -206,15 +283,24 @@ pub fn analyse(
     // A change applied minutes earlier outranks every signal reading: if the
     // user broke it themselves, nothing else is worth saying first. Only one
     // that took effect: a failed attempt changed nothing it could be blamed for.
+    // And only one still in place when the outage began: game mode undoes its
+    // changes when the game closes, and a change the user tried and reverted
+    // was blamed for an outage that came after it was gone.
+    let undone = |t: &TweakLogRow| {
+        tweaks.iter().any(|r| {
+            r.tweak_id == t.tweak_id && r.action == "revert" && r.ts > t.ts && r.ts < event.ts_start
+        })
+    };
     if let Some(t) = tweaks
         .iter()
         .filter(|t| t.action == "apply")
         .filter(|t| t.ts < event.ts_start && event.ts_start - t.ts <= TWEAK_SUSPECT_WINDOW_S)
+        .filter(|t| !undone(t))
         .max_by(|a, b| a.ts.partial_cmp(&b.ts).unwrap_or(std::cmp::Ordering::Equal))
     {
         let mins = ((event.ts_start - t.ts) / 60.0).round() as i64;
         let mut cause = Cause::new(
-            "after_tweak",
+            Code::AfterTweak,
             Confidence::Likely,
             i18n::ev_after_tweak(&i18n::tweak_name(&t.tweak_id), mins),
         );
@@ -235,7 +321,7 @@ pub fn analyse(
         if out.is_empty() {
             // Rows written before the app read its own context back, or a
             // failed serialisation. Saying so is more useful than guessing.
-            out.push(Cause::new("no_evidence", Confidence::Possible, i18n::ev_none()));
+            out.push(Cause::new(Code::NoEvidence, Confidence::Possible, i18n::ev_none()));
         }
         return out;
     };
@@ -256,7 +342,7 @@ pub fn analyse(
         // no history in it, and most rules need the history — saying the
         // evidence is inconclusive would blame the outage for a gap in the
         // recording.
-        let code = if ev.lead.is_empty() { "no_evidence" } else { "unclear" };
+        let code = if ev.lead.is_empty() { Code::NoEvidence } else { Code::Unclear };
         let evidence = if ev.lead.is_empty() { i18n::ev_none() } else { i18n::ev_unclear() };
         out.push(Cause::new(code, Confidence::Possible, evidence));
     }
@@ -313,7 +399,7 @@ fn router_rules(event: &Event, router: &[RouterReading], out: &mut Vec<Cause>) {
 
     if let Some(down) = inside.iter().find(|r| !r.connected()) {
         out.push(Cause::new(
-            "router_wan_down",
+            Code::RouterWanDown,
             Confidence::Likely,
             i18n::ev_router_wan_down(&down.status),
         ));
@@ -324,14 +410,18 @@ fn router_rules(event: &Event, router: &[RouterReading], out: &mut Vec<Cause>) {
             .is_some_and(|c| c >= start - ROUTER_CLOCK_SLACK_S && c <= end + ROUTER_CLOCK_SLACK_S)
     });
     if restarted {
-        out.push(Cause::new("router_restarted", Confidence::Likely, i18n::ev_router_restarted()));
+        out.push(Cause::new(
+            Code::RouterRestarted,
+            Confidence::Likely,
+            i18n::ev_router_restarted(),
+        ));
     }
 
     let before = router.iter().rev().find(|r| r.ts < start).and_then(|r| r.ip_tag.as_ref());
     let after = router.iter().find(|r| r.ts > end).and_then(|r| r.ip_tag.as_ref());
     if let (Some(b), Some(a)) = (before, after) {
         if a != b {
-            out.push(Cause::new("wan_new_ip", Confidence::Likely, i18n::ev_wan_new_ip()));
+            out.push(Cause::new(Code::WanNewIp, Confidence::Likely, i18n::ev_wan_new_ip()));
         }
     }
 
@@ -342,7 +432,7 @@ fn router_rules(event: &Event, router: &[RouterReading], out: &mut Vec<Cause>) {
         && !inside.is_empty()
         && inside.iter().all(|r| r.connected())
     {
-        out.push(Cause::new("router_wan_up", Confidence::Possible, i18n::ev_router_wan_up()));
+        out.push(Cause::new(Code::RouterWanUp, Confidence::Possible, i18n::ev_router_wan_up()));
     }
 }
 
@@ -364,14 +454,14 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
         .iter()
         .find(|e| e.kind == Kind::Sleep && (-SLEEP_WINDOW_S..=5.0).contains(&e.offset_from(t0)))
     {
-        out.push(Cause::new("log_sleep", Confidence::Certain, i18n::ev_log_sleep(&at(e))));
+        out.push(Cause::new(Code::LogSleep, Confidence::Certain, i18n::ev_log_sleep(&at(e))));
     } else if let Some(e) =
         log.iter().find(|e| e.kind == Kind::Resume && (-30.0..=90.0).contains(&e.offset_from(t0)))
     {
         // Waking is not sleeping: the radio has to re-associate and the DHCP
         // lease has to be confirmed, and an outage that fills exactly that gap
         // is the resume sequence, not a fault in it.
-        out.push(Cause::new("log_resume", Confidence::Likely, i18n::ev_log_resume(&at(e))));
+        out.push(Cause::new(Code::LogResume, Confidence::Likely, i18n::ev_log_resume(&at(e))));
     }
 
     // Likely, not certain: unlike the rules around it, this one does not rest
@@ -381,7 +471,7 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
     if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::DriverFault) {
         out.push(
             Cause::new(
-                "log_driver_fault",
+                Code::LogDriverFault,
                 Confidence::Likely,
                 i18n::ev_log_driver(&e.provider, e.id, &at(e)),
             )
@@ -393,7 +483,7 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
         out.push(wlan_disconnect_cause(e, &at(e)));
     } else if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::WlanAuthFail) {
         out.push(Cause::new(
-            "log_wlan_auth",
+            Code::LogWlanAuth,
             Confidence::Certain,
             i18n::ev_log_wlan_auth(e.id, &at(e)),
         ));
@@ -404,12 +494,12 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
         // router did not answer the DHCP client, which fits a LAN fault but
         // did not itself take the address away. The others are no address.
         let conf = if e.id == 1003 { Confidence::Likely } else { Confidence::Certain };
-        out.push(Cause::new("log_dhcp", conf, i18n::ev_log_dhcp(&at(e))));
+        out.push(Cause::new(Code::LogDhcp, conf, i18n::ev_log_dhcp(&at(e))));
     }
 
     if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::DuplicateIp) {
         out.push(Cause::new(
-            "log_duplicate_ip",
+            Code::LogDuplicateIp,
             Confidence::Certain,
             i18n::ev_log_duplicate_ip(&at(e)),
         ));
@@ -420,7 +510,7 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
     if out.len() == before {
         if let Some(e) = log.iter().filter(near).find(|e| e.kind == Kind::LinkDown) {
             out.push(Cause::new(
-                "log_link_down",
+                Code::LogLinkDown,
                 Confidence::Likely,
                 i18n::ev_log_link_down(&at(e)),
             ));
@@ -432,7 +522,7 @@ fn log_rules(event: &Event, log: &[SysEvent], out: &mut Vec<Cause>) {
     // It is only worth saying when the log had something to say at all —
     // "empty" and "unavailable" look identical from here.
     if event.scope == "isp" && !log.is_empty() && !log.iter().any(|e| e.kind.is_fault()) {
-        out.push(Cause::new("log_clean_isp", Confidence::Likely, i18n::ev_log_clean(log.len())));
+        out.push(Cause::new(Code::LogCleanIsp, Confidence::Likely, i18n::ev_log_clean(log.len())));
     }
 }
 
@@ -444,23 +534,27 @@ fn wlan_disconnect_cause(e: &SysEvent, at: &str) -> Cause {
         // Disassociated due to inactivity. The access point stopped hearing
         // from a card that Windows had quietly powered down, which is the
         // single most common cause of "it drops when I leave it alone".
-        Some(4) => {
-            Cause::new("log_wlan_inactivity", Confidence::Certain, i18n::ev_log_wlan_reason(4, at))
-                .with_fix("adapter_power")
-        }
+        Some(4) => Cause::new(
+            Code::LogWlanInactivity,
+            Confidence::Certain,
+            i18n::ev_log_wlan_reason(4, at),
+        )
+        .with_fix("adapter_power"),
         // Handshake and key failures: the credentials or the key rotation,
         // not the radio.
         Some(r @ (2 | 15 | 23)) => {
-            Cause::new("log_wlan_auth", Confidence::Certain, i18n::ev_log_wlan_reason(r, at))
+            Cause::new(Code::LogWlanAuth, Confidence::Certain, i18n::ev_log_wlan_reason(r, at))
         }
         // The access point turned us away rather than losing us.
-        Some(r @ 5..=7) => {
-            Cause::new("log_wlan_ap_rejected", Confidence::Certain, i18n::ev_log_wlan_reason(r, at))
-        }
+        Some(r @ 5..=7) => Cause::new(
+            Code::LogWlanApRejected,
+            Confidence::Certain,
+            i18n::ev_log_wlan_reason(r, at),
+        ),
         Some(r) => {
-            Cause::new("log_wlan_deauth", Confidence::Likely, i18n::ev_log_wlan_reason(r, at))
+            Cause::new(Code::LogWlanDeauth, Confidence::Likely, i18n::ev_log_wlan_reason(r, at))
         }
-        None => Cause::new("log_wlan_deauth", Confidence::Likely, i18n::ev_log_wlan_plain(at)),
+        None => Cause::new(Code::LogWlanDeauth, Confidence::Likely, i18n::ev_log_wlan_plain(at)),
     }
 }
 
@@ -470,7 +564,7 @@ fn adapter_rules(ev: &Evidence, out: &mut Vec<Cause>) {
     if ev.dropped_while_up() && healthy_radio {
         out.push(
             Cause::new(
-                "adapter_powered_down",
+                Code::AdapterPoweredDown,
                 Confidence::Likely,
                 i18n::ev_adapter_powered_down(ev.rssi_dbm),
             )
@@ -479,18 +573,18 @@ fn adapter_rules(ev: &Evidence, out: &mut Vec<Cause>) {
         // The power plan is the other half of the same story: Windows can park
         // the radio through either setting, and one does not imply the other.
         out.push(
-            Cause::new("adapter_power_plan", Confidence::Possible, i18n::ev_adapter_power_plan())
+            Cause::new(Code::AdapterPowerPlan, Confidence::Possible, i18n::ev_adapter_power_plan())
                 .with_fix("wlan_power_plan"),
         );
     }
 
     if let Some(r) = ev.rssi_dbm.filter(|r| *r <= -75) {
-        out.push(Cause::new("out_of_range", Confidence::Likely, i18n::ev_rssi_low(r)));
+        out.push(Cause::new(Code::OutOfRange, Confidence::Likely, i18n::ev_rssi_low(r)));
     }
 
     if !ev.dropped_while_up() && ev.rssi_dbm.is_none() && !ev.up {
         out.push(
-            Cause::new("adapter_or_driver", Confidence::Possible, i18n::ev_adapter_absent())
+            Cause::new(Code::AdapterOrDriver, Confidence::Possible, i18n::ev_adapter_absent())
                 .with_fix("stack_reset"),
         );
     }
@@ -498,16 +592,20 @@ fn adapter_rules(ev: &Evidence, out: &mut Vec<Cause>) {
 
 fn lan_rules(ev: &Evidence, out: &mut Vec<Cause>) {
     if let Some((from, to)) = ev.bssid_change() {
-        out.push(Cause::new("roaming", Confidence::Likely, i18n::ev_roam(&from, &to)));
+        out.push(Cause::new(Code::Roaming, Confidence::Likely, i18n::ev_roam(&from, &to)));
     } else if ev.roamed {
-        out.push(Cause::new("roaming", Confidence::Possible, i18n::ev_roam_flag()));
+        out.push(Cause::new(Code::Roaming, Confidence::Possible, i18n::ev_roam_flag()));
     }
 
     match ev.rssi_trend() {
         // A signal sliding away over the lead-up is the classic "walked into
         // the next room" outage, and it is unmistakable once plotted.
         Some((from, to)) if from - to >= 10 => {
-            out.push(Cause::new("signal_fade", Confidence::Certain, i18n::ev_rssi_fade(from, to)));
+            out.push(Cause::new(
+                Code::SignalFade,
+                Confidence::Certain,
+                i18n::ev_rssi_fade(from, to),
+            ));
         }
         // Steady and strong right up to the drop: the radio was fine, so the
         // router or the airtime around it was not. On 2.4 GHz the airtime is
@@ -515,9 +613,13 @@ fn lan_rules(ev: &Evidence, out: &mut Vec<Cause>) {
         // channel was, so it cannot be more than possible.
         Some((_, to)) if to >= -60 => {
             let cause = if ev.channel.is_some_and(|c| (1..=14).contains(&c)) {
-                Cause::new("airtime_24ghz", Confidence::Possible, i18n::ev_crowded_24(ev.channel))
+                Cause::new(
+                    Code::Airtime24ghz,
+                    Confidence::Possible,
+                    i18n::ev_crowded_24(ev.channel),
+                )
             } else {
-                Cause::new("router_side", Confidence::Likely, i18n::ev_signal_was_fine(to))
+                Cause::new(Code::RouterSide, Confidence::Likely, i18n::ev_signal_was_fine(to))
             };
             out.push(cause);
         }
@@ -525,8 +627,8 @@ fn lan_rules(ev: &Evidence, out: &mut Vec<Cause>) {
     }
 
     if let Some(r) = ev.rssi_dbm.filter(|r| *r <= -72) {
-        if !out.iter().any(|c| c.code == "signal_fade") {
-            out.push(Cause::new("weak_signal", Confidence::Likely, i18n::ev_rssi_low(r)));
+        if !out.iter().any(|c| c.code == Code::SignalFade) {
+            out.push(Cause::new(Code::WeakSignal, Confidence::Likely, i18n::ev_rssi_low(r)));
         }
     }
 
@@ -535,7 +637,7 @@ fn lan_rules(ev: &Evidence, out: &mut Vec<Cause>) {
     if let (Some(start), Some(end)) = (ev.rssi_dbm, ev.rssi_at_recovery) {
         if end - start >= 12 {
             out.push(Cause::new(
-                "marginal_link",
+                Code::MarginalLink,
                 Confidence::Likely,
                 i18n::ev_recovered_stronger(start, end),
             ));
@@ -543,13 +645,13 @@ fn lan_rules(ev: &Evidence, out: &mut Vec<Cause>) {
     }
 
     if !ev.is_wifi() {
-        out.push(Cause::new("cable_or_router", Confidence::Likely, i18n::ev_wired()));
+        out.push(Cause::new(Code::CableOrRouter, Confidence::Likely, i18n::ev_wired()));
     }
 }
 
 fn isp_rules(event: &Event, history: &[Event], out: &mut Vec<Cause>) {
     let long = event.duration_s().is_some_and(|d| d > 120.0);
-    let code = if long { "isp_sustained" } else { "isp_brief" };
+    let code = if long { Code::IspSustained } else { Code::IspBrief };
     let conf = if long { Confidence::Likely } else { Confidence::Possible };
     out.push(Cause::new(code, conf, i18n::ev_isp(event.duration_s())));
 
@@ -557,27 +659,27 @@ fn isp_rules(event: &Event, history: &[Event], out: &mut Vec<Cause>) {
     // and a single one is not.
     let similar = history.iter().filter(|e| e.scope == "isp").count();
     if similar >= 3 {
-        out.push(Cause::new("isp_pattern", Confidence::Likely, i18n::ev_isp_pattern(similar)));
+        out.push(Cause::new(Code::IspPattern, Confidence::Likely, i18n::ev_isp_pattern(similar)));
     }
 }
 
 fn dns_rules(ev: &Evidence, out: &mut Vec<Cause>) {
     if ev.dns_is_router_only {
         out.push(
-            Cause::new("dns_router_only", Confidence::Likely, i18n::ev_dns_router_only())
+            Cause::new(Code::DnsRouterOnly, Confidence::Likely, i18n::ev_dns_router_only())
                 .with_fix("fast_dns"),
         );
     } else if ev.dns_is_own_resolver {
         // The user's own resolver stalled. Pointing them at 1.1.1.1 would
         // "fix" it by switching off whatever they run it for.
         out.push(Cause::new(
-            "dns_own_resolver",
+            Code::DnsOwnResolver,
             Confidence::Likely,
             i18n::ev_dns_own_resolver(&ev.dns_error),
         ));
     } else {
         out.push(
-            Cause::new("dns_resolver", Confidence::Likely, i18n::ev_dns_error(&ev.dns_error))
+            Cause::new(Code::DnsResolver, Confidence::Likely, i18n::ev_dns_error(&ev.dns_error))
                 .with_fix("fast_dns"),
         );
     }
@@ -589,7 +691,7 @@ fn degraded_rules(ev: &Evidence, out: &mut Vec<Cause>) {
         // is saturation on this side of it, not a problem further out.
         if to > from * 3.0 && to > 30.0 {
             out.push(Cause::new(
-                "local_saturation",
+                Code::LocalSaturation,
                 Confidence::Likely,
                 i18n::ev_latency_climb(from, to),
             ));
@@ -598,13 +700,21 @@ fn degraded_rules(ev: &Evidence, out: &mut Vec<Cause>) {
 
     if let Some((from, to)) = ev.rate_trend() {
         if from > 0 && to * 2 <= from {
-            out.push(Cause::new("rate_collapse", Confidence::Likely, i18n::ev_rate_drop(from, to)));
+            out.push(Cause::new(
+                Code::RateCollapse,
+                Confidence::Likely,
+                i18n::ev_rate_drop(from, to),
+            ));
         }
     }
 
     if let Some((from, to)) = ev.rssi_trend() {
         if from - to >= 8 {
-            out.push(Cause::new("signal_fade", Confidence::Likely, i18n::ev_rssi_fade(from, to)));
+            out.push(Cause::new(
+                Code::SignalFade,
+                Confidence::Likely,
+                i18n::ev_rssi_fade(from, to),
+            ));
         }
     }
 }
@@ -622,7 +732,7 @@ fn recurrence(event: &Event, history: &[Event], out: &mut Vec<Cause>) {
 
     if matching >= 3 && matching * 2 >= same.len() {
         out.push(Cause::new(
-            "time_pattern",
+            Code::TimePattern,
             Confidence::Likely,
             i18n::ev_time_pattern(matching, this_hour),
         ));
@@ -722,7 +832,7 @@ mod tests {
         ];
         let causes =
             analyse(&o.row, Evidence::from_context(&o.ctx).as_ref(), &[], &[], &[], &router);
-        let codes: Vec<&str> = causes.iter().map(|c| c.code).collect();
+        let codes: Vec<&str> = causes.iter().map(|c| c.code.key()).collect();
         assert!(codes.contains(&"router_wan_down"), "{codes:?}");
         assert!(!codes.contains(&"router_restarted"), "{codes:?}");
         assert!(!codes.contains(&"wan_new_ip"), "{codes:?}");
@@ -737,7 +847,7 @@ mod tests {
             [reading(990.0, "Connected", 50_000, "a"), reading(1_320.0, "Connected", 60, "b")];
         let causes =
             analyse(&o.row, Evidence::from_context(&o.ctx).as_ref(), &[], &[], &[], &router);
-        let codes: Vec<&str> = causes.iter().map(|c| c.code).collect();
+        let codes: Vec<&str> = causes.iter().map(|c| c.code.key()).collect();
         assert!(codes.contains(&"router_restarted"), "{codes:?}");
         assert!(codes.contains(&"wan_new_ip"), "{codes:?}");
     }
@@ -754,7 +864,7 @@ mod tests {
         assert!(causes.iter().any(|c| c.code == "router_wan_up"));
         // No readings at all: not "connected", nothing.
         let none = analyse(&o.row, Evidence::from_context(&o.ctx).as_ref(), &[], &[], &[], &[]);
-        assert!(none.iter().all(|c| !c.code.starts_with("router") && c.code != "wan_new_ip"));
+        assert!(none.iter().all(|c| !c.code.key().starts_with("router") && c.code != "wan_new_ip"));
     }
 
     #[test]
@@ -853,7 +963,7 @@ mod tests {
         // 2.4 GHz and the signal was good. That is a suspicion, and the title
         // must not state crowding as a fact.
         assert_eq!(c.confidence, Confidence::Possible);
-        let title = i18n::cause_title("airtime_24ghz");
+        let title = i18n::cause_title(Code::Airtime24ghz);
         assert!(!title.contains("crowded") && !title.contains("zatłoczony"), "{title}");
     }
 
@@ -903,6 +1013,31 @@ mod tests {
         assert!(!verdicts(&event("lan", ctx.clone(), 40.0), &[], &failed, &[])
             .iter()
             .any(|c| c.code == "after_tweak"));
+
+        // Nor one undone before the outage began, as game mode does when the
+        // game closes.
+        let at = |ts: f64, id: &str, action: &str| TweakLogRow {
+            ts,
+            tweak_id: id.into(),
+            action: action.into(),
+            result: "ok".into(),
+        };
+        let blamed = |log: &[TweakLogRow]| {
+            verdicts(&event("lan", ctx.clone(), 40.0), &[], log, &[])
+                .iter()
+                .any(|c| c.code == "after_tweak")
+        };
+        assert!(!blamed(&[at(700.0, "mtu", "apply"), at(900.0, "mtu", "revert")]));
+        // Undoing a different change leaves this one in place.
+        assert!(blamed(&[at(700.0, "mtu", "apply"), at(900.0, "nagle", "revert")]));
+        // Applied again after the undo: in place when it broke.
+        assert!(blamed(&[
+            at(600.0, "mtu", "apply"),
+            at(700.0, "mtu", "revert"),
+            at(800.0, "mtu", "apply"),
+        ]));
+        // Undone only after the outage began: it was still there when it did.
+        assert!(blamed(&[at(700.0, "mtu", "apply"), at(1_010.0, "mtu", "revert")]));
     }
 
     #[test]
@@ -1114,5 +1249,32 @@ mod tests {
             !causes.iter().any(|c| c.code == "no_evidence"),
             "there was evidence; it just did not come from this app"
         );
+    }
+
+    /// That a title and advice exist for every code, the compiler checks: the
+    /// `match` in i18n has no catch-all. What it cannot check is that none of
+    /// them is empty, in either language. Read as pairs, so no test has to
+    /// switch the app's language under the others running beside it.
+    #[test]
+    fn every_cause_has_words_in_both_languages() {
+        assert!(Code::ALL.len() >= 38, "ALL is built from the list, so it cannot lose one");
+        for &code in Code::ALL {
+            let key = code.key();
+            let (title_en, title_pl) = i18n::cause_title_pair(code);
+            let (advice_en, advice_pl) = i18n::cause_advice_pair(code);
+            for (what, text) in [
+                ("English title", title_en),
+                ("Polish title", title_pl),
+                ("English advice", advice_en),
+                ("Polish advice", advice_pl),
+            ] {
+                assert!(!text.trim().is_empty(), "{key}: {what} is empty");
+                assert_ne!(text, key, "{key}: {what} is the code itself");
+            }
+        }
+        let mut keys: Vec<&str> = Code::ALL.iter().map(|c| c.key()).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), Code::ALL.len(), "two causes share a key");
     }
 }

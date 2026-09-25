@@ -603,7 +603,10 @@ mod tests {
 
         assert!(text.contains("router answers"), "{text}");
         assert!(text.contains(&i18n::rep_unwatched(12.0)), "the unwatched seconds: {text}");
-        assert!(text.contains(&i18n::cause_title("isp_brief")), "the cause: {text}");
+        assert!(
+            text.contains(&i18n::cause_title(crate::cause::Code::IspBrief)),
+            "the cause: {text}"
+        );
         assert!(text.contains("10001") && text.contains("Name=WiFi"), "the log line: {text}");
         assert!(text.contains("100.64.7.1"), "the path as it was then: {text}");
         assert!(text.contains("20 of 30") || text.contains("20 z 30"), "the minute before: {text}");

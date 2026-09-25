@@ -140,10 +140,12 @@ pub fn analyse(ticks: Vec<Tick>, planned_s: usize, edge_local: bool, cancelled: 
     let edge_seg = if edge_local { Segment::Lan } else { Segment::Isp };
 
     let classify = |t: &Tick| -> Option<(Trouble, Segment, Option<f64>)> {
-        // Loss is charged to the first link that shows it. The edge is only
-        // believed when the far end lost the same second: routers drop pings
-        // addressed to themselves long before they drop traffic.
-        if gw_med.is_some() && t.gw.is_none() {
+        // Loss is charged to the first link that shows it. The router and the
+        // edge are only believed when the far end lost the same second:
+        // routers drop pings addressed to themselves long before they drop
+        // traffic. A router that skipped a reply while the internet answered
+        // through it used to be charged as a drop in the house.
+        if gw_med.is_some() && t.gw.is_none() && t.net.is_none() {
             return Some((Trouble::Loss, Segment::Lan, None));
         }
         if net_med.is_some() && t.net.is_none() {
@@ -399,6 +401,18 @@ mod tests {
         let (seg, share, n) = r.culprit().unwrap();
         assert_eq!((seg, n), (Segment::Isp, 3));
         assert!((share - 0.75).abs() < 1e-9, "{share}");
+    }
+
+    #[test]
+    fn a_router_skipping_its_own_pings_while_traffic_passes_is_not_a_drop() {
+        // Seconds in a row where the router did not answer but the internet
+        // did, through it: the router rate-limits pings to itself.
+        let skipped = Tick { gw: None, ..ok() };
+        let r = run(with(60, &[(10, skipped), (11, skipped), (12, skipped), (40, skipped)]));
+        assert!(r.episodes.is_empty(), "{:?}", r.episodes);
+        assert_eq!(r.culprit(), None);
+        // Its missing replies still count against the router's own figures.
+        assert!(r.gw.as_ref().is_some_and(|s| s.loss_pct > 0.0));
     }
 
     #[test]

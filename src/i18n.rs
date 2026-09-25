@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use crate::cause::Code;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Lang {
     En,
@@ -3843,121 +3845,155 @@ fn pick(en: &str, pl: &str) -> String {
 }
 
 /// Headline for a cause code produced by `crate::cause`.
-pub fn cause_title(code: &str) -> String {
-    let (en, pl) = match code {
-        "after_tweak" => {
-            ("A change applied just before this", "Zmiana zastosowana tuż przed awarią")
-        }
-        "adapter_powered_down" => {
-            ("Windows put the Wi-Fi card to sleep", "Windows uśpił kartę Wi-Fi")
-        }
-        "adapter_power_plan" => {
-            ("The power plan may be parking the radio", "Plan zasilania może wyłączać radio")
-        }
-        "out_of_range" => ("Out of range of the access point", "Poza zasięgiem access pointa"),
-        "adapter_or_driver" => {
-            ("The adapter disappeared: driver or hardware", "Karta zniknęła: sterownik albo sprzęt")
-        }
-        "roaming" => ("Handover to another access point", "Przełączenie na inny access point"),
-        "signal_fade" => ("The signal faded away", "Sygnał stopniowo zanikał"),
-        "airtime_24ghz" => (
-            "Strong signal on 2.4 GHz, and it dropped anyway",
-            "Mocny sygnał w paśmie 2,4 GHz, a łącze i tak padło",
-        ),
-        "router_side" => (
-            "The radio was fine, the router side was not",
-            "Radio było w porządku, problem po stronie routera",
-        ),
-        "weak_signal" => {
-            ("Weak signal at the moment of the drop", "Słaby sygnał w chwili zerwania")
-        }
-        "marginal_link" => ("The link was marginal", "Łącze było na granicy"),
-        "cable_or_router" => ("Cable or router, not Wi-Fi", "Kabel albo router, nie Wi-Fi"),
-        "isp_sustained" => ("A sustained outage at the provider", "Dłuższa awaria u dostawcy"),
-        "isp_brief" => ("A brief drop on the WAN side", "Krótki zryw po stronie WAN"),
-        "isp_pattern" => ("The provider drops repeatedly", "Dostawca zrywa regularnie"),
-        "dns_router_only" => ("The router is the only resolver", "Router jest jedynym resolverem"),
-        "dns_resolver" => ("The resolver did not answer", "Resolver nie odpowiedział"),
-        "local_saturation" => {
-            ("The link to the router was saturated", "Łącze do routera było wysycone")
-        }
-        "rate_collapse" => ("The Wi-Fi rate collapsed", "Prędkość Wi-Fi załamała się"),
-        "time_pattern" => ("It happens at the same hour", "Zdarza się o tej samej godzinie"),
-        "no_evidence" => ("No evidence was recorded", "Nie zapisano dowodów"),
-        "unclear" => ("No single cause stands out", "Żadna przyczyna się nie wyróżnia"),
-
-        // Read out of the Windows event log rather than inferred from probes.
-        "log_sleep" => ("The machine was asleep", "Komputer spał"),
-        "log_resume" => (
-            "The connection was still coming back from sleep",
-            "Połączenie wracało jeszcze po uśpieniu",
-        ),
-        "log_driver_fault" => {
-            ("The adapter driver logged an error", "Sterownik karty zapisał błąd")
-        }
-        "log_wlan_inactivity" => {
-            ("The access point dropped an idle card", "Access point odrzucił bezczynną kartę")
-        }
-        "log_wlan_auth" => (
-            "Authentication with the access point failed",
-            "Uwierzytelnianie z access pointem nie powiodło się",
-        ),
-        "log_wlan_ap_rejected" => {
-            ("The access point turned the card away", "Access point odmówił karcie")
-        }
-        "log_wlan_deauth" => {
-            ("Windows recorded the wireless disconnect", "Windows zapisał rozłączenie Wi-Fi")
-        }
-        "log_dhcp" => ("The DHCP lease failed", "Dzierżawa DHCP nie powiodła się"),
-        "log_duplicate_ip" => {
-            ("Another device has the same address", "Inne urządzenie ma ten sam adres")
-        }
-        "log_link_down" => {
-            ("Windows saw the interface go down", "Windows zobaczył wyłączenie interfejsu")
-        }
-        "log_clean_isp" => {
-            ("Nothing went wrong on this machine", "Po stronie tego komputera nic się nie zepsuło")
-        }
-        other => return other.to_string(),
-    };
+pub fn cause_title(code: Code) -> String {
+    let (en, pl) = cause_title_pair(code);
     pick(en, pl)
 }
 
+/// [`cause_title`] in both languages, English first. Exhaustive: a cause
+/// with no words here does not compile.
+pub(crate) fn cause_title_pair(code: Code) -> (&'static str, &'static str) {
+    match code {
+        Code::AfterTweak => {
+            ("A change applied just before this", "Zmiana zastosowana tuż przed awarią")
+        }
+        Code::AdapterPoweredDown => {
+            ("Windows put the Wi-Fi card to sleep", "Windows uśpił kartę Wi-Fi")
+        }
+        Code::AdapterPowerPlan => {
+            ("The power plan may be parking the radio", "Plan zasilania może wyłączać radio")
+        }
+        Code::OutOfRange => ("Out of range of the access point", "Poza zasięgiem access pointa"),
+        Code::AdapterOrDriver => {
+            ("The adapter disappeared: driver or hardware", "Karta zniknęła: sterownik albo sprzęt")
+        }
+        Code::Roaming => ("Handover to another access point", "Przełączenie na inny access point"),
+        Code::SignalFade => ("The signal faded away", "Sygnał stopniowo zanikał"),
+        Code::Airtime24ghz => (
+            "Strong signal on 2.4 GHz, and it dropped anyway",
+            "Mocny sygnał w paśmie 2,4 GHz, a łącze i tak padło",
+        ),
+        Code::RouterSide => (
+            "The radio was fine, the router side was not",
+            "Radio było w porządku, problem po stronie routera",
+        ),
+        Code::WeakSignal => {
+            ("Weak signal at the moment of the drop", "Słaby sygnał w chwili zerwania")
+        }
+        Code::MarginalLink => ("The link was marginal", "Łącze było na granicy"),
+        Code::CableOrRouter => ("Cable or router, not Wi-Fi", "Kabel albo router, nie Wi-Fi"),
+        Code::IspSustained => ("A sustained outage at the provider", "Dłuższa awaria u dostawcy"),
+        Code::IspBrief => ("A brief drop on the WAN side", "Krótki zryw po stronie WAN"),
+        Code::IspPattern => ("The provider drops repeatedly", "Dostawca zrywa regularnie"),
+        Code::DnsRouterOnly => {
+            ("The router is the only resolver", "Router jest jedynym resolverem")
+        }
+        Code::DnsResolver => ("The resolver did not answer", "Resolver nie odpowiedział"),
+        Code::DnsOwnResolver => {
+            ("Your own DNS server did not answer", "Twój własny serwer DNS nie odpowiedział")
+        }
+        Code::LocalSaturation => {
+            ("The link to the router was saturated", "Łącze do routera było wysycone")
+        }
+        Code::RateCollapse => ("The Wi-Fi rate collapsed", "Prędkość Wi-Fi załamała się"),
+        Code::TimePattern => ("It happens at the same hour", "Zdarza się o tej samej godzinie"),
+        Code::NoEvidence => ("No evidence was recorded", "Nie zapisano dowodów"),
+        Code::Unclear => ("No single cause stands out", "Żadna przyczyna się nie wyróżnia"),
+
+        // Read out of the Windows event log rather than inferred from probes.
+        Code::LogSleep => ("The machine was asleep", "Komputer spał"),
+        Code::LogResume => (
+            "The connection was still coming back from sleep",
+            "Połączenie wracało jeszcze po uśpieniu",
+        ),
+        Code::LogDriverFault => {
+            ("The adapter driver logged an error", "Sterownik karty zapisał błąd")
+        }
+        Code::LogWlanInactivity => {
+            ("The access point dropped an idle card", "Access point odrzucił bezczynną kartę")
+        }
+        Code::LogWlanAuth => (
+            "Authentication with the access point failed",
+            "Uwierzytelnianie z access pointem nie powiodło się",
+        ),
+        Code::LogWlanApRejected => {
+            ("The access point turned the card away", "Access point odmówił karcie")
+        }
+        Code::LogWlanDeauth => {
+            ("Windows recorded the wireless disconnect", "Windows zapisał rozłączenie Wi-Fi")
+        }
+        Code::LogDhcp => ("The DHCP lease failed", "Dzierżawa DHCP nie powiodła się"),
+        Code::LogDuplicateIp => {
+            ("Another device has the same address", "Inne urządzenie ma ten sam adres")
+        }
+        Code::LogLinkDown => {
+            ("Windows saw the interface go down", "Windows zobaczył wyłączenie interfejsu")
+        }
+        Code::LogCleanIsp => {
+            ("Nothing went wrong on this machine", "Po stronie tego komputera nic się nie zepsuło")
+        }
+
+        // The router's own account, read over UPnP.
+        Code::RouterWanDown => (
+            "The router reported its internet connection down",
+            "Router zgłosił, że jego połączenie z internetem nie działa",
+        ),
+        Code::RouterRestarted => (
+            "The router or its connection to the provider restarted",
+            "Router albo jego połączenie z dostawcą uruchomiło się ponownie",
+        ),
+        Code::WanNewIp => (
+            "The router came back with a new public address",
+            "Router wrócił z nowym adresem publicznym",
+        ),
+        Code::RouterWanUp => (
+            "The router saw its internet connection up throughout",
+            "Router cały czas widział swoje połączenie z internetem",
+        ),
+    }
+}
+
 /// What to do about a cause. Concrete enough to act on without a second tab.
-pub fn cause_advice(code: &str) -> String {
-    let (en, pl) = match code {
-        "after_tweak" => (
+pub fn cause_advice(code: Code) -> String {
+    let (en, pl) = cause_advice_pair(code);
+    pick(en, pl)
+}
+
+/// [`cause_advice`] in both languages, English first.
+pub(crate) fn cause_advice_pair(code: Code) -> (&'static str, &'static str) {
+    match code {
+        Code::AfterTweak => (
             "Revert that change and check whether the outages stop. If they do, it was the cause; \
              if not, apply it again and check the next cause.",
             "Cofnij tę zmianę i sprawdź, czy awarie ustaną. Jeśli tak, to ona była przyczyną; \
              jeśli nie, zastosuj ją ponownie i sprawdź kolejną przyczynę.",
         ),
-        "adapter_powered_down" => (
+        Code::AdapterPoweredDown => (
             "Turn off power saving for the network card (Optimise tab). This is the most common \
              cause of a connection that drops while the computer is idle.",
             "Wyłącz oszczędzanie energii karty sieciowej (zakładka Optymalizacja). To najczęstsza \
              przyczyna zrywania połączenia, gdy komputer jest bezczynny.",
         ),
-        "adapter_power_plan" => (
+        Code::AdapterPowerPlan => (
             "Set the wireless adapter to maximum performance in the power plan (Optimise tab). \
              This is separate from the card's own power saving; both need to be off.",
             "Ustaw kartę bezprzewodową na maksymalną wydajność w planie zasilania (zakładka \
              Optymalizacja). To ustawienie niezależne od oszczędzania energii samej karty; oba \
              muszą być wyłączone.",
         ),
-        "out_of_range" | "weak_signal" => (
+        Code::OutOfRange | Code::WeakSignal => (
             "Move closer to the access point or add another one. Below about -75 dBm the \
              connection is unreliable regardless of the router.",
             "Przenieś komputer bliżej access pointa albo dodaj kolejny. Poniżej ok. -75 dBm \
              połączenie jest niestabilne niezależnie od routera.",
         ),
-        "adapter_or_driver" => (
+        Code::AdapterOrDriver => (
             "Reinstall or roll back the network card driver. If the card also disappears from \
              Device Manager, the hardware or its power supply is the likely cause.",
             "Przeinstaluj albo przywróć poprzedni sterownik karty sieciowej. Jeśli karta znika \
              też z Menedżera urządzeń, prawdopodobną przyczyną jest sprzęt lub jego zasilanie.",
         ),
-        "roaming" => (
+        Code::Roaming => (
             "The connection broke while switching to another access point. With several access \
              points, give each its own channel and similar transmit power. With a single one, the \
              router switched band by itself.",
@@ -3965,13 +4001,13 @@ pub fn cause_advice(code: &str) -> String {
              pointach ustaw każdemu osobny kanał i podobną moc nadawania. Przy jednym oznacza to, \
              że router sam zmienił pasmo.",
         ),
-        "signal_fade" => (
+        Code::SignalFade => (
             "The signal was falling steadily before the outage: the computer moved away or \
              something blocked the signal. Not a router fault.",
             "Sygnał spadał stopniowo przed awarią: komputer się oddalił albo coś zasłoniło \
              sygnał. To nie jest usterka routera.",
         ),
-        "airtime_24ghz" => (
+        Code::Airtime24ghz => (
             "2.4 GHz is shared with neighbouring networks, microwaves and Bluetooth. Switch to 5 \
              GHz if the card supports it, or set channel 1, 6 or 11. The Wi-Fi channel check in \
              Optimise shows which is least crowded.",
@@ -3980,7 +4016,7 @@ pub fn cause_advice(code: &str) -> String {
              Sprawdzenie kanałów w zakładce Optymalizacja pokazuje, który jest najmniej \
              zatłoczony.",
         ),
-        "router_side" => (
+        Code::RouterSide => (
             "The signal was strong and steady until the outage, so the Wi-Fi link was fine. Check \
              whether other devices lose the connection at the same time, make sure the router is \
              not hot or covered, and restart it.",
@@ -3988,7 +4024,7 @@ pub fn cause_advice(code: &str) -> String {
              Sprawdź, czy inne urządzenia tracą połączenie w tym samym czasie, czy router nie \
              jest gorący albo zasłonięty, i uruchom go ponownie.",
         ),
-        "marginal_link" => (
+        Code::MarginalLink => (
             "The connection broke on a weak signal and came back on a much stronger one, so it \
              works at the edge of range. Small changes (a closed door, a person nearby) can keep \
              breaking it.",
@@ -3996,82 +4032,92 @@ pub fn cause_advice(code: &str) -> String {
              działa na granicy zasięgu. Drobne zmiany (zamknięte drzwi, osoba w pobliżu) mogą je \
              dalej zrywać.",
         ),
-        "cable_or_router" => (
+        Code::CableOrRouter => (
             "Wired connection: check the cable and the port first. Reconnect both ends, then try \
              another port and another cable. A faulty cable looks the same as a faulty router.",
             "Połączenie kablowe: najpierw sprawdź kabel i port. Podłącz ponownie oba końce, potem \
              spróbuj innego portu i innego kabla. Uszkodzony kabel wygląda tak samo jak \
              uszkodzony router.",
         ),
-        "isp_sustained" | "isp_brief" => (
+        Code::IspSustained | Code::IspBrief => (
             "The router kept answering, so the break was past it, on the provider side. Nothing \
              on this computer will fix it; save a report as evidence for the provider.",
             "Router cały czas odpowiadał, więc przerwa była za nim, po stronie dostawcy. Nic na \
              tym komputerze tego nie naprawi; zapisz raport jako dowód dla dostawcy.",
         ),
-        "isp_pattern" => (
+        Code::IspPattern => (
             "Repeated WAN outages point to a fault in the service. Save a report with the dates \
              and times of the outages and send it to the provider.",
             "Powtarzające się awarie WAN wskazują na usterkę usługi. Zapisz raport z datami i \
              godzinami awarii i przekaż go dostawcy.",
         ),
-        "dns_router_only" => (
+        Code::DnsRouterOnly => (
             "All name lookups go through the router, so when its DNS stalls, the internet looks \
              down even though it is reachable. Add a public DNS server (Optimise tab).",
             "Wszystkie zapytania o nazwy przechodzą przez router, więc gdy jego DNS się zatnie, \
              internet wygląda na niedostępny, choć działa. Dodaj publiczny serwer DNS (zakładka \
              Optymalizacja).",
         ),
-        "dns_resolver" => (
+        Code::DnsResolver => (
             "Names stopped resolving while the network was up. Switching to a public DNS server \
              tells a DNS fault from a connection fault.",
             "Nazwy przestały się rozwiązywać, choć sieć działała. Przełączenie na publiczny \
              serwer DNS pozwala odróżnić awarię DNS od awarii połączenia.",
         ),
-        "local_saturation" => (
+        Code::DnsOwnResolver => (
+            "Names are answered by a DNS server on your own network (a Pi-hole, AdGuard Home or a \
+             NAS), and it stopped answering while the line was up. Check that the device is on \
+             and its DNS service is running. Replacing it with a public DNS server would work \
+             around the outage by switching off what you run it for.",
+            "Nazwy rozwiązuje serwer DNS w Twojej własnej sieci (Pi-hole, AdGuard Home albo NAS) \
+             i przestał odpowiadać, choć łącze działało. Sprawdź, czy urządzenie jest włączone i \
+             czy działa na nim usługa DNS. Zamiana go na publiczny serwer DNS obeszłaby awarię, \
+             ale wyłączyłaby to, do czego go używasz.",
+        ),
+        Code::LocalSaturation => (
             "Latency to the router rose before the quality dropped, so something on this side \
              filled the connection: an upload, a backup or an update. The speed test confirms it.",
             "Opóźnienie do routera rosło, zanim spadła jakość, więc coś po tej stronie zapchało \
              łącze: wysyłanie, kopia zapasowa albo aktualizacja. Test prędkości pozwala to \
              potwierdzić.",
         ),
-        "rate_collapse" => (
+        Code::RateCollapse => (
             "The Wi-Fi link rate dropped before the quality did. The cause is interference or \
              distance, not router performance, so a faster router will not help.",
             "Prędkość łącza Wi-Fi spadła, zanim spadła jakość. Przyczyną są zakłócenia albo \
              odległość, a nie wydajność routera, więc szybszy router nie pomoże.",
         ),
-        "time_pattern" => (
+        Code::TimePattern => (
             "Outages at the same hour usually follow a schedule: a device nearby, the router's \
              nightly restart, a backup job, or provider maintenance.",
             "Awarie o tej samej godzinie zwykle wynikają z harmonogramu: urządzenie w pobliżu, \
              nocny restart routera, kopia zapasowa albo prace serwisowe dostawcy.",
         ),
-        "no_evidence" => (
+        Code::NoEvidence => (
             "This entry comes from a version that did not record the state before an outage. New \
              entries include it.",
             "Ten wpis pochodzi z wersji, która nie zapisywała stanu przed awarią. Nowe wpisy go \
              zawierają.",
         ),
-        "unclear" => (
+        Code::Unclear => (
             "The recorded state does not point to a single cause. If the outage repeats, compare \
              the lead-up charts to see what changes each time.",
             "Zapisany stan nie wskazuje jednej przyczyny. Jeśli awaria się powtórzy, porównaj \
              wykresy przebiegu, żeby zobaczyć, co zmienia się za każdym razem.",
         ),
-        "log_sleep" => (
+        Code::LogSleep => (
             "The network was fine: the computer went to sleep. If it should not sleep, change the \
              sleep time in the Windows power settings.",
             "Sieć działała poprawnie: komputer przeszedł w stan uśpienia. Jeśli nie powinien się \
              usypiać, zmień czas uśpienia w ustawieniach zasilania Windows.",
         ),
-        "log_resume" => (
+        Code::LogResume => (
             "After waking, the card has to reconnect and renew its address, which takes a few \
              seconds. An outage of that length is normal behaviour, not a fault.",
             "Po wybudzeniu karta musi ponownie się połączyć i odnowić adres, co trwa kilka \
              sekund. Przerwa tej długości to normalne działanie, a nie usterka.",
         ),
-        "log_driver_fault" => (
+        Code::LogDriverFault => (
             "The network card driver reported an error, so this is not a router or provider \
              problem. Update the driver from the manufacturer's site (Windows Update often has an \
              older one). Resetting the network stack (Optimise tab) clears the leftover state.",
@@ -4079,7 +4125,7 @@ pub fn cause_advice(code: &str) -> String {
              dostawcy. Zaktualizuj sterownik ze strony producenta (Windows Update często ma \
              starszy). Reset stosu sieciowego (zakładka Optymalizacja) czyści pozostały stan.",
         ),
-        "log_wlan_inactivity" => (
+        Code::LogWlanInactivity => (
             "The access point disconnected the card after Windows put it into power saving. This \
              is a typical cause of drops while the computer is idle. Turn off power saving for \
              the card and in the power plan (Optimise tab).",
@@ -4087,14 +4133,14 @@ pub fn cause_advice(code: &str) -> String {
              typowa przyczyna zrywania połączenia, gdy komputer jest bezczynny. Wyłącz \
              oszczędzanie energii karty i w planie zasilania (zakładka Optymalizacja).",
         ),
-        "log_wlan_auth" => (
+        Code::LogWlanAuth => (
             "The card reached the access point but was not let in. The cause is the password or \
              credentials, not the signal. Forget the network in Windows and connect again.",
             "Karta dotarła do access pointa, ale nie została wpuszczona. Przyczyną jest hasło \
              albo dane logowania, a nie sygnał. Usuń sieć w Windows (Zapomnij) i połącz się \
              ponownie.",
         ),
-        "log_wlan_ap_rejected" => (
+        Code::LogWlanApRejected => (
             "The access point refused the connection, usually because it has no free slots. Check \
              how many devices are connected to it and whether a guest network or mesh node takes \
              up slots.",
@@ -4102,7 +4148,7 @@ pub fn cause_advice(code: &str) -> String {
              urządzeń jest do niego podłączonych i czy sieć gościnna albo węzeł mesh nie zajmuje \
              miejsc.",
         ),
-        "log_wlan_deauth" => (
+        Code::LogWlanDeauth => (
             "Windows recorded the disconnect, so the connection was actually broken, not just \
              silent. Quote the reason code above when reporting it to the router manufacturer or \
              the provider.",
@@ -4110,27 +4156,27 @@ pub fn cause_advice(code: &str) -> String {
              ucichło. Podaj kod przyczyny powyżej, zgłaszając problem producentowi routera albo \
              dostawcy.",
         ),
-        "log_dhcp" => (
+        Code::LogDhcp => (
             "The card could not get an address from the router, and without one nothing works \
              regardless of the signal. Restart the router or check that its DHCP address pool is \
              not full.",
             "Karta nie otrzymała adresu od routera, a bez niego nic nie działa niezależnie od \
              sygnału. Uruchom router ponownie albo sprawdź, czy pula adresów DHCP nie jest pełna.",
         ),
-        "log_duplicate_ip" => (
+        Code::LogDuplicateIp => (
             "Two devices use the same IP address. Usually one has a static address set inside the \
              router's DHCP range. Move it outside the range or use a DHCP reservation instead.",
             "Dwa urządzenia używają tego samego adresu IP. Zwykle jedno ma adres statyczny \
              ustawiony w zakresie DHCP routera. Przenieś go poza ten zakres albo użyj rezerwacji \
              DHCP.",
         ),
-        "log_link_down" => (
+        Code::LogLinkDown => (
             "Windows recorded the network interface going down. The cause is on this computer: \
              the card, its driver, the cable or power saving, not past the router.",
             "Windows zapisał wyłączenie interfejsu sieciowego. Przyczyna leży po stronie \
              komputera: karta, sterownik, kabel albo oszczędzanie energii, a nie za routerem.",
         ),
-        "log_clean_isp" => (
+        Code::LogCleanIsp => (
             "The Windows log shows no fault on this computer in this period: no sleep, driver \
              error, disconnect or DHCP failure. With the router answering throughout, the outage \
              was past your equipment, on the provider side.",
@@ -4138,9 +4184,43 @@ pub fn cause_advice(code: &str) -> String {
              uśpienia, błędu sterownika, rozłączenia i awarii DHCP. Router cały czas odpowiadał, \
              więc awaria była poza Twoim sprzętem, po stronie dostawcy.",
         ),
-        _ => ("", ""),
-    };
-    pick(en, pl)
+        Code::RouterWanDown => (
+            "The router lost its link to the provider, so the break was between the router and \
+             the provider: the line, the modem or the provider's network. Check the router's WAN \
+             or DSL light, and give the provider the times from the report.",
+            "Router stracił połączenie z dostawcą, więc przerwa była między routerem a dostawcą: \
+             na linii, w modemie albo w sieci dostawcy. Sprawdź diodę WAN lub DSL na routerze i \
+             przekaż dostawcy godziny z raportu.",
+        ),
+        Code::RouterRestarted => (
+            "The router's uptime counter started again. Some routers count their connection to the \
+             provider, which restarts when the provider drops it, so this alone does not say who \
+             restarted it. If nobody unplugged the router and it happens again, check whether it \
+             is overheating or its power supply is failing, and ask the provider whether they \
+             drop the session.",
+            "Licznik czasu działania routera ruszył od nowa. Część routerów liczy czas połączenia \
+             z dostawcą, który zaczyna się od nowa, gdy dostawca je zerwie, więc sam licznik nie \
+             mówi, kto je zrestartował. Jeśli nikt nie odłączał routera, a to się powtarza, \
+             sprawdź, czy się nie przegrzewa i czy zasilacz jest sprawny, i zapytaj dostawcę, czy \
+             zrywa sesję.",
+        ),
+        Code::WanNewIp => (
+            "A new public address means the session with the provider was set up again. That \
+             happens when the router restarts or the provider ends the session; the report's \
+             times let the provider check which.",
+            "Nowy adres publiczny oznacza, że sesja u dostawcy została nawiązana od nowa. Dzieje \
+             się tak po restarcie routera albo gdy dostawca kończy sesję; godziny z raportu \
+             pozwalają dostawcy sprawdzić, które z nich.",
+        ),
+        Code::RouterWanUp => (
+            "The router considered its connection to the provider up for the whole outage, so \
+             the break was past it, in the provider's network or beyond. Restarting the router \
+             will not fix this; save a report as evidence for the provider.",
+            "Router przez całą awarię uznawał połączenie z dostawcą za aktywne, więc przerwa była \
+             dalej, w sieci dostawcy albo za nią. Restart routera tego nie naprawi; zapisz raport \
+             jako dowód dla dostawcy.",
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
