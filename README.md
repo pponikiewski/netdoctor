@@ -178,28 +178,34 @@ one English label that would silently fail everywhere else.
 
 ## Tabs
 
-- **Live** — opens with the answer in plain words: whether the internet
-  works, a picture of the chain *this computer → router → internet* with each
-  link marked working, slow, broken or unknown, what to do about it, and one
-  button for the next step (run a check, or save a report for the provider
-  when the break is on their side). A link that was not measured is drawn as
-  unknown, never as fine. Under it the headline figures, then the latency plot
-  over a window you pick, from a minute to an hour,
+- **Live**: opens with the answer in plain words: whether the internet
+  works and since when (as far as the outage log and the watch so far can
+  back it), a picture of the chain *this computer → router → internet* with
+  each link marked working, slow, broken or unknown, and what to do about it.
+  Every control sits on that panel: the one next step (open Diagnose, or save
+  a report for the provider when the break is on their side), pausing, and
+  the report. A link that was not measured is drawn as unknown, never as
+  fine. Under it the headline figures, then the latency plot
+  over a range you pick, from a minute to an hour,
   read from the database rather than from memory so it covers more than this
   run. Pointing at it reads out every probe at that instant, with no delay
   before the figures appear. Clicking a name in the legend takes that line
-  away, which is the only way to follow one of four crossing lines. *Trend*
+  away, which is the only way to follow one of four crossing lines. *Smooth*
   swaps each slice's range for its average: the first is what happened, the
   second is the shape of an hour, and neither is readable as the other.
-  A break in a line is a break in the measurement, and it is only marked in
-  red when probes were sent and went unanswered — time the app spent closed
-  leaves a gap and no accusation. Nothing on this tab expects you to already
+  A red line through the chart means every internet target went silent at
+  once; a reply lost by one target alone is a dot on the chart's floor, and a
+  spike shared by every target a triangle on its top edge, so a noisy five
+  minutes no longer hides the lines behind a fence of marks. Time the app
+  spent closed leaves a gap and no accusation. Nothing on this tab expects you to already
   know what it means: each legend entry carries its target's current reading
   and explains which stretch of the path it measures, the threshold lines are
   labelled with their values, and the key under the plot keeps its prose
   behind a single question mark instead of running along the row. The
   headline figures (latency, jitter, loss, DNS, time since the last outage)
-  each say on hover what they are and what a bad value there points at.
+  each say on hover what they are and what a bad value there points at. The
+  outage card counts breaks only, with periods of poor quality beside them,
+  and opens the outage history when clicked.
   Folded away under *Technical details*: the path hop by hop with a verdict on
   which one the trouble starts at, and traceroute.
 - **Diagnose**: nine checks: adapter and medium (on a cable, also whether
@@ -480,7 +486,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-385 tests, covering the failure-blame logic, the statistics, the registry layer,
+387 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

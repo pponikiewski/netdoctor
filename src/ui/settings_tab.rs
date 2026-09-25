@@ -57,12 +57,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     // The bar goes in first so the pages get what is left above it.
     egui::TopBottomPanel::bottom("settings_actions")
+        .show_separator_line(false)
         .frame(
             egui::Frame::none()
                 .fill(BG)
                 .inner_margin(egui::Margin { top: S_MD, ..Default::default() }),
         )
-        .show_inside(ui, |ui| action_bar(app, ui));
+        .show_inside(ui, |ui| {
+            egui::Frame::none()
+                .fill(super::BG2)
+                .rounding(6.0)
+                .inner_margin(egui::Margin::symmetric(S_LG, S_SM + 2.0))
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    action_bar(app, ui);
+                });
+        });
 
     if super::is_narrow(ui) {
         ui.horizontal_wrapped(|ui| {
@@ -499,14 +509,18 @@ fn action_bar(app: &mut App, ui: &mut egui::Ui) {
     let save_key = ui.input_mut(|i| i.consume_shortcut(&shortcut));
 
     ui.horizontal(|ui| {
-        let (dot, text, colour) = if dirty {
-            (YELLOW, i18n::set_unsaved(), FG)
-        } else {
-            (GREEN, i18n::set_all_saved(), FG_DIM)
+        // A fresh message (saved, save failed, defaults loaded) stands in for
+        // the status while it lasts; the shell leaves it to this bar here.
+        let now = ui.input(|i| i.time);
+        let toast = app.toast.clone().filter(|(_, _, until)| now < *until);
+        let (dot, text, colour) = match &toast {
+            Some((text, c, _)) => (*c, text.as_str(), FG),
+            None if dirty => (YELLOW, i18n::set_unsaved(), FG),
+            None => (GREEN, i18n::set_all_saved(), FG_DIM),
         };
         super::status_dot(ui, dot, 4.0);
         ui.add_space(S_XS);
-        ui.label(egui::RichText::new(text).size(T_BODY).color(colour));
+        ui.add(egui::Label::new(egui::RichText::new(text).size(T_BODY).color(colour)).truncate());
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let save = button_ex(ui, i18n::set_btn_save(), Emphasis::Primary, dirty, 0.0)

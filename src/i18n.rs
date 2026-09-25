@@ -335,20 +335,20 @@ poprosisz.";
     // live tab
     // -----------------------------------------------------------------------
     live_roamed =>
-        "The card just roamed to a different access point.",
-        "Karta właśnie przełączyła się na inny access point.";
+        "Wi-Fi just switched to a different access point.",
+        "Wi-Fi przełączyło się właśnie na inny punkt dostępowy.";
     live_x_now => "now", "teraz";
     live_spike_explainer =>
-        "All the targets are reached over the same Wi-Fi link, the same router and the same \
-         uplink. A delay introduced anywhere on that shared stretch has to appear on all of them \
-         in the same sweep, so a spike on one target alone cannot have come from there — it is \
-         that one responder taking its time to answer a ping, which traffic passing through it \
-         never waits for. Only the marked sweeps say anything about your connection.",
-        "Wszystkie cele są osiągane przez to samo Wi-Fi, ten sam router i ten sam uplink. \
-         Opóźnienie powstałe gdziekolwiek na tym wspólnym odcinku musi pojawić się na wszystkich \
-         naraz, więc skok na jednym celu nie mógł stamtąd pochodzić — to ten jeden węzeł zwleka z \
-         odpowiedzią na pinga, na co ruch przez niego przechodzący nigdy nie czeka. Tylko \
-         oznaczone zamiatania mówią cokolwiek o Twoim łączu.";
+        "All the targets are reached over the same Wi-Fi, the same router and the same provider \
+         link. A delay anywhere on that shared stretch shows on all of them in the same round \
+         of pings, so a spike on one target alone did not come from there: it is that one \
+         server taking its time to answer a ping, which traffic passing through it never \
+         waits for. Only the marked spikes say anything about your connection.",
+        "Wszystkie cele są osiągane przez to samo Wi-Fi, ten sam router i to samo łącze dostawcy. \
+         Opóźnienie gdziekolwiek na tym wspólnym odcinku widać na wszystkich naraz, w tej samej \
+         serii pingów, więc skok na jednym celu nie pochodzi stamtąd: to ten jeden serwer \
+         zwleka z odpowiedzią na ping, a zwykły ruch przez niego na to nie czeka. Tylko \
+         oznaczone skoki mówią coś o Twoim łączu.";
     live_no_data => "no data", "brak danych";
 
     live_card_latency => "Latency", "Opóźnienie";
@@ -406,17 +406,17 @@ Whatever goes \
          tego celu. Na tej liczbie opiera się nagłówek.
 
 Co zginie, trzeba wysłać \
-         ponownie — dlatego procent czy dwa potrafią zaszkodzić bardziej niż wysokie opóźnienie. \
+         ponownie, dlatego procent czy dwa potrafią zaszkodzić bardziej niż wysokie opóźnienie. \
          Stała strata wskazuje na łącze; strata w krótkich seriach zwykle oznacza chwilowe \
          przeciążenie czegoś po drodze.";
     live_tip_router =>
-        "The trip to your own router and back — the first hop, and the only stretch of the path \
+        "The trip to your own router and back: the first hop, and the only stretch of the path \
          that is entirely yours.
 
 Over cable this sits well under a millisecond; over Wi-Fi a few \
          milliseconds is normal and tens of them mean interference or distance. If this number \
          is bad, every other number on this page is bad for the same reason.",
-        "Droga do własnego routera i z powrotem — pierwszy skok i jedyny odcinek trasy w całości \
+        "Droga do własnego routera i z powrotem: pierwszy skok i jedyny odcinek trasy w całości \
          Twój.
 
 Po kablu jest to grubo poniżej milisekundy; po Wi-Fi kilka milisekund jest \
@@ -432,24 +432,22 @@ It is paid once when \
         "Ile trwała zamiana nazwy w rodzaju example.com na adres.
 
 Płaci się to raz, przy otwieraniu \
-         strony, na której dawno nie byłeś, a nie przy każdym pakiecie — więc objawia się jako \
+         strony, na której dawno nie byłeś, a nie przy każdym pakiecie, więc objawia się jako \
          strona, która chwilę wisi, zanim zacznie się ładować, a nie jako wolne łącze. Wolny \
          resolver warto wymienić, robi to zakładka Optymalizacja.";
     live_tip_uptime =>
-        "An outage here means every target stopped answering at once, for long enough to count — \
-         not one lost packet.
+        "An outage is a break: the router, the provider or name lookups stopped answering for \
+         long enough to count, not one lost packet. Periods of poor quality, when the connection \
+         worked with loss or lag, are counted separately.\n\nThis is the figure to quote when \
+         reporting a fault. Click the card to open the outage history.",
+        "Awaria to przerwa: router, dostawca albo DNS przestały odpowiadać na tyle długo, żeby to \
+         liczyć, a nie pojedynczy zgubiony pakiet. Okresy słabej jakości, kiedy połączenie \
+         działało, ale ze stratami lub lagami, są liczone osobno.\n\nTę liczbę warto podać, \
+         zgłaszając awarię. Kliknij kartę, żeby otworzyć historię awarii.";
 
-This is the figure to quote when reporting a fault, because it is \
-         the one a provider cannot argue with.",
-        "Awaria oznacza tutaj, że wszystkie cele przestały odpowiadać naraz, na tyle długo, by to \
-         liczyć — a nie pojedynczy zgubiony pakiet.
-
-Tę liczbę warto podać przy zgłaszaniu awarii, \
-         bo z nią dostawca nie będzie dyskutował.";
-
-    live_btn_pause => "Pause monitor", "Wstrzymaj monitor";
-    live_btn_resume => "Resume monitor", "Wznów monitor";
-    live_btn_trace => "Traceroute to 1.1.1.1", "Traceroute do 1.1.1.1";
+    live_btn_pause => "Pause watching", "Wstrzymaj pomiar";
+    live_btn_resume => "Resume watching", "Wznów pomiar";
+    live_btn_trace => "Run traceroute", "Uruchom traceroute";
     live_btn_report => "Save report…", "Zapisz raport…";
     live_tracing => "Tracing route…", "Śledzenie trasy…";
     live_trace_note_1 =>
@@ -706,17 +704,17 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "A hop that shows loss while the hops behind it do not is rate-limiting its own replies, \
          not dropping your traffic. Only loss that continues to the end of the path is counted.",
         "Skok, który pokazuje stratę, podczas gdy skoki za nim nie, ogranicza tempo własnych \
-         odpowiedzi, a nie gubi twojego ruchu. Liczy się tylko strata, która trwa do końca \
+         odpowiedzi, a nie gubi Twojego ruchu. Liczy się tylko strata, która trwa do końca \
          ścieżki.";
     live_trace_heading => "Traceroute to 1.1.1.1", "Traceroute do 1.1.1.1";
     live_trace_empty =>
-        "Not run yet. It walks the whole route once, including the hops the \
-         continuous measurement on the left leaves out.",
-        "Jeszcze nieuruchomiony. Przechodzi całą trasę raz, także te skoki, \
-         które pomija ciągły pomiar po lewej.";
+        "Not run yet. It walks the whole route once, including the hops the continuous \
+         measurement leaves out.",
+        "Jeszcze nieuruchomiony. Przechodzi całą trasę raz, także te skoki, które pomija \
+         ciągły pomiar.";
     live_scale_ok => "good", "dobre";
-    live_range_label => "window", "okno";
-    live_smooth => "trend", "trend";
+    live_range_label => "range", "zakres";
+    live_smooth => "smooth", "wygładź";
     live_smooth_hint =>
         "Draw each slice's average instead of its range. Reads the shape of an hour; hides the \
          individual spikes, which the count below still reports.",
@@ -731,19 +729,19 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // the segment the fault is in.
     live_meaning_lan =>
         "Your own router, one hop away over Wi-Fi or cable.\n\nA high figure here is inside your \
-        home — Wi-Fi interference, distance from the router, or the router itself under load. \
+        home: Wi-Fi interference, distance from the router, or the router itself under load. \
         Nothing further out on the internet can cause it. Note that when this one climbs, every \
         other line climbs with it, because every packet passes through here first.",
         "Twój własny router, jeden skok przez Wi-Fi albo kabel.\n\nWysoka wartość tutaj oznacza \
-        problem u Ciebie w domu — zakłócenia Wi-Fi, odległość od routera albo obciążony router. \
+        problem u Ciebie w domu: zakłócenia Wi-Fi, odległość od routera albo obciążony router. \
         Nic dalej w internecie nie może tego powodować. Gdy ta linia rośnie, rosną też wszystkie \
         pozostałe, bo każdy pakiet przechodzi najpierw tędy.";
     live_meaning_isp =>
-        "The DNS server your provider handed you — the first machine outside your home.\n\nHigh \
+        "The DNS server your provider handed you, the first machine outside your home.\n\nHigh \
         here while the router is low means the delay starts on the provider's link. High here \
         while 1.1.1.1 and 8.8.8.8 stay low means only that one resolver is slow: it delays every \
         new site you open, and switching DNS on the Optimise tab takes it out of the path.",
-        "Serwer DNS podany przez Twojego dostawcę — pierwsza maszyna poza Twoim domem.\n\nWysoko \
+        "Serwer DNS podany przez Twojego dostawcę, pierwsza maszyna poza Twoim domem.\n\nWysoko \
         tutaj przy niskim routerze oznacza, że opóźnienie zaczyna się na łączu dostawcy. Wysoko \
         tutaj, gdy 1.1.1.1 i 8.8.8.8 są niskie, oznacza, że wolny jest sam ten resolver: opóźnia \
         każdą nowo otwieraną stronę, a zmiana DNS w zakładce Optymalizacja wyjmuje go ze \
@@ -760,7 +758,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         nie serwera. To cała droga: Twoje Wi-Fi, Twój router, Twój dostawca i sieć szkieletowa \
         za nimi. Wysoko tutaj przy niskim routerze oznacza, że wina leży poza Twoim \
         domem.\n\nWysoko na jednym z nich, gdy drugi jest w porządku, to gorszy moment tej \
-        jednej trasy — tego nie naprawisz.";
+        jednej trasy i tego nie naprawisz.";
     live_meaning_custom =>
         "A target you added yourself. It is measured the same way as the rest: the figure covers \
         the whole path to it, so compare it against 1.1.1.1 to tell the route apart from the \
@@ -774,10 +772,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     live_ms_explainer =>
         "A millisecond is a thousandth of a second. The figure is how long one small packet took \
         to travel there and back, so it is a round trip, not a one-way distance, and it is not \
-        about download speed at all — a fast connection can have poor latency and the other way \
+        about download speed at all: a fast connection can have poor latency and the other way \
         round. Under 30 ms is quick, video calls and games start to suffer past roughly 100 ms.",
         "Milisekunda to tysięczna część sekundy. Wartość mówi, ile mały pakiet leciał tam i z \
-        powrotem — to podróż w obie strony, nie odległość w jedną. Nie ma to nic wspólnego z \
+        powrotem, czyli podróż w obie strony, nie odległość w jedną. Nie ma to nic wspólnego z \
         prędkością pobierania: szybkie łącze może mieć kiepskie opóźnienie i odwrotnie. Poniżej \
         30 ms jest szybko, rozmowy wideo i gry zaczynają cierpieć powyżej mniej więcej 100 ms.";
 
@@ -790,7 +788,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     // The row had no name, so it read as loose text that happened to sit
     // under a chart rather than as the chart's key.
     live_key_heading => "Chart key", "Legenda wykresu";
-    live_key_lost => "lost packet", "zgubiony pakiet";
+    live_key_lost => "no reply from any target", "brak odpowiedzi od wszystkich celów";
+    live_key_lost_one => "lost by one target", "strata na jednym celu";
+    live_chart_title => "Latency over time", "Opóźnienie w czasie";
     live_key_spike => "spike on every target", "skok na wszystkich celach";
     live_key_bands => "thresholds", "progi";
     live_key_help => "what am I looking at?", "co tu widzę?";
@@ -1416,10 +1416,10 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     sum_slow_todo =>
         "Pages may load slowly and calls or games may stutter. Your router answers quickly, so \
          the trouble is past it: at your provider or further out on the internet. If it \
-         lasts, run a check to see more.",
+         lasts, run Diagnose to see more.",
         "Strony mogą ładować się wolno, a rozmowy i gry mogą się zacinać. Router odpowiada \
          szybko, więc kłopot jest za nim: u dostawcy albo dalej w internecie. Jeśli to \
-         potrwa, uruchom sprawdzenie, żeby zobaczyć więcej.";
+         potrwa, uruchom diagnostykę, żeby zobaczyć więcej.";
     sum_slow_local_todo =>
         "Pages may load slowly and calls or games may stutter. Even your router is answering \
          slowly, so the trouble is in your home: often another device downloading a lot, or \
@@ -1437,9 +1437,9 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Połączenie jest, ale strony nie dają się znaleźć po nazwie.";
     sum_dns_todo =>
         "The service that turns names like google.com into addresses (DNS) is not answering. \
-         Restarting the router often fixes it. The check shows which server is failing.",
+         Restarting the router often fixes it. Diagnose shows which server is failing.",
         "Usługa, która zamienia nazwy takie jak google.pl na adresy (DNS), nie odpowiada. \
-         Często pomaga ponowne uruchomienie routera. Sprawdzenie pokaże, który serwer zawodzi.";
+         Często pomaga ponowne uruchomienie routera. Diagnostyka pokaże, który serwer zawodzi.";
     sum_isp =>
         "No internet: your router works, but it has no connection to your provider.",
         "Brak internetu: router działa, ale nie ma połączenia z dostawcą.";
@@ -1470,15 +1470,15 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
         "Brak internetu: ten komputer nie jest połączony z żadną siecią.";
     sum_adapter_wifi_todo =>
         "Click the network icon in the corner of the screen and connect to your Wi-Fi again. \
-         If it keeps dropping, the check can tell why.",
+         If it keeps dropping, Diagnose can tell why.",
         "Kliknij ikonę sieci w rogu ekranu i połącz się ponownie ze swoim Wi-Fi. Jeśli \
-         połączenie wciąż się zrywa, sprawdzenie może powiedzieć dlaczego.";
+         połączenie wciąż się zrywa, diagnostyka powie dlaczego.";
     sum_adapter_cable_todo =>
         "Check that the network cable is plugged in at both ends. A cable that clicks into \
          place and a light next to the socket mean it is in.",
         "Sprawdź, czy kabel sieciowy jest wpięty z obu stron. Kabel, który wskoczył na \
          miejsce z kliknięciem, i lampka przy gnieździe oznaczają, że jest wpięty.";
-    sum_paused => "Watching is paused.", "Pilnowanie połączenia jest wstrzymane.";
+    sum_paused => "Watching is paused.", "Pomiar jest wstrzymany.";
     sum_paused_todo =>
         "While paused, NetDoctor records nothing, so a break now would go unnoticed.",
         "Podczas wstrzymania NetDoctor niczego nie zapisuje, więc przerwa w tym czasie \
@@ -1521,7 +1521,7 @@ Tę liczbę warto podać przy zgłaszaniu awarii, \
     sum_link_slow => "slow", "wolno";
     sum_link_broken => "broken", "przerwane";
     sum_link_unknown => "unknown", "nie wiadomo";
-    sum_btn_diagnose => "Run a check", "Uruchom sprawdzenie";
+    sum_btn_diagnose => "Open Diagnose", "Otwórz diagnostykę";
     sum_btn_report => "Save a report for my provider", "Zapisz raport dla dostawcy";
     live_details => "Technical details: the route hop by hop", "Szczegóły techniczne: trasa krok po kroku";
     word_signal_good => "good", "dobry";
@@ -2571,16 +2571,16 @@ pub fn rep_watched(watched: &str, window: &str) -> String {
 /// Under the jitter card: the window the verdict judged it over.
 pub fn live_card_jitter_window(window: &str) -> String {
     match current() {
-        Lang::En => format!("swing, last {window}"),
-        Lang::Pl => format!("wahania, ostatnie {window}"),
+        Lang::En => format!("swing over {window}"),
+        Lang::Pl => format!("zmienność w ciągu {window}"),
     }
 }
 
 /// Under the loss card: the window the verdict judged it over.
 pub fn live_card_loss_window(window: &str) -> String {
     match current() {
-        Lang::En => format!("last {window}"),
-        Lang::Pl => format!("ostatnie {window}"),
+        Lang::En => format!("over {window}"),
+        Lang::Pl => format!("w ciągu {window}"),
     }
 }
 
@@ -3455,7 +3455,7 @@ pub fn live_spike_counts(correlated: usize, single: usize) -> String {
             format!("{total} spikes: {correlated} shared, {single} single")
         }
         Lang::Pl => {
-            format!("skoki: {total} \u{2014} {correlated} wspólne, {single} pojedyncze")
+            format!("skoki: {total}, w tym {correlated} wspólne i {single} pojedyncze")
         }
     }
 }
@@ -3468,8 +3468,8 @@ pub fn live_spike_tally(correlated: usize, single: usize) -> String {
             correlated + single
         ),
         Lang::Pl => format!(
-            "Skoków w widoku: {}. {correlated} trafiło we wszystkie cele naraz i są prawdziwe; \
-             {single} trafiło w jeden cel, gdy reszta była normalna — te nie mówią nic o Twoim \
+            "Skoków w widoku: {}. {correlated} trafiło we wszystkie cele naraz i dotyczy łącza. \
+             {single} trafiło w jeden cel, gdy reszta była w normie, i nie mówi nic o Twoim \
              łączu.",
             correlated + single
         ),
@@ -4461,10 +4461,10 @@ pub fn path_owner(owner: crate::probe::path::Owner) -> &'static str {
 pub fn path_blame_loss(ttl: u32, addr: &str, loss: f64, owner: &str) -> String {
     match current() {
         Lang::En => {
-            format!("Loss starts at hop {ttl}, {addr} — {loss:.0}% and it carries ({owner}).")
+            format!("Loss starts at hop {ttl}, {addr}: {loss:.0}%, and it carries on to the end ({owner}).")
         }
         Lang::Pl => {
-            format!("Strata zaczyna się na skoku {ttl}, {addr} — {loss:.0}% i niesie się dalej ({owner}).")
+            format!("Strata zaczyna się na skoku {ttl}, {addr}: {loss:.0}% i trwa do końca trasy ({owner}).")
         }
     }
 }
@@ -4476,7 +4476,7 @@ pub fn path_blame_delay(ttl: u32, addr: &str, added: f64, owner: &str) -> String
             format!("Hop {ttl}, {addr} adds {added:.0} ms and everything behind it carries that delay ({owner}).")
         }
         Lang::Pl => {
-            format!("Skok {ttl}, {addr} dokłada {added:.0} ms i wszystko za nim niesie to opóźnienie ({owner}).")
+            format!("Skok {ttl}, {addr} dokłada {added:.0} ms, a wszystko za nim ma to opóźnienie ({owner}).")
         }
     }
 }
@@ -4491,7 +4491,7 @@ pub fn path_blame_advice(mine: Option<bool>) -> &'static str {
              provider's: quote the hop number, the address and this loss figure to them."
         }
         (Lang::Pl, None) => {
-            "Ten skok ma prywatny adres za twoim routerem. To albo twój drugi router (węzeł mesh, \
+            "Ten skok ma prywatny adres za Twoim routerem. To albo Twój drugi router (węzeł mesh, \
              modem dostawcy w trybie routera), albo sieć samego dostawcy, która często ma \
              prywatne adresy. Jeśli nie masz drugiego routera, to sieć dostawcy: podaj mu numer \
              skoku, adres i tę wartość straty."
@@ -4506,12 +4506,12 @@ pub fn path_blame_advice(mine: Option<bool>) -> &'static str {
         }
         (Lang::En, Some(false)) => {
             "That hop is past your equipment. Quote the hop number, the address and this loss \
-             figure to the provider — it is the one form of evidence a support line cannot \
+             figure to the provider: it is the one form of evidence a support line cannot \
              answer with \"restart the router\"."
         }
         (Lang::Pl, Some(false)) => {
-            "Ten skok jest za twoim sprzętem. Podaj dostawcy numer skoku, adres i tę wartość \
-             straty — to jedyny rodzaj dowodu, na który infolinia nie odpowie „zrestartuj \
+            "Ten skok jest za Twoim sprzętem. Podaj dostawcy numer skoku, adres i tę wartość \
+             straty. To jedyny rodzaj dowodu, na który infolinia nie odpowie „zrestartuj \
              router”."
         }
     }
@@ -4796,13 +4796,7 @@ pub fn hist_summary(count: usize, where_text: &str) -> String {
     match current() {
         Lang::En => format!("{count} outage(s) in the last 24 hours, mostly {where_text}."),
         Lang::Pl => {
-            // Polish counts in three forms: 1 awaria, 2-4 awarie (but 12-14
-            // awarii), everything else awarii.
-            let noun = match (count % 10, count % 100) {
-                _ if count == 1 => "awaria",
-                (2..=4, r) if !(12..=14).contains(&r) => "awarie",
-                _ => "awarii",
-            };
+            let noun = pl_form(count, "awaria", "awarie", "awarii");
             format!("{count} {noun} w ciągu ostatnich 24 godzin, głównie {where_text}.")
         }
     }
@@ -4845,15 +4839,62 @@ pub fn live_uninterrupted_short() -> &'static str {
     }
 }
 
-/// Sub-line under the "since last outage" card.
-pub fn live_outages_24h(count: usize) -> String {
-    match current() {
-        Lang::En => format!("{count} in 24 h"),
-        Lang::Pl => format!("{count} w ciągu 24 h"),
+/// Polish counts in three forms: 1 awaria, 2-4 awarie (but 12-14 awarii),
+/// everything else awarii.
+fn pl_form(n: usize, one: &'static str, few: &'static str, many: &'static str) -> &'static str {
+    match (n % 10, n % 100) {
+        _ if n == 1 => one,
+        (2..=4, r) if !(12..=14).contains(&r) => few,
+        _ => many,
     }
 }
 
-/// Where the report file landed.
+/// Sub-line under the outage card: the day's breaks, and the periods of poor
+/// quality apart from them.
+pub fn live_breaks_sub(breaks: usize, slow: usize) -> String {
+    let en_s = |n: usize| if n == 1 { "" } else { "s" };
+    match current() {
+        Lang::En => match (breaks, slow) {
+            (0, m) => format!("no outages, {m} slow spell{}", en_s(m)),
+            (n, 0) => format!("{n} outage{} in 24 h", en_s(n)),
+            (n, m) => format!("{n} outage{}, {m} slow spell{} in 24 h", en_s(n), en_s(m)),
+        },
+        Lang::Pl => {
+            let awaria = |n| pl_form(n, "awaria", "awarie", "awarii");
+            let slow_w = |n| pl_form(n, "spowolnienie", "spowolnienia", "spowolnień");
+            match (breaks, slow) {
+                (0, m) => format!("bez awarii, {m} {}", slow_w(m)),
+                (n, 0) => format!("{n} {} w 24 h", awaria(n)),
+                (n, m) => format!("{n} {}, {m} {} w 24 h", awaria(n), slow_w(m)),
+            }
+        }
+    }
+}
+
+/// Under the summary's headline: a problem, and how long it has lasted.
+pub fn sum_since_ongoing(at: &str, long: &str) -> String {
+    match current() {
+        Lang::En => format!("Since {at} ({long})"),
+        Lang::Pl => format!("Trwa od {at} ({long})"),
+    }
+}
+
+/// Healthy since the last recorded problem ended.
+pub fn sum_since_clean(at: &str, long: &str) -> String {
+    match current() {
+        Lang::En => format!("No trouble since {at} ({long})"),
+        Lang::Pl => format!("Bez zakłóceń od {at} ({long})"),
+    }
+}
+
+/// Healthy for all of the watch so far, which is all that can be said.
+pub fn sum_since_watched(at: &str, long: &str) -> String {
+    match current() {
+        Lang::En => format!("No trouble since NetDoctor started watching at {at} ({long})"),
+        Lang::Pl => format!("Bez zakłóceń, odkąd NetDoctor pilnuje łącza: od {at} ({long})"),
+    }
+}
+
 /// The footer of a PDF report page.
 pub fn pdf_page(n: usize, total: usize) -> String {
     match current() {
@@ -4874,6 +4915,7 @@ pub fn rep_slow_heading(count: usize) -> String {
     }
 }
 
+/// Where the report file landed.
 pub fn live_report_saved(path: &str) -> String {
     match current() {
         Lang::En => format!("Report saved to {path}"),

@@ -1,12 +1,14 @@
 //! Live tab: the latency plot and the headline numbers.
 
 use eframe::egui;
-use egui_plot::{HLine, Line, Plot, PlotBounds, PlotPoint, PlotPoints, Text, VLine};
+use egui_plot::{
+    HLine, Line, MarkerShape, Plot, PlotBounds, PlotPoint, PlotPoints, Points, Text, VLine,
+};
 
 use super::{
-    btn_width, button, button_ex, figure, is_narrow, latency_colour, App, Emphasis, Job, ACCENT,
-    BG2, BG3, FG, FG_DIM, GREEN, LINE, RED, SERIES_COLOURS, S_MD, S_SM, S_XS, T_BODY, T_HEAD,
-    T_META, T_MICRO, YELLOW,
+    btn_width, button_ex, figure, is_narrow, latency_colour, App, Emphasis, Job, ACCENT, BG2, BG3,
+    FG, FG_DIM, GREEN, LINE, RED, SERIES_COLOURS, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META,
+    T_MICRO, YELLOW,
 };
 use crate::i18n;
 use crate::probe::icmp;
@@ -47,13 +49,21 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
         ROUTER_OK_MS,
     );
     let note = monitor_note(app);
-    super::summary::show(app, ui, &summary, &note);
+    let since = match seen {
+        crate::monitor::Seen::Verdict(status, _) => app.card_cache.as_ref().and_then(|c| {
+            super::summary::since(
+                status == crate::monitor::Status::Ok,
+                &c.day,
+                app.last.observed_from,
+            )
+        }),
+        _ => None,
+    };
+    super::summary::show(app, ui, &summary, &note, since);
     ui.add_space(S_MD);
     cards(app, ui);
     ui.add_space(S_MD);
     plot(app, ui);
-    ui.add_space(S_MD);
-    controls(app, ui);
     ui.add_space(S_MD);
 
     // The route is the part that needs a network engineer to read, so it is
@@ -456,12 +466,43 @@ fn reduce(raw: &[(f64, Option<f64>)], breaks: &[f64], range: f64, smooth: bool) 
     (out, losses, outages)
 }
 
+/// Loss every internet target shares, from each series' own lost moments.
+///
+/// A lost reply from one target is that target: 8.8.8.8 skipping a ping
+/// says nothing about the line. Drawn as a red line through the whole chart,
+/// the one-target losses of five minutes made a fence of red nobody could
+/// read past. Only a moment every internet target lost together is the line
+/// itself, and that one keeps the full-height mark. The router is left out
+/// of the vote, because an outage at the provider is exactly the router
+/// still answering while everything past it is silent. `tol` is how far
+/// apart two series' marks may be and still be the same moment.
+fn shared_losses(series: &[(&[f64], bool)], tol: f64) -> Vec<f64> {
+    let internet: Vec<&[f64]> = series.iter().filter(|(_, i)| *i).map(|(s, _)| *s).collect();
+    let voters: Vec<&[f64]> =
+        if internet.is_empty() { series.iter().map(|(s, _)| *s).collect() } else { internet };
+    let Some((first, rest)) = voters.split_first() else { return Vec::new() };
+    first
+        .iter()
+        .copied()
+        .filter(|t| rest.iter().all(|s| s.iter().any(|u| (u - t).abs() <= tol)))
+        .collect()
+}
+
 fn plot(app: &mut App, ui: &mut egui::Ui) {
     refresh(app);
+    egui::Frame::none()
+        .fill(super::BG2)
+        .rounding(6.0)
+        .inner_margin(egui::Margin::same(S_MD + S_XS))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            range_controls(app, ui);
+            ui.add_space(S_SM);
+            plot_body(app, ui);
+        });
+}
 
-    range_controls(app, ui);
-    ui.add_space(S_SM);
-
+fn plot_body(app: &mut App, ui: &mut egui::Ui) {
     let Some(cache) = app.chart_cache.as_ref() else {
         return;
     };
@@ -491,6 +532,24 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
     let (y_top, above) = scale(&visible, &app.settings);
     let x_min = cache.oldest - newest;
     let x_min = if x_min < -1.0 { x_min } else { -app.chart_range_s };
+
+    // Half a sweep or one drawn slice, whichever is wider: two targets' marks
+    // for the same sweep never land on exactly the same timestamp.
+    let tol = (app.chart_range_s / TARGET_POINTS as f64)
+        .max(app.settings.probe_interval_ms as f64 / 2000.0)
+        .max(0.5);
+    let votes: Vec<(&[f64], bool)> = visible
+        .iter()
+        .map(|(s, _)| (s.outages.as_slice(), s.scope == crate::settings::Scope::Internet))
+        .collect();
+    let shared = shared_losses(&votes, tol);
+    // Everything else anyone lost, one mark each, along the floor.
+    let single: Vec<[f64; 2]> = visible
+        .iter()
+        .flat_map(|(s, _)| s.outages.iter().chain(&s.losses))
+        .filter(|t| !shared.iter().any(|u| (*t - u).abs() <= tol))
+        .map(|t| [t - newest, y_top * 0.025])
+        .collect();
 
     // The plot is the tab's centrepiece, so it takes a share of whatever
     // height there is rather than a fixed 280 px that is most of a laptop
@@ -598,10 +657,35 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
 
-                    for (ts, n) in &spikes.correlated {
-                        let strength = if *n >= visible.len().max(2) { 0.42 } else { 0.22 };
-                        plot_ui
-                            .vline(VLine::new(ts - newest).color(YELLOW.linear_multiply(strength)));
+                    // Spikes shared by every target, as marks along the top
+                    // edge. A full-height line each was the other half of
+                    // the fence: thirty of them in five minutes and the
+                    // latency lines went behind a curtain of yellow.
+                    let spike_marks: Vec<[f64; 2]> = spikes
+                        .correlated
+                        .iter()
+                        .map(|(ts, _)| [ts - newest, y_top * 0.965])
+                        .collect();
+                    if !spike_marks.is_empty() {
+                        plot_ui.points(
+                            Points::new(PlotPoints::from(spike_marks))
+                                .shape(MarkerShape::Down)
+                                .filled(true)
+                                .radius(4.0)
+                                .color(YELLOW.linear_multiply(0.85)),
+                        );
+                    }
+                    if !single.is_empty() {
+                        plot_ui.points(
+                            Points::new(PlotPoints::from(single.clone()))
+                                .shape(MarkerShape::Circle)
+                                .filled(true)
+                                .radius(2.2)
+                                .color(RED.linear_multiply(0.7)),
+                        );
+                    }
+                    for ts in &shared {
+                        plot_ui.vline(VLine::new(ts - newest).color(RED.linear_multiply(0.6)));
                     }
 
                     let hovered = plot_ui.pointer_coordinate();
@@ -610,13 +694,6 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
                     }
 
                     for (s, colour) in &visible {
-                        for ts in &s.losses {
-                            plot_ui.vline(VLine::new(ts - newest).color(RED.linear_multiply(0.30)));
-                        }
-                        for ts in &s.outages {
-                            plot_ui.vline(VLine::new(ts - newest).color(RED.linear_multiply(0.6)));
-                        }
-
                         // Split at gaps so a lost packet breaks the line instead of
                         // drawing a straight segment across the outage.
                         let mut run: Vec<[f64; 2]> = Vec::new();
@@ -711,10 +788,7 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
             let reading = match sample {
                 Some(s) => match (&s.rtt_ms, &s.error) {
                     (Some(rtt), _) => (
-                        format!(
-                            "{rtt:.2} ms \u{2014} {}",
-                            super::latency_verdict(*rtt, &app.settings)
-                        ),
+                        format!("{rtt:.2} ms, {}", super::latency_verdict(*rtt, &app.settings)),
                         latency_colour(*rtt, &app.settings),
                     ),
                     (None, Some(err)) => (err.clone(), RED),
@@ -761,21 +835,10 @@ fn plot(app: &mut App, ui: &mut egui::Ui) {
 
 /// How far back the chart looks, and whether it draws the range or the trend.
 fn range_controls(app: &mut App, ui: &mut egui::Ui) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = S_XS;
-        ui.label(egui::RichText::new(i18n::live_range_label()).size(T_MICRO).color(FG_DIM));
-        ui.add_space(S_XS);
-        for secs in RANGES {
-            let on = (app.chart_range_s - secs).abs() < 0.5;
-            if ui
-                .selectable_label(on, egui::RichText::new(i18n::range_name(secs)).size(T_META))
-                .clicked()
-            {
-                app.chart_range_s = secs;
-            }
-        }
-
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(i18n::live_chart_title()).size(T_HEAD).strong().color(FG));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = S_XS;
             // Two readings of the same data. The envelope is what happened;
             // the trend is what it averaged out to. An hour of a jittery link
             // is unreadable as the former and meaningless as the latter, so
@@ -790,6 +853,21 @@ fn range_controls(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.chart_smooth = !app.chart_smooth;
             }
+            ui.add_space(S_SM);
+            ui.separator();
+            ui.add_space(S_SM);
+            // Right to left, so the longest window is laid first.
+            for secs in RANGES.iter().rev().copied() {
+                let on = (app.chart_range_s - secs).abs() < 0.5;
+                if ui
+                    .selectable_label(on, egui::RichText::new(i18n::range_name(secs)).size(T_META))
+                    .clicked()
+                {
+                    app.chart_range_s = secs;
+                }
+            }
+            ui.add_space(S_XS);
+            ui.label(egui::RichText::new(i18n::live_range_label()).size(T_META).color(FG_DIM));
         });
     });
 }
@@ -909,6 +987,8 @@ pub struct CardCache {
     stats: Vec<Stat>,
     /// The last minute of pings to the router, for the summary.
     router: crate::store::Stats,
+    /// The last day's log, for the outage card and the summary's "since".
+    day: Vec<crate::store::Event>,
 }
 
 /// How long a set of cards is allowed to stand before it is read again.
@@ -925,6 +1005,8 @@ pub struct Stat {
     sub: String,
     colour: egui::Color32,
     tip: &'static str,
+    /// The card opens this tab when clicked.
+    opens: Option<super::Tab>,
 }
 
 /// The first hop is on a different scale from the rest of the path.
@@ -992,10 +1074,12 @@ fn refresh_cards(app: &mut App) {
         None => true,
     };
     if stale {
+        let day = app.store.events_since(24.0 * 3600.0);
         app.card_cache = Some(CardCache {
             built_at: now,
-            stats: collect_stats(app),
+            stats: collect_stats(app, &day),
             router: app.store.stats("gateway", 60.0),
+            day,
         });
     }
 }
@@ -1034,6 +1118,7 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
         2
     };
 
+    let mut open: Option<super::Tab> = None;
     for (row, chunk) in stats.chunks(per_row).enumerate() {
         if row > 0 {
             ui.add_space(S_SM);
@@ -1044,7 +1129,7 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
                 // the column at the point a window is squeezed to nothing,
                 // and a negative width reaches egui's layout sanity check.
                 let width = (cols[i].available_width() - 2.0 * S_MD).max(0.0);
-                super::stat_card_ex(
+                let resp = super::stat_card_ex(
                     &mut cols[i],
                     stat.label,
                     &stat.value,
@@ -1053,8 +1138,17 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
                     Some(width),
                     stat.tip,
                 );
+                if let Some(tab) = stat.opens {
+                    let resp = resp.interact(egui::Sense::click());
+                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        open = Some(tab);
+                    }
+                }
             }
         });
+    }
+    if let Some(tab) = open {
+        app.tab = tab;
     }
 }
 
@@ -1065,7 +1159,7 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
 /// the line doing the explaining.
 const CARD_MIN: f32 = 172.0;
 
-fn collect_stats(app: &App) -> Vec<Stat> {
+fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
     let s = &app.settings;
     let cf = app.store.stats("cloudflare", 300.0);
     let gw = app.store.stats("gateway", 300.0);
@@ -1078,13 +1172,15 @@ fn collect_stats(app: &App) -> Vec<Stat> {
             sub: i18n::live_minmax(cf.min.unwrap_or(0.0), cf.max.unwrap_or(0.0)),
             colour: latency_colour(avg, s),
             tip: i18n::live_tip_latency(),
+            opens: None,
         },
         None => Stat {
             label: i18n::live_card_latency(),
-            value: "—".into(),
+            value: "-".into(),
             sub: i18n::live_card_latency_sub_none().into(),
             colour: FG_DIM,
             tip: i18n::live_tip_latency(),
+            opens: None,
         },
     });
 
@@ -1100,13 +1196,15 @@ fn collect_stats(app: &App) -> Vec<Stat> {
             sub: i18n::live_card_jitter_window(&window),
             colour: quality_colour(j, s.jitter_good_ms, s.jitter_ok_ms),
             tip: i18n::live_tip_jitter(),
+            opens: None,
         },
         None => Stat {
             label: i18n::live_card_jitter(),
-            value: "—".into(),
+            value: "-".into(),
             sub: i18n::live_card_too_few().into(),
             colour: FG_DIM,
             tip: i18n::live_tip_jitter(),
+            opens: None,
         },
     });
 
@@ -1117,13 +1215,15 @@ fn collect_stats(app: &App) -> Vec<Stat> {
             sub: i18n::live_card_loss_window(&window),
             colour: quality_colour(loss, s.loss_good_pct, s.loss_ok_pct),
             tip: i18n::live_tip_loss(),
+            opens: None,
         },
         None => Stat {
             label: i18n::live_card_loss(),
-            value: "—".into(),
+            value: "-".into(),
             sub: i18n::live_card_too_few().into(),
             colour: FG_DIM,
             tip: i18n::live_tip_loss(),
+            opens: None,
         },
     });
 
@@ -1134,13 +1234,15 @@ fn collect_stats(app: &App) -> Vec<Stat> {
             sub: i18n::live_router_loss(gw.loss_pct),
             colour: band(avg, ROUTER_GOOD_MS, ROUTER_OK_MS),
             tip: i18n::live_tip_router(),
+            opens: None,
         },
         None => Stat {
             label: i18n::live_card_router(),
-            value: "—".into(),
+            value: "-".into(),
             sub: i18n::live_card_router_none().into(),
             colour: RED,
             tip: i18n::live_tip_router(),
+            opens: None,
         },
     });
 
@@ -1151,6 +1253,7 @@ fn collect_stats(app: &App) -> Vec<Stat> {
             sub: app.last.dns_error.clone(),
             colour: RED,
             tip: i18n::live_tip_dns(),
+            opens: None,
         }
     } else {
         match app.last.dns_ms {
@@ -1160,19 +1263,25 @@ fn collect_stats(app: &App) -> Vec<Stat> {
                 sub: i18n::live_card_dns_sub().into(),
                 colour: band(ms, DNS_GOOD_MS, DNS_OK_MS),
                 tip: i18n::live_tip_dns(),
+                opens: None,
             },
             None => Stat {
                 label: i18n::live_card_dns(),
-                value: "—".into(),
+                value: "-".into(),
                 sub: i18n::live_card_dns_sub().into(),
                 colour: FG_DIM,
                 tip: i18n::live_tip_dns(),
+                opens: None,
             },
         }
     });
 
-    let events = app.store.events_since(24.0 * 3600.0);
-    out.push(if events.is_empty() {
+    // Breaks only. A period of poor quality is logged too, and counted in
+    // with them it made "53 outages in 24 h" of a day with three.
+    let slow_key = crate::monitor::Status::Degraded.key();
+    let breaks: Vec<&crate::store::Event> = day.iter().filter(|e| e.kind != slow_key).collect();
+    let slow = day.len() - breaks.len();
+    out.push(if breaks.is_empty() {
         // No outage logged is only "24 h+" if we were actually watching for
         // 24 h without a break. On a fresh install the history is minutes
         // old, and on a machine that slept for a week the week is not
@@ -1189,23 +1298,26 @@ fn collect_stats(app: &App) -> Vec<Stat> {
             } else {
                 i18n::live_uninterrupted_for(observed)
             },
-            sub: if full_day {
+            sub: if slow > 0 {
+                i18n::live_breaks_sub(0, slow)
+            } else if full_day {
                 i18n::live_card_uninterrupted_sub().into()
             } else {
                 i18n::live_uninterrupted_short().into()
             },
             colour: GREEN,
             tip: i18n::live_tip_uptime(),
+            opens: Some(super::Tab::History),
         }
     } else {
-        let last = events.iter().map(|e| e.ts_start).fold(f64::NEG_INFINITY, f64::max);
-        let mins = (crate::store::now() - last) / 60.0;
+        let last = breaks.iter().map(|e| e.ts_start).fold(f64::NEG_INFINITY, f64::max);
         Stat {
             label: i18n::live_card_since_outage(),
-            value: format!("{mins:.0} min"),
-            sub: i18n::live_outages_24h(events.len()),
-            colour: if events.len() < 3 { YELLOW } else { RED },
+            value: i18n::span(crate::store::now() - last),
+            sub: i18n::live_breaks_sub(breaks.len(), slow),
+            colour: if breaks.len() < 3 { YELLOW } else { RED },
             tip: i18n::live_tip_uptime(),
+            opens: Some(super::Tab::History),
         }
     });
 
@@ -1298,7 +1410,7 @@ fn path_table(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(super::figure(
                     match hop.avg_ms {
                         Some(v) => format!("{v:.0} ms"),
-                        None => "—".into(),
+                        None => "-".into(),
                     },
                     T_META,
                     latency_colour(hop.avg_ms.unwrap_or(0.0), &app.settings),
@@ -1346,32 +1458,6 @@ fn trace_button(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-fn controls(app: &mut App, ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        // A toggle whose two labels are different lengths resizes itself on
-        // every click, and everything to its right slides with it. Reserve the
-        // width of the longer label and the row holds still.
-        let paused = app.monitor.is_paused();
-        let toggle_label = if paused { i18n::live_btn_resume() } else { i18n::live_btn_pause() };
-        let toggle_w =
-            btn_width(ui, i18n::live_btn_pause()).max(btn_width(ui, i18n::live_btn_resume()));
-        if button_ex(ui, toggle_label, Emphasis::Secondary, true, toggle_w).clicked() {
-            app.monitor.set_paused(!paused);
-        }
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // An export. It should be findable and not much more — it is not
-            // what anyone opened the live tab to do.
-            // The last day, as it always was; the History tab picks a range.
-            let label =
-                if app.report_busy { i18n::hist_report_saving() } else { i18n::live_btn_report() };
-            if button(ui, label, Emphasis::Ghost).clicked() {
-                super::report::save_in_background(app, super::report::Range::Day);
-            }
-        });
-    });
-}
-
 /// The one-off route dump, beside the continuous hop table rather than under
 /// the buttons.
 ///
@@ -1391,15 +1477,13 @@ fn trace_panel(app: &App, ui: &mut egui::Ui) {
     egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_MD)).show(
         ui,
         |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("trace_output")
-                .max_height(260.0)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for line in &app.trace {
-                        ui.label(egui::RichText::new(line).monospace().size(T_META).color(ACCENT));
-                    }
-                });
+            // Every line, with no scroll of its own. Inside the page's
+            // scroll a second one collapsed to three lines and hid the rest
+            // of the route; twenty hops and two notes fit as they are.
+            ui.set_min_width(ui.available_width());
+            for line in &app.trace {
+                ui.label(egui::RichText::new(line).monospace().size(T_META).color(ACCENT));
+            }
         },
     );
 }
@@ -1420,11 +1504,29 @@ fn key_row(ui: &mut egui::Ui) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = S_XS + 2.0;
 
-        swatch(ui, RED);
+        // Each key drawn as the mark it names: a line through the chart, a
+        // dot on its floor, a triangle on its top edge.
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(6.0, T_META), egui::Sense::hover());
+        ui.painter().vline(
+            rect.center().x,
+            rect.y_range(),
+            egui::Stroke::new(2.0_f32, RED.linear_multiply(0.8)),
+        );
         micro(ui, i18n::live_key_lost());
         ui.add_space(S_SM);
 
-        swatch(ui, YELLOW);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(6.0, T_META), egui::Sense::hover());
+        ui.painter().circle_filled(rect.center(), 2.5, RED.linear_multiply(0.8));
+        micro(ui, i18n::live_key_lost_one());
+        ui.add_space(S_SM);
+
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, T_META), egui::Sense::hover());
+        let c = rect.center();
+        ui.painter().add(egui::Shape::convex_polygon(
+            vec![c + egui::vec2(-4.0, -3.0), c + egui::vec2(4.0, -3.0), c + egui::vec2(0.0, 3.5)],
+            YELLOW,
+            egui::Stroke::NONE,
+        ));
         micro(ui, i18n::live_key_spike());
         ui.add_space(S_SM);
 
@@ -1626,6 +1728,22 @@ mod tests {
         let (raw, breaks) = mark_recording_gaps(points);
         let (_, _, outages) = reduce(&raw, &breaks, 3_600.0, false);
         assert_eq!(outages, vec![1_400.0], "the probe after the break failed, and says so");
+    }
+
+    #[test]
+    fn only_loss_every_internet_target_shares_is_drawn_as_the_line() {
+        let router: &[f64] = &[];
+        let cloudflare: &[f64] = &[10.0, 50.0, 90.0];
+        let google: &[f64] = &[10.3, 70.0, 89.8];
+        // 8.8.8.8 alone at 70 and 1.1.1.1 alone at 50: those targets, not the line.
+        let got = shared_losses(&[(router, false), (cloudflare, true), (google, true)], 0.5);
+        assert_eq!(got, vec![10.0, 90.0]);
+        // The router answering does not veto a provider outage.
+        assert_eq!(shared_losses(&[(router, false), (cloudflare, true)], 0.5), cloudflare);
+        // With no internet target on the chart, every line votes.
+        let only_router: &[f64] = &[5.0];
+        assert_eq!(shared_losses(&[(only_router, false)], 0.5), vec![5.0]);
+        assert!(shared_losses(&[], 0.5).is_empty());
     }
 
     #[test]

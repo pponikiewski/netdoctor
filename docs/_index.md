@@ -32,6 +32,7 @@ zgadywanka.
 
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
+- 2026-09-25: zakładka Na żywo przebudowana: od kiedy trwa stan, przyciski w podsumowaniu, czytelny wykres, awarie bez spowolnień.
 - 2026-09-25: rodzaj łącza i prędkość z umowy w Ustawieniach, czytelne wyjaśnienie AI z wykonalnymi krokami, raport jako PDF z datą w wybranym folderze.
 - 2026-09-25: Diagnostyka wykrywa VPN i proxy, porównuje wynik z poprzednim skanem i ma wygląd spójny z resztą aplikacji.
 - 2026-09-25: Test prędkości: pobieranie i wysyłanie w Mbps jak w speedteście, wypełniane na żywo w trakcie testu, obok oceny opóźnienia pod obciążeniem.

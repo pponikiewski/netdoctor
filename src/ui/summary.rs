@@ -9,8 +9,8 @@
 use eframe::egui;
 
 use super::{
-    button, status_colour, App, Emphasis, Tab, BG2, BG3, FG, FG_DIM, GREEN, RED, S_MD, S_SM, S_XS,
-    T_BODY, T_META, T_TITLE, YELLOW,
+    btn_width, button, button_ex, status_colour, App, Emphasis, Tab, BG2, BG3, FG, FG_DIM, GREEN,
+    RED, S_LG, S_MD, S_SM, S_XS, T_BODY, T_META, T_TITLE, YELLOW,
 };
 use crate::i18n;
 use crate::monitor::{Seen, Status};
@@ -153,24 +153,83 @@ pub fn read(
     Summary { local, provider, say, todo, action, colour }
 }
 
+/// How long the state on screen has lasted, read from the outage log.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Since {
+    /// A problem recorded as starting at this moment and not over yet.
+    Ongoing(f64),
+    /// Healthy since the last recorded problem ended.
+    Clean(f64),
+    /// Healthy for as long as the app has been watching: nothing recorded
+    /// since then, and nothing known about the time before it.
+    Watched(f64),
+}
+
+/// When the current state began. `events` is the day's log, newest first or
+/// not; `observed_from` the start of the current unbroken watch.
+///
+/// Only what the log can back: a problem with no open entry (not yet long
+/// enough to be recorded) has no start to name, and a healthy line is never
+/// said to have been healthy for longer than the app has been watching it.
+pub fn since(
+    healthy: bool,
+    events: &[crate::store::Event],
+    observed_from: Option<f64>,
+) -> Option<Since> {
+    if !healthy {
+        return events
+            .iter()
+            .filter(|e| e.ts_end.is_none())
+            .map(|e| e.ts_start)
+            .fold(None, |a: Option<f64>, t| Some(a.map_or(t, |a| a.min(t))))
+            .map(Since::Ongoing);
+    }
+    let watched = observed_from?;
+    let ended = events.iter().filter_map(|e| e.ts_end).fold(f64::NEG_INFINITY, f64::max);
+    Some(if ended > watched { Since::Clean(ended) } else { Since::Watched(watched) })
+}
+
+fn since_text(s: Since, now: f64) -> String {
+    let at = |ts: f64| {
+        // A clock time alone is ambiguous once it could be yesterday's.
+        if now - ts > 12.0 * 3600.0 {
+            crate::diagnose::format_datetime(ts)
+        } else {
+            crate::diagnose::format_clock(ts)
+        }
+    };
+    let long = |ts: f64| i18n::span(now - ts);
+    match s {
+        Since::Ongoing(ts) => i18n::sum_since_ongoing(&at(ts), &long(ts)),
+        Since::Clean(ts) => i18n::sum_since_clean(&at(ts), &long(ts)),
+        Since::Watched(ts) => i18n::sum_since_watched(&at(ts), &long(ts)),
+    }
+}
+
 /// Draws the summary panel. `note` is the monitor's own explanation of the
-/// reading, when it has one.
-pub fn show(app: &mut App, ui: &mut egui::Ui, summary: &Summary, note: &str) {
+/// reading, when it has one; `since` how long the state has lasted.
+///
+/// Every control the tab has sits on its last row: the one thing to do about
+/// the state on the left, pausing and the report on the right. The pause and
+/// the report used to sit alone under the chart, a screen away from the
+/// sentence they act on.
+pub fn show(app: &mut App, ui: &mut egui::Ui, summary: &Summary, note: &str, since: Option<Since>) {
     let wifi = app.net.medium == crate::probe::netstate::Medium::Wifi;
-    egui::Frame::none().fill(BG2).rounding(8.0).inner_margin(egui::Margin::same(S_MD + S_XS)).show(
-        ui,
-        |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                super::status_dot(ui, summary.colour, 6.0);
-                ui.add_space(S_XS);
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(summary.say).size(T_TITLE).strong().color(FG),
-                    )
+    let now = crate::store::now();
+    let panel = egui::Frame::none()
+        .fill(BG2)
+        .rounding(6.0)
+        .inner_margin(egui::Margin { left: S_LG + 4.0, right: S_LG, top: S_LG, bottom: S_LG })
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.add(
+                egui::Label::new(egui::RichText::new(summary.say).size(T_TITLE).strong().color(FG))
                     .wrap(),
-                );
-            });
+            );
+            if let Some(s) = since {
+                ui.add_space(S_XS);
+                ui.label(egui::RichText::new(since_text(s, now)).size(T_META).color(FG_DIM));
+            }
             ui.add_space(S_MD);
             chain(ui, wifi, summary);
             ui.add_space(S_MD);
@@ -183,33 +242,66 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, summary: &Summary, note: &str) {
                     egui::Label::new(egui::RichText::new(note).size(T_META).color(FG_DIM)).wrap(),
                 );
             }
-            if let Some(action) = summary.action {
-                ui.add_space(S_SM);
-                act(app, ui, action);
-            }
-        },
+            ui.add_space(S_MD);
+            actions(app, ui, summary.action);
+        });
+    // The state's colour down the left edge, as on the Diagnose verdict.
+    let rect = panel.response.rect;
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(rect.min, egui::vec2(4.0, rect.height())),
+        egui::Rounding { nw: 6.0, sw: 6.0, ne: 0.0, se: 0.0 },
+        summary.colour,
     );
 }
 
-fn act(app: &mut App, ui: &mut egui::Ui, action: Action) {
+fn actions(app: &mut App, ui: &mut egui::Ui, action: Option<Action>) {
     // A pause held by a running load test or scan is not the user's to lift,
     // and a Resume that does nothing is worse than none.
-    if action == Action::Resume && !app.monitor.is_paused() {
-        return;
-    }
-    let label = match action {
-        Action::Resume => i18n::live_btn_resume(),
-        Action::Diagnose => i18n::sum_btn_diagnose(),
-        Action::Report if app.report_busy => i18n::hist_report_saving(),
-        Action::Report => i18n::sum_btn_report(),
-    };
-    if button(ui, label, Emphasis::Primary).clicked() {
-        match action {
-            Action::Resume => app.monitor.set_paused(false),
-            Action::Diagnose => app.tab = Tab::Diagnose,
-            Action::Report => super::report::save_in_background(app, super::report::Range::Day),
+    let action = action.filter(|a| *a != Action::Resume || app.monitor.is_paused());
+    ui.horizontal(|ui| {
+        if let Some(action) = action {
+            let label = match action {
+                Action::Resume => i18n::live_btn_resume(),
+                Action::Diagnose => i18n::sum_btn_diagnose(),
+                Action::Report if app.report_busy => i18n::hist_report_saving(),
+                Action::Report => i18n::sum_btn_report(),
+            };
+            if button(ui, label, Emphasis::Primary).clicked() {
+                match action {
+                    Action::Resume => app.monitor.set_paused(false),
+                    Action::Diagnose => app.tab = Tab::Diagnose,
+                    Action::Report => {
+                        super::report::save_in_background(app, super::report::Range::Day)
+                    }
+                }
+            }
         }
-    }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // The last day, as it always was; the History tab picks a range.
+            // Not twice when the main button already is the report.
+            if action != Some(Action::Report) {
+                let label = if app.report_busy {
+                    i18n::hist_report_saving()
+                } else {
+                    i18n::live_btn_report()
+                };
+                if button_ex(ui, label, Emphasis::Ghost, !app.report_busy, 0.0).clicked() {
+                    super::report::save_in_background(app, super::report::Range::Day);
+                }
+            }
+            // Not beside a main button that already says Resume. The width
+            // is the longer label's, so the row holds still when it flips.
+            if action != Some(Action::Resume) {
+                let paused = app.monitor.is_paused();
+                let label = if paused { i18n::live_btn_resume() } else { i18n::live_btn_pause() };
+                let w = btn_width(ui, i18n::live_btn_pause())
+                    .max(btn_width(ui, i18n::live_btn_resume()));
+                if button_ex(ui, label, Emphasis::Secondary, true, w).clicked() {
+                    app.monitor.set_paused(!paused);
+                }
+            }
+        });
+    });
 }
 
 /// This computer, the router and the internet, joined by the two links the
@@ -309,6 +401,34 @@ mod tests {
         let few = Stats { count: 2, avg: Some(90.0), ..Default::default() };
         let v = read(Seen::Verdict(Status::Degraded, ""), false, None, &few, 20.0);
         assert_eq!(v.local, Link::Good);
+    }
+
+    fn event(start: f64, end: Option<f64>) -> crate::store::Event {
+        crate::store::Event {
+            id: 0,
+            ts_start: start,
+            ts_end: end,
+            kind: "isp_down".into(),
+            scope: "isp".into(),
+            detail: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_state_is_never_said_to_have_lasted_longer_than_the_log_shows() {
+        // Healthy, with an outage that ended after watching began: since then.
+        let log = [event(1_000.0, Some(1_060.0))];
+        assert_eq!(since(true, &log, Some(500.0)), Some(Since::Clean(1_060.0)));
+        // Nothing since watching began: only as long as it has watched.
+        assert_eq!(since(true, &[], Some(500.0)), Some(Since::Watched(500.0)));
+        let before = [event(100.0, Some(200.0))];
+        assert_eq!(since(true, &before, Some(500.0)), Some(Since::Watched(500.0)));
+        // Not watching yet: nothing to say.
+        assert_eq!(since(true, &log, None), None);
+        // A problem runs from its open entry; without one it has no start.
+        let open = [event(900.0, Some(950.0)), event(1_200.0, None)];
+        assert_eq!(since(false, &open, Some(500.0)), Some(Since::Ongoing(1_200.0)));
+        assert_eq!(since(false, &log, Some(500.0)), None);
     }
 
     #[test]

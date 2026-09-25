@@ -779,7 +779,11 @@ impl eframe::App for App {
         }
 
         if let Some((text, colour, until)) = self.toast.clone() {
-            if now < until {
+            // The Settings tab has a bar of its own at the bottom and says it
+            // there: two strips stacked under the form read as two footers.
+            if now < until && self.tab == Tab::Settings {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(until - now));
+            } else if now < until {
                 egui::TopBottomPanel::bottom("toast")
                     .frame(
                         egui::Frame::none()
