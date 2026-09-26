@@ -13,7 +13,7 @@ mod settings_tab;
 mod summary;
 mod update_ui;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -198,10 +198,17 @@ pub enum Job {
     UpdateProgress(Option<f32>),
     /// One pass of reading every tweak's current state, with the generation it
     /// was started for. Four of the twenty-one shell out to `netsh` or
-    /// `powercfg`, which is 369 ms of the 369 ms this costs, so it does not
+    /// `powercfg`, which is nearly all of what this costs, so it does not
     /// happen on the UI thread. The generation is what makes a read that
-    /// started before an apply land in the bin rather than on screen.
-    TweakStates(u64, Vec<(String, String, Option<bool>)>, HashMap<String, crate::effect::Effect>),
+    /// started before an apply land in the bin rather than on screen. The
+    /// last field is which tweaks have a "before" saved, or why the file
+    /// holding them could not be read.
+    TweakStates(
+        u64,
+        Vec<(String, String, Option<bool>)>,
+        HashMap<String, crate::effect::Effect>,
+        Result<HashSet<&'static str>, String>,
+    ),
     /// One switch's apply or revert, run off the UI thread: `netsh` and the
     /// registry held the window still for as long as they took.
     TweakDone {
@@ -299,6 +306,11 @@ pub struct App {
     /// What the line did before and after each change the log says was
     /// applied, keyed by tweak id. Read with the states, off the UI thread.
     pub tweak_effects: HashMap<String, crate::effect::Effect>,
+    /// The tweaks with a "before" value saved, so the ones that can be
+    /// switched back. Read with the states rather than on every frame.
+    pub tweak_snapshots: HashSet<&'static str>,
+    /// Why the file holding those values could not be read, when it could not.
+    pub tweak_snapshots_error: Option<String>,
     /// What `tweak_effects` was read from, kept for the next refresh. Shared
     /// with the worker that does the reading.
     effect_cache: Arc<Mutex<crate::effect::Cache>>,
@@ -323,10 +335,10 @@ pub struct App {
     /// off it. Empty until the first scan is asked for.
     pub air: crate::probe::airscan::AirScan,
     pub air_scanning: bool,
-    /// Whether the optimise list shows the tweaks that cannot be applied
-    /// on this machine. They are shown by default, because "this one is
-    /// not on offer here" is an answer; hiding them is for once that has
-    /// been read.
+    /// Whether the optimise list shows the tweaks nothing here can change:
+    /// not on offer on this machine, or set with nothing saved to go back
+    /// to. Hidden by default: a list of dimmed switches read as a list of
+    /// broken ones. Hiding them does not change the section counts.
     pub show_unavailable: bool,
     /// Row id of the outage whose cause panel is open, if any.
     pub selected_outage: Option<i64>,
@@ -445,6 +457,8 @@ impl App {
             card_cache: None,
             tweak_states: Vec::new(),
             tweak_effects: HashMap::new(),
+            tweak_snapshots: HashSet::new(),
+            tweak_snapshots_error: None,
             effect_cache: Default::default(),
             tweaks_gen: 0,
             tweaks_shown_gen: 0,
@@ -453,7 +467,7 @@ impl App {
             selected_tweak: None,
             air: Default::default(),
             air_scanning: false,
-            show_unavailable: true,
+            show_unavailable: false,
             selected_outage: None,
             outage_detail: None,
             history_list: None,
@@ -498,13 +512,32 @@ impl App {
         let gen = self.tweaks_gen;
         std::thread::spawn(move || {
             let tweaks = crate::optimize::all();
-            let states = tweaks
-                .iter()
-                .map(|t| {
-                    let s = t.read(&net);
-                    (t.id().to_string(), s.text, s.optimal)
-                })
-                .collect();
+            // Each on a thread of its own. The slow ones are separate `netsh`
+            // and `powercfg` runs of 150 to 240 ms each, and one after another
+            // they held every switch for three quarters of a second after
+            // each click; side by side the pass takes as long as the slowest.
+            let states = std::thread::scope(|s| {
+                let reads: Vec<_> = tweaks
+                    .iter()
+                    .map(|t| {
+                        let net = &net;
+                        s.spawn(move || {
+                            let st = t.read(net);
+                            (t.id().to_string(), st.text, st.optimal)
+                        })
+                    })
+                    .collect();
+                reads
+                    .into_iter()
+                    .zip(&tweaks)
+                    // A read that panicked is a read that could not be done,
+                    // which is what `None` already says.
+                    .map(|(h, t)| {
+                        h.join().unwrap_or_else(|_| (t.id().to_string(), String::new(), None))
+                    })
+                    .collect()
+            });
+            let snapshots = crate::optimize::snapshotted(&tweaks, &net).map_err(|e| e.to_string());
             // Before and after each change, read here rather than per frame:
             // a day of samples on two anchors is tens of thousands of rows.
             let now = crate::store::now();
@@ -518,7 +551,7 @@ impl App {
                 })
                 .collect();
             drop(cache);
-            let _ = tx.send(Job::TweakStates(gen, states, effects));
+            let _ = tx.send(Job::TweakStates(gen, states, effects, snapshots));
             ctx.request_repaint();
         });
     }
@@ -662,7 +695,7 @@ impl App {
                         *f = frac;
                     }
                 }
-                Job::TweakStates(gen, states, effects) => {
+                Job::TweakStates(gen, states, effects, snapshots) => {
                     // A read started before the last apply describes the
                     // machine as it was, not as it is. Showing it would put a
                     // just-applied tweak back in the "worth changing" column.
@@ -670,6 +703,10 @@ impl App {
                         self.tweaks_shown_gen = gen;
                         self.tweak_states = states;
                         self.tweak_effects = effects;
+                        (self.tweak_snapshots, self.tweak_snapshots_error) = match snapshots {
+                            Ok(set) => (set, None),
+                            Err(e) => (HashSet::new(), Some(e)),
+                        };
                         // A change that finished before this read began is
                         // in it; one still running is not, and stays held.
                         self.tweak_pending.retain(|_, (_, done)| !*done);

@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use super::{
-    button, button_ex, card, figure, App, Emphasis, FG, FG_DIM, GREEN, RED, S_MD, S_SM, S_XS,
+    button, button_ex, card, figure, App, Emphasis, FG, FG_DIM, GREEN, RED, S_LG, S_MD, S_SM, S_XS,
     T_BODY, T_HEAD, T_META, T_TITLE, YELLOW,
 };
 use crate::i18n;
@@ -21,10 +21,16 @@ enum Status {
     /// Nothing to decide: wrong medium, driver does not expose it, or it
     /// cannot be read. The state column says which.
     Unavailable,
+    /// A one-off repair: there is no state to read, only something to run.
+    /// Read as "not available" before, next to a button that worked.
+    Action,
 }
 
 impl Status {
-    fn of(optimal: Option<bool>) -> Status {
+    fn of(t: &dyn optimize::Tweak, optimal: Option<bool>) -> Status {
+        if !t.reversible() {
+            return Status::Action;
+        }
         match optimal {
             Some(true) => Status::Set,
             Some(false) => Status::Todo,
@@ -37,6 +43,7 @@ impl Status {
             Status::Set => i18n::st_set(),
             Status::Todo => i18n::st_todo(),
             Status::Unavailable => i18n::st_na(),
+            Status::Action => i18n::st_action(),
         }
     }
 
@@ -44,7 +51,7 @@ impl Status {
         match self {
             Status::Set => GREEN,
             Status::Todo => YELLOW,
-            Status::Unavailable => FG_DIM,
+            Status::Unavailable | Status::Action => FG_DIM,
         }
     }
 }
@@ -59,6 +66,8 @@ const CARD_PAD_Y: f32 = S_SM + 2.0;
 const SWITCH_W: f32 = 40.0;
 /// A card under the pointer, one step lighter: the cue that it opens.
 const CARD_HOVER: egui::Color32 = egui::Color32::from_rgb(0x21, 0x25, 0x2d);
+/// The confirmation dialog's width, narrowed on a small window.
+const DIALOG_W: f32 = 460.0;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let tweaks = optimize::all();
@@ -68,19 +77,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().id_salt("optimise_grid").auto_shrink([false, false]).show(
         ui,
         |ui| {
-            header(app, ui);
+            header(app, ui, &tweaks);
             air_card(app, ui);
             for category in optimize::Category::ALL {
                 group(app, ui, &tweaks, category);
             }
         },
     );
+    confirm_dialog(app, ui.ctx(), &tweaks);
 }
 
 /// How far along the machine is, the states that limit what can be done, and
 /// the two actions that apply to the whole list.
-fn header(app: &mut App, ui: &mut egui::Ui) {
-    let (set, todo, na) = tally(app);
+fn header(app: &mut App, ui: &mut egui::Ui, tweaks: &[Box<dyn optimize::Tweak>]) {
+    let (set, todo, na) = tally(app, tweaks);
     let (dot, text) = if todo == 0 {
         (GREEN, i18n::opt_headline_done().to_string())
     } else {
@@ -96,7 +106,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
 
     // A damaged snapshot file used to just make every Revert button vanish,
     // which reads as "nothing was ever applied" rather than as a fault.
-    if let Some(err) = optimize::snapshots_error() {
+    if let Some(err) = &app.tweak_snapshots_error {
         ui.add_space(S_XS);
         ui.label(egui::RichText::new(i18n::tw_snapshots_unreadable_hint()).size(T_META).color(RED));
         ui.label(egui::RichText::new(err).size(T_META).color(FG_DIM));
@@ -151,7 +161,14 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new(i18n::opt_summary(set, todo, na)).size(T_META).color(FG_DIM),
             );
-            if na > 0 {
+            let any_fixed = tweaks.iter().enumerate().any(|(i, t)| {
+                fixed(
+                    app,
+                    t.as_ref(),
+                    Status::of(t.as_ref(), app.tweak_states.get(i).and_then(|s| s.2)),
+                )
+            });
+            if any_fixed {
                 ui.checkbox(
                     &mut app.show_unavailable,
                     egui::RichText::new(i18n::opt_show_unavailable()).size(T_META),
@@ -163,14 +180,16 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(S_MD);
 }
 
-/// How many tweaks are set, worth changing, and not on offer at all.
-fn tally(app: &App) -> (usize, usize, usize) {
+/// How many tweaks are set, worth changing, and not on offer at all. The
+/// one-off repairs are none of these, and are left out.
+fn tally(app: &App, tweaks: &[Box<dyn optimize::Tweak>]) -> (usize, usize, usize) {
     let mut counts = (0, 0, 0);
-    for (_, _, optimal) in &app.tweak_states {
-        match Status::of(*optimal) {
+    for ((_, _, optimal), t) in app.tweak_states.iter().zip(tweaks) {
+        match Status::of(t.as_ref(), *optimal) {
             Status::Set => counts.0 += 1,
             Status::Todo => counts.1 += 1,
             Status::Unavailable => counts.2 += 1,
+            Status::Action => {}
         }
     }
     counts
@@ -214,16 +233,21 @@ fn group(
         return;
     }
 
-    let status_at =
-        |app: &App, i: usize| Status::of(app.tweak_states.get(i).and_then(|(_, _, o)| *o));
+    let status_at = |app: &App, i: usize| {
+        Status::of(tweaks[i].as_ref(), app.tweak_states.get(i).and_then(|(_, _, o)| *o))
+    };
     // The counts describe the whole category, whether or not every card of
     // it is on screen, so hiding cards never changes what the heading claims.
     let set = all_rows.iter().filter(|i| status_at(app, **i) == Status::Set).count();
-    let available = all_rows.iter().filter(|i| status_at(app, **i) != Status::Unavailable).count();
+    let available = all_rows
+        .iter()
+        .filter(|i| matches!(status_at(app, **i), Status::Set | Status::Todo))
+        .count();
+    let actions = all_rows.iter().any(|i| status_at(app, *i) == Status::Action);
 
     let mut cards: Vec<usize> = all_rows
         .into_iter()
-        .filter(|i| app.show_unavailable || status_at(app, *i) != Status::Unavailable)
+        .filter(|i| app.show_unavailable || !fixed(app, tweaks[*i].as_ref(), status_at(app, *i)))
         .collect();
     if cards.is_empty() {
         return;
@@ -233,7 +257,11 @@ fn group(
     // switch moves a card between them, and the card left the pointer.
     cards.sort_by_key(|i| (status_at(app, *i) == Status::Unavailable, *i));
 
-    let (count, colour) = if available == 0 {
+    let (count, colour) = if available == 0 && actions {
+        // Only repairs to run: there is nothing to count, and "nothing
+        // applies here" over a working button was the wrong thing to say.
+        (String::new(), FG_DIM)
+    } else if available == 0 {
         (i18n::opt_section_none().to_string(), FG_DIM)
     } else if set == available {
         (i18n::opt_section_all_set().to_string(), GREEN)
@@ -290,17 +318,30 @@ enum Switch {
     Action,
 }
 
-fn switch_for(app: &App, t: &dyn optimize::Tweak, status: Status) -> Switch {
-    if !t.reversible() {
-        return Switch::Action;
+/// A card whose switch nothing here can move: not on offer on this machine,
+/// or already set with no saved "before" to go back to. Hidden unless asked
+/// for. Locked only for want of administrator rights is not this: a restart
+/// as administrator unlocks it, so it stays in the list.
+fn fixed(app: &App, t: &dyn optimize::Tweak, status: Status) -> bool {
+    if app.tweak_pending.contains_key(t.id()) {
+        return false;
     }
-    if !app.elevated && t.needs_admin() {
+    match status {
+        Status::Unavailable => true,
+        Status::Set => !app.tweak_snapshots.contains(t.id()),
+        Status::Todo | Status::Action => false,
+    }
+}
+
+fn switch_for(app: &App, t: &dyn optimize::Tweak, status: Status) -> Switch {
+    if !app.elevated && t.needs_admin() && t.reversible() {
         return Switch::Locked(i18n::opt_needs_admin());
     }
     match status {
+        Status::Action => Switch::Action,
         Status::Unavailable => Switch::Locked(i18n::st_na()),
         Status::Todo => Switch::CanApply,
-        Status::Set if optimize::has_snapshot(t, &app.net) => Switch::CanRevert,
+        Status::Set if app.tweak_snapshots.contains(t.id()) => Switch::CanRevert,
         // Already right, but not by this app's hand: there is no "before"
         // to go back to, so switching it off would be a guess.
         Status::Set => Switch::Locked(i18n::opt_nothing_to_revert()),
@@ -311,8 +352,10 @@ fn open_id(t: &dyn optimize::Tweak) -> egui::Id {
     egui::Id::new(("optimise_open", t.id()))
 }
 
-fn confirm_id(t: &dyn optimize::Tweak) -> egui::Id {
-    egui::Id::new(("optimise_confirm", t.id()))
+/// Which change is waiting on its question, by id. One at a time: the dialog
+/// covers the page, so a second cannot be asked while it is up.
+fn confirm_id() -> egui::Id {
+    egui::Id::new("optimise_confirm")
 }
 
 /// One change as a card: its name and switch, what it is set to now, the
@@ -327,7 +370,7 @@ fn tweak_card(
 ) -> f32 {
     let (value, optimal) =
         app.tweak_states.get(i).map(|(_, v, o)| (v.clone(), *o)).unwrap_or_default();
-    let status = Status::of(optimal);
+    let status = Status::of(t, optimal);
     let loading = app.tweaks_loading();
     let mut natural = 0.0;
 
@@ -388,9 +431,13 @@ fn tweak_card(
                     .layout(egui::Layout::right_to_left(egui::Align::Min)),
             );
             card_switch(app, &mut corner, t, status, loading);
+            // The switch fits the corner; the Apply button of a repair is
+            // wider and grows out of it to the left, where it lay over the
+            // end of the title. The title gives way to whatever was drawn.
+            let switch_w = corner.min_rect().width().max(SWITCH_W);
 
             ui.scope(|ui| {
-                ui.set_max_width((ui.available_width() - SWITCH_W - S_SM).max(80.0));
+                ui.set_max_width((ui.available_width() - switch_w - S_SM).max(80.0));
                 ui.horizontal_top(|ui| {
                     ui.add_space(1.0);
                     super::status_dot(ui, status.colour(), 4.0);
@@ -426,17 +473,27 @@ fn tweak_card(
                 }
             });
             let open = ui.data(|d| d.get_temp::<bool>(open_id(t))).unwrap_or(false);
-            let confirm = ui.data(|d| d.get_temp::<bool>(confirm_id(t))).unwrap_or(false);
             ui.add(
                 egui::Label::new(egui::RichText::new(value).size(T_META).color(FG_DIM)).truncate(),
             );
+            // Why a switch that looks usable is not, on the card itself. On
+            // hover only, a dimmed switch read as broken. "Not available" is
+            // already the status word, so it is not said twice.
+            if !app.tweak_pending.contains_key(t.id()) && status != Status::Unavailable {
+                if let Switch::Locked(why) = switch_for(app, t, status) {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(why).size(T_META).color(FG_DIM))
+                            .wrap(),
+                    );
+                }
+            }
             // Measured before the explanation: the row is levelled to its
             // folded cards, and an opened one grows on its own. Measured
             // after, opening one card stretched its neighbours into empty
             // panels of the same height.
             natural = ui.min_rect().bottom() - top;
-            if open || confirm {
-                card_detail(app, ui, t, confirm);
+            if open {
+                card_detail(app, ui, t);
             }
 
             level_to(ui, top, row_h - CARD_PAD_Y * 2.0);
@@ -474,10 +531,7 @@ fn card_switch(
             let b = if enabled { b } else { b.on_hover_text(i18n::opt_needs_admin()) };
             if b.clicked() {
                 // Cannot be undone, so it never fires from the card alone.
-                ui.data_mut(|d| {
-                    d.insert_temp(confirm_id(t), true);
-                    d.insert_temp(open_id(t), true);
-                });
+                ask(ui, t);
             }
         }
         Switch::Locked(why) => {
@@ -489,12 +543,8 @@ fn card_switch(
             if toggle(ui, on, true).clicked() {
                 if t.risk() == Risk::High {
                     // A switch is lighter to flick than the change is to
-                    // live with, so a high-risk one asks first, with the
-                    // explanation open above the question.
-                    ui.data_mut(|d| {
-                        d.insert_temp(confirm_id(t), true);
-                        d.insert_temp(open_id(t), true);
-                    });
+                    // live with, so a high-risk one asks first.
+                    ask(ui, t);
                 } else {
                     app.flip_tweak(t.id(), true);
                 }
@@ -509,7 +559,7 @@ fn card_switch(
 }
 
 /// What the change does and why, the notes, and what it did last time.
-fn card_detail(app: &mut App, ui: &mut egui::Ui, t: &dyn optimize::Tweak, confirm: bool) {
+fn card_detail(app: &mut App, ui: &mut egui::Ui, t: &dyn optimize::Tweak) {
     ui.add_space(S_XS);
     ui.separator();
     ui.add_space(S_XS);
@@ -521,7 +571,7 @@ fn card_detail(app: &mut App, ui: &mut egui::Ui, t: &dyn optimize::Tweak, confir
     if !t.reversible() {
         ui.label(egui::RichText::new(i18n::opt_irreversible()).size(T_META).color(RED));
     }
-    if optimize::has_snapshot(t, &app.net) {
+    if app.tweak_snapshots.contains(t.id()) {
         ui.label(
             egui::RichText::new(i18n::opt_revert_available()).size(T_META).color(super::ACCENT),
         );
@@ -550,20 +600,96 @@ fn card_detail(app: &mut App, ui: &mut egui::Ui, t: &dyn optimize::Tweak, confir
         }
         ui.label(egui::RichText::new(i18n::opt_effect_caveat()).size(T_META).color(FG_DIM));
     }
+}
 
-    if confirm {
-        ui.add_space(S_SM);
-        ui.label(egui::RichText::new(i18n::opt_confirm_risky()).size(T_META).color(YELLOW));
-        ui.add_space(S_XS);
-        ui.horizontal(|ui| {
-            if button(ui, i18n::opt_btn_apply_anyway(), Emphasis::Danger).clicked() {
-                ui.data_mut(|d| d.insert_temp(confirm_id(t), false));
-                app.flip_tweak(t.id(), true);
-            }
-            if button(ui, i18n::hist_btn_cancel(), Emphasis::Ghost).clicked() {
-                ui.data_mut(|d| d.insert_temp(confirm_id(t), false));
-            }
+/// Put the question for this change on screen.
+fn ask(ui: &egui::Ui, t: &dyn optimize::Tweak) {
+    ui.data_mut(|d| d.insert_temp(confirm_id(), t.id()));
+}
+
+/// The question before a high-risk or one-way change, in a dialog over the
+/// whole window. At the foot of the card it opened below the fold of a tall
+/// card, where the switch that was just clicked seemed to have done nothing.
+fn confirm_dialog(app: &mut App, ctx: &egui::Context, tweaks: &[Box<dyn optimize::Tweak>]) {
+    let Some(id) = ctx.data(|d| d.get_temp::<&'static str>(confirm_id())) else {
+        return;
+    };
+    let close = |ctx: &egui::Context| ctx.data_mut(|d| d.remove::<&'static str>(confirm_id()));
+    let Some(t) = tweaks.iter().find(|t| t.id() == id) else {
+        close(ctx);
+        return;
+    };
+
+    // Dims the page and takes the clicks meant for it: a click outside the
+    // dialog is a no, not a click on whatever card is underneath.
+    let screen = ctx.screen_rect();
+    let backdrop = egui::Area::new(egui::Id::new("optimise_confirm_backdrop"))
+        .order(egui::Order::Middle)
+        .fixed_pos(screen.min)
+        .show(ctx, |ui| {
+            ui.painter().rect_filled(screen, 0.0, egui::Color32::from_black_alpha(150));
+            ui.allocate_rect(screen, egui::Sense::click())
+        })
+        .inner;
+
+    let mut done = backdrop.clicked() || ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    egui::Area::new(egui::Id::new("optimise_confirm_dialog"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            egui::Frame::none()
+                .fill(super::BG2)
+                .rounding(8.0)
+                .stroke(egui::Stroke::new(1.0_f32, RED.linear_multiply(0.55)))
+                .inner_margin(egui::Margin::same(S_LG))
+                .show(ui, |ui| {
+                    ui.set_width(DIALOG_W.min(screen.width() - 4.0 * S_LG));
+                    ui.horizontal_top(|ui| {
+                        super::status_dot(ui, RED, 5.0);
+                        ui.add_space(S_XS);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(t.title()).size(T_HEAD).strong().color(FG),
+                            )
+                            .wrap(),
+                        );
+                    });
+                    ui.label(
+                        egui::RichText::new(i18n::opt_risk_note(t.risk().label()))
+                            .size(T_META)
+                            .color(risk_colour(t.risk())),
+                    );
+                    ui.add_space(S_SM);
+                    for (heading, text) in
+                        [(i18n::opt_card_what(), t.what()), (i18n::opt_card_why(), t.why())]
+                    {
+                        ui.label(egui::RichText::new(heading).size(T_META).strong().color(FG_DIM));
+                        ui.label(egui::RichText::new(text).size(T_META).color(FG));
+                        ui.add_space(S_XS);
+                    }
+                    if !t.reversible() {
+                        ui.label(
+                            egui::RichText::new(i18n::opt_irreversible()).size(T_META).color(RED),
+                        );
+                    }
+                    ui.add_space(S_SM);
+                    ui.label(
+                        egui::RichText::new(i18n::opt_confirm_risky()).size(T_BODY).color(YELLOW),
+                    );
+                    ui.add_space(S_MD);
+                    ui.horizontal(|ui| {
+                        if button(ui, i18n::opt_btn_apply_anyway(), Emphasis::Danger).clicked() {
+                            app.flip_tweak(t.id(), true);
+                            done = true;
+                        }
+                        if button(ui, i18n::hist_btn_cancel(), Emphasis::Ghost).clicked() {
+                            done = true;
+                        }
+                    });
+                });
         });
+    if done {
+        close(ctx);
     }
 }
 

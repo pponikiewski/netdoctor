@@ -179,12 +179,6 @@ fn read_snapshots_at(path: &std::path::Path) -> Result<HashMap<String, Value>> {
     })
 }
 
-/// `None` when the file is fine. The UI shows this instead of quietly
-/// dropping every Revert button.
-pub fn snapshots_error() -> Option<String> {
-    read_snapshots().err().map(|e| e.to_string())
-}
-
 /// Write to a sibling temp file and rename over the original. A crash or a
 /// power cut mid-write then loses the new entry rather than the whole file,
 /// which is the only record of what the machine looked like before.
@@ -257,8 +251,20 @@ fn snapshot_lock() -> std::sync::MutexGuard<'static, ()> {
     SNAPSHOT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-pub fn has_snapshot(tweak: &dyn Tweak, net: &NetState) -> bool {
-    read_snapshots().map(|m| snapshot_key_for(&m, tweak, net).is_some()).unwrap_or(false)
+/// The ids of the tweaks that have a "before" value to go back to, from one
+/// read of the file. The UI asked per card per frame, which was twenty-one
+/// reads of the file on every frame drawn. An error is a damaged file, which
+/// the UI shows instead of quietly dropping every Revert button.
+pub fn snapshotted(
+    tweaks: &[Box<dyn Tweak>],
+    net: &NetState,
+) -> Result<std::collections::HashSet<&'static str>> {
+    let snaps = read_snapshots()?;
+    Ok(tweaks
+        .iter()
+        .filter(|t| snapshot_key_for(&snaps, t.as_ref(), net).is_some())
+        .map(|t| t.id())
+        .collect())
 }
 
 /// Apply, then record the state it replaced — and only the *first* time.

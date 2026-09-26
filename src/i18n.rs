@@ -1942,7 +1942,9 @@ Płaci się to raz, przy otwieraniu \
     opt_read_only =>
         "read-only (restart as administrator to apply)",
         "tylko do odczytu (uruchom ponownie jako administrator, żeby zastosować)";
-    opt_nothing_to_revert => "Nothing saved to revert to", "Nie zapisano nic, do czego można wrócić";
+    opt_nothing_to_revert =>
+        "Already set, but NetDoctor has no saved earlier value to go back to",
+        "Już ustawione, ale NetDoctor nie ma zapisanej wcześniejszej wartości, do której mógłby wrócić";
     opt_needs_reboot => "needs a restart", "wymaga restartu";
     opt_irreversible => "cannot be undone", "nie da się cofnąć";
     opt_reading =>
@@ -2236,16 +2238,19 @@ Płaci się to raz, przy otwieraniu \
     st_todo => "worth changing", "do poprawy";
     st_todo_heading => "Worth changing", "Do poprawy";
     st_na => "not available", "niedostępne";
+    st_action => "on demand", "na żądanie";
     opt_revert_available =>
         "changed by NetDoctor (can be undone)",
         "zmienione przez NetDoctor (można cofnąć)";
     opt_section_all_set => "all set", "wszystko ustawione";
-    opt_show_unavailable => "show unavailable", "pokaż niedostępne";
+    opt_show_unavailable => "show ones that cannot be changed", "pokaż te, których nie można zmienić";
     opt_show_unavailable_hint =>
-        "Changes this machine cannot take: a Wi-Fi setting on a cable, or one the \
-         driver does not expose. The section counts ignore them either way.",
-        "Zmiany, których ta maszyna nie przyjmie: ustawienie Wi-Fi przy kablu albo takie, \
-         którego sterownik nie udostępnia. Liczniki sekcji i tak ich nie liczą.";
+        "Changes this machine cannot take (a Wi-Fi setting on a cable, or one the driver \
+         does not expose), and ones already set with no earlier value saved to go back to. \
+         Hiding them does not change the section counts.",
+        "Zmiany, których ta maszyna nie przyjmie (ustawienie Wi-Fi przy kablu albo takie, \
+         którego sterownik nie udostępnia), oraz już ustawione, bez zapisanej wcześniejszej \
+         wartości do przywrócenia. Ukrycie ich nie zmienia liczników sekcji.";
     opt_section_none => "nothing applies here", "nic tu nie dotyczy";
 
     air_col_network => "Network", "Sieć";
