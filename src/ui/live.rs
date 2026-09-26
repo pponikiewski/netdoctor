@@ -6,12 +6,10 @@ use egui_plot::{
 };
 
 use super::{
-    btn_width, button_ex, figure, is_narrow, latency_colour, App, Emphasis, Job, ACCENT, BG2, BG3,
-    FG, FG_DIM, GREEN, LINE, RED, SERIES_COLOURS, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META,
-    T_MICRO, YELLOW,
+    figure, latency_colour, App, ACCENT, BG2, BG3, FG, FG_DIM, GREEN, LINE, RED, SERIES_COLOURS,
+    S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_META, T_MICRO, YELLOW,
 };
 use crate::i18n;
-use crate::probe::icmp;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // The tab is taller than a short window: a fixed-height plot, the cards,
@@ -66,31 +64,35 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
     plot(app, ui);
     ui.add_space(S_MD);
 
-    // The route is the part that needs a network engineer to read, so it is
-    // folded away until someone asks for it.
-    egui::CollapsingHeader::new(egui::RichText::new(i18n::live_details()).size(T_BODY).color(FG))
-        .id_salt("live_details")
-        .default_open(false)
-        .show(ui, |ui| {
-            trace_button(app, ui);
-            ui.add_space(S_SM);
-            // The hop table is five narrow columns and leaves the right half
-            // of the window empty, which is exactly where a route dump wants
-            // to be: the two answer the same question at different
-            // resolutions, and reading them against each other is the point.
-            if is_narrow(ui) {
-                // Two columns in half a window is two unreadable columns.
-                // Stacked, each one gets the width it needs.
-                path_table(app, ui);
-                ui.add_space(S_MD);
-                trace_panel(app, ui);
-            } else {
-                ui.columns(2, |cols| {
-                    path_table(app, &mut cols[0]);
-                    trace_panel(app, &mut cols[1]);
-                });
-            }
-        });
+    // The route, hop by hop, is the part that needs a network engineer to
+    // read, so it is folded away until someone asks for it. It used to share
+    // the fold with a one-off traceroute button, which answered the same
+    // question as the table, once and with less in it.
+    let details = egui::CollapsingHeader::new(
+        egui::RichText::new(i18n::live_details()).size(T_BODY).color(FG),
+    )
+    .id_salt("live_details")
+    .default_open(false)
+    .show(ui, |ui| path_table(app, ui));
+
+    // Opened at the foot of the page, the table unfolded below the window's
+    // edge and looked as if the click had done nothing. The page follows it
+    // down until it has finished opening: during the animation the page is
+    // still growing, and one scroll on the click frame had nowhere to go.
+    let follow = egui::Id::new("live_details_follow");
+    if details.header_response.clicked() && details.openness < 0.5 {
+        ui.data_mut(|d| d.insert_temp(follow, true));
+    }
+    if ui.data(|d| d.get_temp::<bool>(follow)).unwrap_or(false) {
+        if let Some(body) = &details.body_response {
+            ui.scroll_to_rect(details.header_response.rect.union(body.rect), None);
+        }
+        // Done once fully open, or closed again before it got there.
+        let closed = details.openness <= 0.0 && !details.header_response.clicked();
+        if details.openness >= 1.0 || closed {
+            ui.data_mut(|d| d.remove::<bool>(follow));
+        }
+    }
 }
 
 /// The monitor's own explanation of the current reading, and a roam if one
@@ -825,7 +827,7 @@ fn plot_body(app: &mut App, ui: &mut egui::Ui) {
     });
 
     ui.add_space(S_SM);
-    key_row(ui);
+    key_row(ui, &app.settings);
     facts_row(ui, &spikes, above, y_top);
 
     if let Some(key) = toggled {
@@ -1006,7 +1008,7 @@ pub struct Stat {
     value: String,
     sub: String,
     colour: egui::Color32,
-    tip: &'static str,
+    tip: String,
     /// The card opens this tab when clicked.
     opens: Option<super::Tab>,
 }
@@ -1138,7 +1140,7 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
                     &stat.sub,
                     if measuring { stat.colour } else { FG_DIM },
                     Some(width),
-                    stat.tip,
+                    &stat.tip,
                 );
                 if let Some(tab) = stat.opens {
                     if super::card_clicked(&cols[i], &resp) {
@@ -1172,7 +1174,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
             value: ms_text(avg),
             sub: i18n::live_minmax(cf.min.unwrap_or(0.0), cf.max.unwrap_or(0.0)),
             colour: latency_colour(avg, s),
-            tip: i18n::live_tip_latency(),
+            tip: i18n::live_tip_latency(s.ping_ok_ms, s.ping_bad_ms),
             opens: None,
         },
         None => Stat {
@@ -1180,7 +1182,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
             value: "-".into(),
             sub: i18n::live_card_latency_sub_none().into(),
             colour: FG_DIM,
-            tip: i18n::live_tip_latency(),
+            tip: i18n::live_tip_latency(s.ping_ok_ms, s.ping_bad_ms),
             opens: None,
         },
     });
@@ -1196,7 +1198,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
             value: ms_text(j),
             sub: i18n::live_card_jitter_window(&window),
             colour: quality_colour(j, s.jitter_good_ms, s.jitter_ok_ms),
-            tip: i18n::live_tip_jitter(),
+            tip: i18n::live_tip_jitter(s.jitter_good_ms, s.jitter_ok_ms),
             opens: None,
         },
         None => Stat {
@@ -1204,7 +1206,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
             value: "-".into(),
             sub: i18n::live_card_too_few().into(),
             colour: FG_DIM,
-            tip: i18n::live_tip_jitter(),
+            tip: i18n::live_tip_jitter(s.jitter_good_ms, s.jitter_ok_ms),
             opens: None,
         },
     });
@@ -1215,7 +1217,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
             value: format!("{loss:.1}%"),
             sub: i18n::live_card_loss_window(&window),
             colour: quality_colour(loss, s.loss_good_pct, s.loss_ok_pct),
-            tip: i18n::live_tip_loss(),
+            tip: i18n::live_tip_loss(s.loss_good_pct, s.loss_ok_pct),
             opens: None,
         },
         None => Stat {
@@ -1223,7 +1225,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
             value: "-".into(),
             sub: i18n::live_card_too_few().into(),
             colour: FG_DIM,
-            tip: i18n::live_tip_loss(),
+            tip: i18n::live_tip_loss(s.loss_good_pct, s.loss_ok_pct),
             opens: None,
         },
     });
@@ -1234,7 +1236,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
             value: ms_text(avg),
             sub: i18n::live_router_loss(gw.loss_pct),
             colour: band(avg, ROUTER_GOOD_MS, ROUTER_OK_MS),
-            tip: i18n::live_tip_router(),
+            tip: i18n::live_tip_router(ROUTER_GOOD_MS, ROUTER_OK_MS),
             opens: None,
         },
         None => Stat {
@@ -1242,7 +1244,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
             value: "-".into(),
             sub: i18n::live_card_router_none().into(),
             colour: RED,
-            tip: i18n::live_tip_router(),
+            tip: i18n::live_tip_router(ROUTER_GOOD_MS, ROUTER_OK_MS),
             opens: None,
         },
     });
@@ -1253,7 +1255,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
             value: i18n::live_card_dns_err().into(),
             sub: app.last.dns_error.clone(),
             colour: RED,
-            tip: i18n::live_tip_dns(),
+            tip: i18n::live_tip_dns(DNS_GOOD_MS, DNS_OK_MS),
             opens: None,
         }
     } else {
@@ -1263,7 +1265,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
                 value: ms_text(ms),
                 sub: i18n::live_card_dns_sub().into(),
                 colour: band(ms, DNS_GOOD_MS, DNS_OK_MS),
-                tip: i18n::live_tip_dns(),
+                tip: i18n::live_tip_dns(DNS_GOOD_MS, DNS_OK_MS),
                 opens: None,
             },
             None => Stat {
@@ -1271,7 +1273,7 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
                 value: "-".into(),
                 sub: i18n::live_card_dns_sub().into(),
                 colour: FG_DIM,
-                tip: i18n::live_tip_dns(),
+                tip: i18n::live_tip_dns(DNS_GOOD_MS, DNS_OK_MS),
                 opens: None,
             },
         }
@@ -1333,9 +1335,6 @@ fn collect_stats(app: &App, day: &[crate::store::Event]) -> Vec<Stat> {
 /// router protecting itself rather than a fault.
 fn path_table(app: &mut App, ui: &mut egui::Ui) {
     let reading = app.monitor.path();
-
-    ui.label(egui::RichText::new(i18n::live_path_heading()).size(T_BODY).strong().color(FG_DIM));
-    ui.add_space(S_XS);
 
     if reading.hops.is_empty() {
         ui.label(egui::RichText::new(i18n::live_path_waiting()).size(T_META).color(FG_DIM));
@@ -1425,70 +1424,6 @@ fn path_table(app: &mut App, ui: &mut egui::Ui) {
     ui.label(egui::RichText::new(i18n::live_path_note()).size(T_META).italics().color(FG_DIM));
 }
 
-fn trace_button(app: &mut App, ui: &mut egui::Ui) {
-    // Traceroute is the only control here that goes and finds out
-    // something the page is not already showing, so it carries the row.
-    // While it runs it says so on its own face rather than greying out
-    // with the same label and leaving the user to guess whether the click
-    // registered.
-    let trace_label = if app.tracing { i18n::live_tracing() } else { i18n::live_btn_trace() };
-    let trace_w = btn_width(ui, i18n::live_btn_trace()).max(btn_width(ui, i18n::live_tracing()));
-    if button_ex(ui, trace_label, Emphasis::Primary, !app.tracing, trace_w).clicked() {
-        app.tracing = true;
-        app.trace = vec![i18n::live_tracing().into()];
-        let tx = app.tx.clone();
-        std::thread::spawn(move || {
-            let hops = icmp::traceroute(std::net::Ipv4Addr::new(1, 1, 1, 1), 20, 1000);
-            let mut lines: Vec<String> = hops
-                .iter()
-                .map(|h| match h.addr {
-                    Some(a) => format!(
-                        "{:>2}  {:<16} {}",
-                        h.hop,
-                        a,
-                        h.rtt_ms.map(|v| format!("{v:.1} ms")).unwrap_or_else(|| "*".into())
-                    ),
-                    None => format!("{:>2}  {:<16} *", h.hop, "*"),
-                })
-                .collect();
-            lines.push(String::new());
-            lines.push(i18n::live_trace_note_1().into());
-            lines.push(i18n::live_trace_note_2().into());
-            let _ = tx.send(Job::Traceroute(lines));
-        });
-    }
-}
-
-/// The one-off route dump, beside the continuous hop table rather than under
-/// the buttons.
-///
-/// Sitting below the controls it pushed everything after it down the page
-/// every time it was run, and it was the widest thing on the tab in the
-/// narrowest place. Here it fills the space the hop table leaves and stays
-/// where it is whether it has been run or not.
-fn trace_panel(app: &App, ui: &mut egui::Ui) {
-    ui.label(egui::RichText::new(i18n::live_trace_heading()).size(T_BODY).strong().color(FG_DIM));
-    ui.add_space(S_XS);
-
-    if app.trace.is_empty() {
-        ui.label(egui::RichText::new(i18n::live_trace_empty()).size(T_META).color(FG_DIM));
-        return;
-    }
-
-    egui::Frame::none().fill(super::BG2).rounding(6.0).inner_margin(egui::Margin::same(S_MD)).show(
-        ui,
-        |ui| {
-            // Every line, with no scroll of its own. Inside the page's
-            // scroll a second one collapsed to three lines and hid the rest
-            // of the route; twenty hops and two notes fit as they are.
-            ui.set_min_width(ui.available_width());
-            for line in &app.trace {
-                ui.label(egui::RichText::new(line).monospace().size(T_META).color(ACCENT));
-            }
-        },
-    );
-}
-
 /// The chart's key: what the markings on it mean, and nothing else.
 ///
 /// Each entry is a swatch in the colour it is about, followed by what that
@@ -1496,7 +1431,7 @@ fn trace_panel(app: &App, ui: &mut egui::Ui) {
 /// the name — and so is everything that was not a marking: the unit, the
 /// threshold words and the instruction now live behind the badge at the end,
 /// which is where a thing you read once belongs.
-fn key_row(ui: &mut egui::Ui) {
+fn key_row(ui: &mut egui::Ui, s: &crate::settings::Settings) {
     // The heading gets a line of its own rather than a place at the head of
     // the row. Inside the row it wrapped along with the entries, and a title
     // that can end up alone at the end of a line is not a title.
@@ -1540,7 +1475,7 @@ fn key_row(ui: &mut egui::Ui) {
         }
 
         ui.add_space(S_SM);
-        help_badge(ui);
+        help_badge(ui, s);
     });
 }
 
@@ -1612,7 +1547,7 @@ fn micro(ui: &mut egui::Ui, text: &str) {
 /// behind it, and the row is a key, not a sentence. Someone who already knows
 /// what a millisecond is skips it with their eyes; someone who does not has
 /// one obvious place to ask.
-fn help_badge(ui: &mut egui::Ui) {
+fn help_badge(ui: &mut egui::Ui, s: &crate::settings::Settings) {
     let size = T_MICRO + 2.0 * S_XS;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
     let hovered = response.hovered();
@@ -1630,7 +1565,7 @@ fn help_badge(ui: &mut egui::Ui) {
     );
     response.on_hover_cursor(egui::CursorIcon::Help).on_hover_ui(|ui| {
         super::tip_heading(ui, i18n::live_key_help());
-        super::tip_prose(ui, &i18n::live_chart_help());
+        super::tip_prose(ui, &i18n::live_chart_help(s.ping_ok_ms, s.ping_bad_ms));
     });
 }
 

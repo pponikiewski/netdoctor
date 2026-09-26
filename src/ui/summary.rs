@@ -114,7 +114,9 @@ pub fn read(
 
     let colour = status_colour(status);
     let (local, provider, say, todo, action) = match status {
-        Status::Ok => (Link::Good, Link::Good, i18n::sum_ok(), i18n::sum_ok_todo(), None),
+        // Nothing to do, so nothing is said: the headline and the chain
+        // already carry "working", and a sentence under them repeated it.
+        Status::Ok => (Link::Good, Link::Good, i18n::sum_ok(), "", None),
         Status::Degraded => {
             // A local link that is slow explains it. One that is not means the
             // trouble is past the router: the router answers quickly and
@@ -227,19 +229,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, summary: &Summary, note: &str, sin
             super::steady(ui, "summary_top", |ui| top_row(app, ui, summary, since, now));
             ui.add_space(S_SM);
             chain(ui, wifi, summary);
-            // The room is the longest advice's, not the current one's: the
-            // panel used to be held per state, so the moment trouble started
-            // the text grew by a line or two and every card and the chart
-            // under it jumped down, and back up when it passed. One height for
-            // every state costs a line of air when all is well and buys a tab
-            // that holds still exactly when the user is watching it.
-            let reserved = reserved_text_height(ui);
+            // Held at the tallest it has been, not reserved up front for the
+            // longest advice there is. Reserved, a healthy line sat over two
+            // or three lines of empty panel. Held, the panel grows once when
+            // trouble first brings advice, and does not jump back up when
+            // it passes.
             super::steady(ui, "summary_text", |ui| {
-                ui.set_min_height(reserved);
-                ui.add(
-                    egui::Label::new(egui::RichText::new(summary.todo).size(T_BODY).color(FG))
-                        .wrap(),
-                );
+                if !summary.todo.is_empty() {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(summary.todo).size(T_BODY).color(FG))
+                            .wrap(),
+                    );
+                }
                 if !note.is_empty() {
                     ui.add_space(S_XS);
                     ui.add(
@@ -287,66 +288,23 @@ fn top_row(app: &mut App, ui: &mut egui::Ui, summary: &Summary, since: Option<Si
     });
 }
 
-/// Every piece of advice the panel can show, in the current language.
-fn all_todos() -> [&'static str; 15] {
-    [
-        i18n::sum_ok_todo(),
-        i18n::sum_slow_todo(),
-        i18n::sum_slow_local_todo(),
-        i18n::sum_slow_weak_todo(),
-        i18n::sum_dns_todo(),
-        i18n::sum_isp_todo(),
-        i18n::sum_lan_wifi_todo(),
-        i18n::sum_lan_cable_todo(),
-        i18n::sum_adapter_wifi_todo(),
-        i18n::sum_adapter_cable_todo(),
-        i18n::sum_paused_todo(),
-        i18n::sum_waiting_todo(),
-        i18n::sum_blind_todo(),
-        i18n::sum_unrecorded_todo(),
-        i18n::sum_stale_todo(),
-    ]
-}
-
-/// The height the advice and the monitor's note need at this width in the
-/// worst case: the longest advice, plus one line of note under it.
-///
-/// A note longer than a line still grows the block, and `steady` then keeps
-/// that height until the width changes.
-fn reserved_text_height(ui: &egui::Ui) -> f32 {
-    let width = ui.available_width();
-    let body = egui::FontId::proportional(T_BODY);
-    let todo = all_todos()
-        .iter()
-        .map(|t| ui.fonts(|f| f.layout(t.to_string(), body.clone(), FG, width).size().y))
-        .fold(0.0, f32::max);
-    let note = ui.fonts(|f| f.row_height(&egui::FontId::proportional(T_META)));
-    todo + S_XS + note
-}
-
 fn actions(app: &mut App, ui: &mut egui::Ui, action: Option<Action>) {
     // A pause held by a running load test or scan is not the user's to lift,
     // and a Resume that does nothing is worse than none.
     let action = action.filter(|a| *a != Action::Resume || app.monitor.is_paused());
-    // Laid right to left by the caller: the report at the far edge, the pause
-    // beside it, the one thing to do about the state nearest the sentence.
+    // Laid right to left by the caller: the pause at the far edge, the one
+    // thing to do about the state nearest the sentence. The report is not
+    // here unless the state calls for it: the History tab has it for every
+    // range, and a standing button beside "working normally" was noise.
     ui.spacing_mut().item_spacing.x = S_XS;
-    // The last day, as it always was; the History tab picks a range.
-    // Not twice when the main button already is the report.
-    if action != Some(Action::Report) {
-        let label =
-            if app.report_busy { i18n::hist_report_saving() } else { i18n::live_btn_report() };
-        if button_ex(ui, label, Emphasis::Ghost, !app.report_busy, 0.0).clicked() {
-            super::report::save_in_background(app, super::report::Range::Day);
-        }
-    }
     // Not beside a main button that already says Resume. The width is the
-    // longer label's, so the row holds still when it flips.
+    // longer label's, so the row holds still when it flips. Quiet: it is the
+    // control nobody needs on an ordinary look at the tab.
     if action != Some(Action::Resume) {
         let paused = app.monitor.is_paused();
         let label = if paused { i18n::live_btn_resume() } else { i18n::live_btn_pause() };
         let w = btn_width(ui, i18n::live_btn_pause()).max(btn_width(ui, i18n::live_btn_resume()));
-        if button_ex(ui, label, Emphasis::Secondary, true, w).clicked() {
+        if button_ex(ui, label, Emphasis::Ghost, true, w).clicked() {
             app.monitor.set_paused(!paused);
         }
     }

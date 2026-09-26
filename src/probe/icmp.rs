@@ -252,7 +252,6 @@ pub fn probe_df(addr: Ipv4Addr, payload_len: u16, timeout_ms: u32) -> bool {
 pub struct Hop {
     pub hop: u32,
     pub addr: Option<Ipv4Addr>,
-    pub rtt_ms: Option<f64>,
 }
 
 /// Walks the path by sending echoes with an increasing TTL and reading which
@@ -275,7 +274,6 @@ pub fn traceroute(dest: Ipv4Addr, max_hops: u32, timeout_ms: u32) -> Vec<Hop> {
             OptionsSize: 0,
             OptionsData: std::ptr::null_mut(),
         };
-        let started = Instant::now();
         let replies = unsafe {
             IcmpSendEcho(
                 pinger.handle,
@@ -288,16 +286,14 @@ pub fn traceroute(dest: Ipv4Addr, max_hops: u32, timeout_ms: u32) -> Vec<Hop> {
                 timeout_ms,
             )
         };
-        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
-
         if replies == 0 {
-            hops.push(Hop { hop: ttl, addr: None, rtt_ms: None });
+            hops.push(Hop { hop: ttl, addr: None });
             continue;
         }
 
         let reply = unsafe { buf.reply() };
         let addr = Ipv4Addr::from(reply.Address.to_le_bytes());
-        hops.push(Hop { hop: ttl, addr: Some(addr), rtt_ms: Some(elapsed) });
+        hops.push(Hop { hop: ttl, addr: Some(addr) });
 
         // Status 0 means the destination itself answered, so the path ends.
         if reply.Status == IP_SUCCESS {

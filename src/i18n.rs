@@ -347,16 +347,8 @@ poprosisz.";
         "Wi-Fi przełączyło się właśnie na inny punkt dostępowy.";
     live_x_now => "now", "teraz";
     live_spike_explainer =>
-        "All the targets are reached over the same Wi-Fi, the same router and the same provider \
-         link. A delay anywhere on that shared stretch shows on all of them in the same round \
-         of pings, so a spike on one target alone did not come from there: it is that one \
-         server taking its time to answer a ping, which traffic passing through it never \
-         waits for. Only the marked spikes say anything about your connection.",
-        "Wszystkie cele są osiągane przez to samo Wi-Fi, ten sam router i to samo łącze dostawcy. \
-         Opóźnienie gdziekolwiek na tym wspólnym odcinku widać na wszystkich naraz, w tej samej \
-         serii pingów, więc skok na jednym celu nie pochodzi stamtąd: to ten jeden serwer \
-         zwleka z odpowiedzią na ping, a zwykły ruch przez niego na to nie czeka. Tylko \
-         oznaczone skoki mówią coś o Twoim łączu.";
+        "A spike on every target at once is your connection: they all share your Wi-Fi, router and provider. A spike on one target alone is that server answering a ping slowly, which normal traffic never waits for. Only the marked spikes are about your line.",
+        "Skok na wszystkich celach naraz to Twoje łącze, bo wszystkie idą przez to samo Wi-Fi, router i dostawcę. Skok tylko na jednym celu to ten serwer wolno odpowiada na ping, na co zwykły ruch nie czeka. Tylko oznaczone skoki dotyczą Twojego łącza.";
     live_no_data => "no data", "brak danych";
 
     live_card_latency => "Latency", "Opóźnienie";
@@ -374,96 +366,9 @@ poprosisz.";
     live_card_uninterrupted_sub => "no outages logged", "brak zapisanych awarii";
     live_card_since_outage => "Since last outage", "Od ostatniej awarii";
 
-    // What each headline number actually is. The cards were six figures with
-    // six technical names over them, which is a readout for someone who
-    // already knows what they are looking at and a wall for everyone else.
-    live_tip_latency =>
-        "How long a packet takes to reach 1.1.1.1 and come back, averaged over the last five \
-         minutes.
-
-This is the one number that decides whether a call stutters or a game feels \
-         late, and it has nothing to do with how fast things download.",
-        "Ile czasu zajmuje pakietowi dotarcie do 1.1.1.1 i powrót, uśrednione z ostatnich pięciu \
-         minut.
-
-To ta jedna liczba decyduje o tym, czy rozmowa się tnie, a gra reaguje z \
-         opóźnieniem, i nie ma związku z tym, jak szybko się pobiera.";
-    live_tip_jitter =>
-        "How much the latency jumps about from packet to packet.
-
-A steady 80 ms is easier on a \
-         call than an average of 40 ms that swings between 10 and 90, because the far end waits \
-         for the slowest packet either way. This is the number that explains a call breaking up \
-         while the latency looks fine.",
-        "O ile opóźnienie skacze z pakietu na pakiet.
-
-Równe 80 ms jest dla rozmowy łatwiejsze niż \
-         średnia 40 ms skacząca między 10 a 90, bo druga strona i tak czeka na najwolniejszy \
-         pakiet. To ta liczba tłumaczy rwaną rozmowę przy ładnie wyglądającym opóźnieniu.";
-    live_tip_loss =>
-        "The share of packets that never came back over the last minute, from whichever \
-         internet target lost the least: loss on the line shows on every target, loss on one \
-         alone is that target. It is the figure the headline is judged on.
-
-Whatever goes \
-         missing has to be sent again, which is why a percent or two can hurt more than a high \
-         latency. Steady loss points at the link; loss in short bursts usually means something \
-         on the way was briefly overloaded.",
-        "Udział pakietów, które nigdy nie wróciły, z ostatniej minuty, z tego celu w internecie, \
-         który stracił najmniej: stratę na łączu widać na każdym celu, strata na jednym to sprawa \
-         tego celu. Na tej liczbie opiera się nagłówek.
-
-Co zginie, trzeba wysłać \
-         ponownie, dlatego procent czy dwa potrafią zaszkodzić bardziej niż wysokie opóźnienie. \
-         Stała strata wskazuje na łącze; strata w krótkich seriach zwykle oznacza chwilowe \
-         przeciążenie czegoś po drodze.";
-    live_tip_router =>
-        "The trip to your own router and back: the first hop, and the only stretch of the path \
-         that is entirely yours.
-
-Over cable this sits well under a millisecond; over Wi-Fi a few \
-         milliseconds is normal and tens of them mean interference or distance. If this number \
-         is bad, every other number on this page is bad for the same reason.",
-        "Droga do własnego routera i z powrotem: pierwszy skok i jedyny odcinek trasy w całości \
-         Twój.
-
-Po kablu jest to grubo poniżej milisekundy; po Wi-Fi kilka milisekund jest \
-         normalne, a kilkadziesiąt oznacza zakłócenia albo odległość. Jeśli ta liczba jest zła, \
-         wszystkie pozostałe na tej stronie są złe z tego samego powodu.";
-    live_tip_dns =>
-        "How long it took to turn a name like example.com into an address.
-
-It is paid once when \
-         you open a site you have not visited in a while, not on every packet, so it shows up as \
-         a page hanging before it starts loading rather than as a slow connection. A slow \
-         resolver is worth replacing, and the Optimise tab does it.",
-        "Ile trwała zamiana nazwy w rodzaju example.com na adres.
-
-Płaci się to raz, przy otwieraniu \
-         strony, na której dawno nie byłeś, a nie przy każdym pakiecie, więc objawia się jako \
-         strona, która chwilę wisi, zanim zacznie się ładować, a nie jako wolne łącze. Wolny \
-         resolver warto wymienić, robi to zakładka Optymalizacja.";
-    live_tip_uptime =>
-        "An outage is a break: the router, the provider or name lookups stopped answering for \
-         long enough to count, not one lost packet. Periods of poor quality, when the connection \
-         worked with loss or lag, are counted separately.\n\nThis is the figure to quote when \
-         reporting a fault. Click the card to open the outage history.",
-        "Awaria to przerwa: router, dostawca albo DNS przestały odpowiadać na tyle długo, żeby to \
-         liczyć, a nie pojedynczy zgubiony pakiet. Okresy słabej jakości, kiedy połączenie \
-         działało, ale ze stratami lub lagami, są liczone osobno.\n\nTę liczbę warto podać, \
-         zgłaszając awarię. Kliknij kartę, żeby otworzyć historię awarii.";
-
     live_btn_pause => "Pause watching", "Wstrzymaj pomiar";
     live_btn_resume => "Resume watching", "Wznów pomiar";
-    live_btn_trace => "Run traceroute", "Uruchom traceroute";
     live_btn_report => "Save report…", "Zapisz raport…";
-    live_tracing => "Tracing route…", "Śledzenie trasy…";
-    live_trace_note_1 =>
-        "Hop 1 is your router. If latency only climbs further out,",
-        "Skok 1 to Twój router. Jeśli opóźnienie rośnie dopiero dalej,";
-    live_trace_note_2 =>
-        "the problem is on the provider's side, not yours.",
-        "problem jest po stronie dostawcy, nie u Ciebie.";
 
     // -----------------------------------------------------------------------
     // diagnose tab
@@ -701,7 +606,6 @@ Płaci się to raz, przy otwieraniu \
     // -----------------------------------------------------------------------
     // the per-hop path
     // -----------------------------------------------------------------------
-    live_path_heading => "Where the loss starts", "Gdzie zaczyna się strata";
     live_path_waiting =>
         "Walking the path and measuring each hop. The first figures arrive in about a minute.",
         "Sprawdzam ścieżkę i mierzę każdy skok. Pierwsze liczby za mniej więcej minutę.";
@@ -709,25 +613,16 @@ Płaci się to raz, przy otwieraniu \
         "Nothing on the path is losing packets or adding delay.",
         "Nic na ścieżce nie gubi pakietów ani nie dokłada opóźnienia.";
     live_path_note =>
-        "A hop that shows loss while the hops behind it do not is rate-limiting its own replies, \
-         not dropping your traffic. Only loss that continues to the end of the path is counted.",
-        "Skok, który pokazuje stratę, podczas gdy skoki za nim nie, ogranicza tempo własnych \
-         odpowiedzi, a nie gubi Twojego ruchu. Liczy się tylko strata, która trwa do końca \
-         ścieżki.";
-    live_trace_heading => "Traceroute to 1.1.1.1", "Traceroute do 1.1.1.1";
-    live_trace_empty =>
-        "Not run yet. It walks the whole route once, including the hops the continuous \
-         measurement leaves out.",
-        "Jeszcze nieuruchomiony. Przechodzi całą trasę raz, także te skoki, które pomija \
-         ciągły pomiar.";
+        "Loss on one hop that the hops after it do not show is that router saving its own \
+         replies, not your traffic being dropped. Only loss that lasts to the end counts.",
+        "Strata na jednym skoku, której nie widać na dalszych, to router oszczędzający własne \
+         odpowiedzi, a nie gubiony ruch. Liczy się tylko strata, która trwa do końca trasy.";
     live_scale_ok => "good", "dobre";
     live_range_label => "range", "zakres";
     live_smooth => "smooth", "wygładź";
     live_smooth_hint =>
-        "Draw each slice's average instead of its range. Reads the shape of an hour; hides the \
-         individual spikes, which the count below still reports.",
-        "Rysuj średnią każdego wycinka zamiast jego rozpiętości. Pokazuje kształt godziny; ukrywa \
-         pojedyncze skoki, o których i tak mówi licznik poniżej.";
+        "Draws the average instead of every spike. The trend is easier to see; single spikes disappear from the chart, but the count below still reports them.",
+        "Rysuje średnią zamiast każdego skoku. Łatwiej zobaczyć trend; pojedyncze skoki znikają z wykresu, ale licznik pod nim nadal je podaje.";
     live_series_toggle => "click to hide this line", "kliknij, żeby ukryć tę linię";
     live_series_show => "click to show this line again", "kliknij, żeby pokazać tę linię z powrotem";
 
@@ -736,56 +631,29 @@ Płaci się to raz, przy otwieraniu \
     // chart's whole point is that the segment where the number goes bad is
     // the segment the fault is in.
     live_meaning_lan =>
-        "Your own router, one hop away over Wi-Fi or cable.\n\nA high figure here is inside your \
-        home: Wi-Fi interference, distance from the router, or the router itself under load. \
-        Nothing further out on the internet can cause it. Note that when this one climbs, every \
-        other line climbs with it, because every packet passes through here first.",
-        "Twój własny router, jeden skok przez Wi-Fi albo kabel.\n\nWysoka wartość tutaj oznacza \
-        problem u Ciebie w domu: zakłócenia Wi-Fi, odległość od routera albo obciążony router. \
-        Nic dalej w internecie nie może tego powodować. Gdy ta linia rośnie, rosną też wszystkie \
-        pozostałe, bo każdy pakiet przechodzi najpierw tędy.";
-    live_meaning_isp =>
-        "The DNS server your provider handed you, the first machine outside your home.\n\nHigh \
-        here while the router is low means the delay starts on the provider's link. High here \
-        while 1.1.1.1 and 8.8.8.8 stay low means only that one resolver is slow: it delays every \
-        new site you open, and switching DNS on the Optimise tab takes it out of the path.",
-        "Serwer DNS podany przez Twojego dostawcę, pierwsza maszyna poza Twoim domem.\n\nWysoko \
-        tutaj przy niskim routerze oznacza, że opóźnienie zaczyna się na łączu dostawcy. Wysoko \
-        tutaj, gdy 1.1.1.1 i 8.8.8.8 są niskie, oznacza, że wolny jest sam ten resolver: opóźnia \
-        każdą nowo otwieraną stronę, a zmiana DNS w zakładce Optymalizacja wyjmuje go ze \
-        ścieżki.";
-    live_meaning_internet =>
-        "A public server far out on the internet (1.1.1.1 is Cloudflare, 8.8.8.8 is \
-        Google).\n\nBoth are built to answer instantly, so whatever you see here is the path, \
-        not the server. This is the full route: your Wi-Fi, your router, your provider, and the \
-        backbone beyond them. High on these while the router stays low puts the fault outside \
-        your home.\n\nHigh on one of them alone, with the other fine, is that single route \
-        having a bad moment and is not something you can fix.",
-        "Publiczny serwer daleko w internecie (1.1.1.1 to Cloudflare, 8.8.8.8 to Google).\n\nOba \
-        są zbudowane tak, by odpowiadać natychmiast, więc to, co tu widzisz, to stan trasy, a \
-        nie serwera. To cała droga: Twoje Wi-Fi, Twój router, Twój dostawca i sieć szkieletowa \
-        za nimi. Wysoko tutaj przy niskim routerze oznacza, że wina leży poza Twoim \
-        domem.\n\nWysoko na jednym z nich, gdy drugi jest w porządku, to gorszy moment tej \
-        jednej trasy i tego nie naprawisz.";
-    live_meaning_custom =>
-        "A target you added yourself. It is measured the same way as the rest: the figure covers \
-        the whole path to it, so compare it against 1.1.1.1 to tell the route apart from the \
-        host at the end of it.",
-        "Cel dodany przez Ciebie. Mierzony tak samo jak reszta: wartość obejmuje całą drogę do \
-        niego, więc porównaj ją z 1.1.1.1, żeby odróżnić stan trasy od stanu samego hosta na jej \
-        końcu.";
+        "Your own router, over Wi-Fi or cable.
 
-    // Said once, on the axis caption. The unit is the thing the whole tab is
-    // made of and it was never defined anywhere.
-    live_ms_explainer =>
-        "A millisecond is a thousandth of a second. The figure is how long one small packet took \
-        to travel there and back, so it is a round trip, not a one-way distance, and it is not \
-        about download speed at all: a fast connection can have poor latency and the other way \
-        round. Under 30 ms is quick, video calls and games start to suffer past roughly 100 ms.",
-        "Milisekunda to tysięczna część sekundy. Wartość mówi, ile mały pakiet leciał tam i z \
-        powrotem, czyli podróż w obie strony, nie odległość w jedną. Nie ma to nic wspólnego z \
-        prędkością pobierania: szybkie łącze może mieć kiepskie opóźnienie i odwrotnie. Poniżej \
-        30 ms jest szybko, rozmowy wideo i gry zaczynają cierpieć powyżej mniej więcej 100 ms.";
+High: the problem is in your home (weak Wi-Fi, interference, a busy router). When this line rises, every other line rises with it.",
+        "Twój router, przez Wi-Fi albo kabel.
+
+Wysoko: problem jest u Ciebie w domu (słabe Wi-Fi, zakłócenia, obciążony router). Gdy ta linia rośnie, rosną też wszystkie pozostałe.";
+    live_meaning_isp =>
+        "Your provider's DNS server, the first machine outside your home.
+
+High while the router is low: the delay starts at your provider. High here alone: only the provider's DNS is slow, and a faster one can be set on the Optimise tab.",
+        "Serwer DNS dostawcy, pierwsza maszyna poza Twoim domem.
+
+Wysoko przy niskim routerze: opóźnienie zaczyna się u dostawcy. Wysoko tylko tutaj: wolny jest sam DNS dostawcy, szybszy ustawisz w zakładce Optymalizacja.";
+    live_meaning_internet =>
+        "A public server on the internet (1.1.1.1 is Cloudflare, 8.8.8.8 is Google): the whole route from your computer.
+
+High while the router is low: the fault is outside your home. High on one of them alone: that one route is having a bad moment, nothing to do.",
+        "Publiczny serwer w internecie (1.1.1.1 to Cloudflare, 8.8.8.8 to Google): cała trasa od Twojego komputera.
+
+Wysoko przy niskim routerze: wina leży poza Twoim domem. Wysoko tylko na jednym z nich: chwilowy problem tej jednej trasy, nic nie trzeba robić.";
+    live_meaning_custom =>
+        "A target you added. The figure covers the whole route to it: compare it with 1.1.1.1 to tell the route from the server at its end.",
+        "Cel dodany przez Ciebie. Wartość obejmuje całą trasę do niego: porównaj ją z 1.1.1.1, żeby odróżnić trasę od samego serwera.";
 
     live_scale_mid => "elevated", "podwyższone";
 
@@ -804,15 +672,6 @@ Płaci się to raz, przy otwieraniu \
     live_key_help => "what am I looking at?", "co tu widzę?";
 
     live_hover_lost => "no reply", "brak odpowiedzi";
-    // The same instruction, in the form it takes inside the help rather than
-    // squeezed onto the key row.
-    live_hover_hint_long =>
-        "Point anywhere on the chart to read every target's value at that exact moment, and the \
-         three bands the colours stand for: good, elevated and poor, at the thresholds set on \
-         the Settings tab.",
-        "Najedź w dowolne miejsce wykresu, żeby odczytać wartość każdego celu dokładnie z tej \
-         chwili. Kolory oznaczają trzy pasma: dobre, podwyższone i słabe, według progów \
-         ustawionych w zakładce Ustawienia.";
     live_hover_spike =>
         "a spike hit several targets at once here",
         "w tym miejscu skok dotknął kilku celów naraz";
@@ -1413,11 +1272,6 @@ Płaci się to raz, przy otwieraniu \
         "Brak bramy domyślnej. Ten komputer nie ma trasy do sieci.";
     // The plain-language summary at the top of the Live tab.
     sum_ok => "Your internet is working normally.", "Internet działa normalnie.";
-    sum_ok_todo =>
-        "Nothing to do. NetDoctor keeps watching in the background and records every break, \
-         with the evidence of where it happened.",
-        "Nic nie musisz robić. NetDoctor pilnuje połączenia w tle i zapisze każdą przerwę, \
-         razem z dowodem, gdzie do niej doszło.";
     sum_slow =>
         "Your internet works, but it is unstable right now.",
         "Internet działa, ale teraz jest niestabilny.";
@@ -1531,7 +1385,9 @@ Płaci się to raz, przy otwieraniu \
     sum_link_unknown => "unknown", "nie wiadomo";
     sum_btn_diagnose => "Open Diagnose", "Otwórz diagnostykę";
     sum_btn_report => "Save a report for my provider", "Zapisz raport dla dostawcy";
-    live_details => "Technical details: the route hop by hop", "Szczegóły techniczne: trasa krok po kroku";
+    live_details =>
+        "Route to the internet: where loss or delay starts",
+        "Trasa do internetu: gdzie zaczyna się strata lub opóźnienie";
     word_signal_good => "good", "dobry";
     word_signal_fair => "fair", "średni";
     word_signal_weak => "weak", "słaby";
@@ -4549,9 +4405,180 @@ pub fn live_threshold_mark(ms: f64) -> String {
 /// by dots, wrapping wherever the window happened to end. Most of it never
 /// changed and only had to be read once, so it lives here, behind one badge,
 /// and the row keeps the parts that are actually about the data on screen.
-pub fn live_chart_help() -> String {
-    let parts = [live_ms_explainer(), live_spike_explainer(), live_hover_hint_long()];
-    parts.join("\n\n")
+///
+/// `ok` and `bad` are the two lines drawn on the chart, from the settings.
+pub fn live_chart_help(ok: f64, bad: f64) -> String {
+    let (ok, bad) = (num(ok), num(bad));
+    match current() {
+        Lang::En => format!(
+            "Each line is the ping to one target, in milliseconds (ms, a thousandth of a second). \
+             Lower is better.\n\n\
+             Good: under {ok} ms\nElevated: {ok} to {bad} ms\nPoor: over {bad} ms\n\n\
+             A spike on every line at once (yellow triangle) is your connection. A spike on one \
+             line alone is that one server answering slowly and can be ignored. A red mark means \
+             no target answered: a break.\n\n\
+             Point at the chart to read the values at that moment."
+        ),
+        Lang::Pl => format!(
+            "Każda linia to ping do jednego celu, w milisekundach (ms, tysięczna część sekundy). \
+             Im niżej, tym lepiej.\n\n\
+             Dobrze: poniżej {ok} ms\nPodwyższone: {ok} do {bad} ms\nŹle: powyżej {bad} ms\n\n\
+             Skok na wszystkich liniach naraz (żółty trójkąt) to Twoje łącze. Skok tylko na \
+             jednej linii to ten jeden serwer wolno odpowiada i można go zignorować. Czerwony \
+             znak: żaden cel nie odpowiedział, czyli przerwa.\n\n\
+             Najedź na wykres, żeby odczytać wartości z danej chwili."
+        ),
+    }
+}
+
+/// A threshold as it is written in the current language: no trailing
+/// zeros, and a decimal comma in Polish.
+fn num(v: f64) -> String {
+    let text = format!("{v}");
+    match current() {
+        Lang::En => text,
+        Lang::Pl => text.replace('.', ","),
+    }
+}
+
+/// A card's tooltip, always in the same three parts: what the figure is,
+/// the bands its colour is read against, and what a high reading means.
+/// The bands are the ones the card is coloured by, so the two never disagree.
+fn card_tip(what: &str, bands: &[(&str, String)], high: &str) -> String {
+    let bands: Vec<String> = bands.iter().map(|(word, range)| format!("{word}: {range}")).collect();
+    format!("{what}\n\n{}\n\n{high}", bands.join("\n"))
+}
+
+/// Words for the three bands and the ranges between two thresholds, for a
+/// figure coloured green, yellow and red.
+fn three_bands(good: f64, bad: f64, unit: &str) -> Vec<(&'static str, String)> {
+    let (g, b) = (num(good), num(bad));
+    match current() {
+        Lang::En => vec![
+            ("Good", format!("under {g} {unit}")),
+            ("Fair", format!("{g} to {b} {unit}")),
+            ("Poor", format!("over {b} {unit}")),
+        ],
+        Lang::Pl => vec![
+            ("Dobrze", format!("poniżej {g} {unit}")),
+            ("Średnio", format!("{g} do {b} {unit}")),
+            ("Źle", format!("powyżej {b} {unit}")),
+        ],
+    }
+}
+
+/// The bands of a figure that is only ever green or yellow: see
+/// `quality_colour` on the Live tab for why it is never red.
+fn two_bands(good: f64, unsteady: f64, unit: &str) -> Vec<(&'static str, String)> {
+    let (g, u) = (num(good), num(unsteady));
+    match current() {
+        Lang::En => {
+            vec![("Good", format!("up to {g}{unit}")), ("Unsteady", format!("over {u}{unit}"))]
+        }
+        Lang::Pl => {
+            vec![
+                ("Dobrze", format!("do {g}{unit}")),
+                ("Niestabilnie", format!("powyżej {u}{unit}")),
+            ]
+        }
+    }
+}
+
+pub fn live_tip_latency(ok: f64, bad: f64) -> String {
+    match current() {
+        Lang::En => card_tip(
+            "How long a packet takes to reach the internet (1.1.1.1) and come back. Average of \
+             the last 5 minutes.",
+            &three_bands(ok, bad, "ms"),
+            "High: games and video calls react late. It has nothing to do with download speed.",
+        ),
+        Lang::Pl => card_tip(
+            "Ile pakiet leci do internetu (1.1.1.1) i z powrotem. Średnia z ostatnich 5 minut.",
+            &three_bands(ok, bad, "ms"),
+            "Wysoko: gry i rozmowy wideo reagują z opóźnieniem. Nie ma to związku z prędkością \
+             pobierania.",
+        ),
+    }
+}
+
+pub fn live_tip_jitter(good: f64, unsteady: f64) -> String {
+    match current() {
+        Lang::En => card_tip(
+            "How much the latency jumps from one packet to the next. Last minute.",
+            &two_bands(good, unsteady, " ms"),
+            "High: calls break up and games stutter, even when the latency itself looks fine.",
+        ),
+        Lang::Pl => card_tip(
+            "O ile opóźnienie skacze z pakietu na pakiet. Z ostatniej minuty.",
+            &two_bands(good, unsteady, " ms"),
+            "Wysoko: rozmowa się tnie, a gra przycina, nawet gdy samo opóźnienie wygląda dobrze.",
+        ),
+    }
+}
+
+pub fn live_tip_loss(good: f64, unsteady: f64) -> String {
+    match current() {
+        Lang::En => card_tip(
+            "The share of packets that never came back. Last minute.",
+            &two_bands(good, unsteady, "%"),
+            "High: pages and games stall, because lost data has to be sent again. Steady loss \
+             points at the link, short bursts at something briefly overloaded on the way.",
+        ),
+        Lang::Pl => card_tip(
+            "Ile pakietów nie wróciło. Z ostatniej minuty.",
+            &two_bands(good, unsteady, "%"),
+            "Wysoko: strony i gry się zacinają, bo zgubione dane trzeba wysłać jeszcze raz. \
+             Stała strata wskazuje na łącze, krótkie serie na chwilowe przeciążenie po drodze.",
+        ),
+    }
+}
+
+pub fn live_tip_router(good: f64, bad: f64) -> String {
+    match current() {
+        Lang::En => card_tip(
+            "The ping to your own router: the only stretch of the route that is entirely yours.",
+            &three_bands(good, bad, "ms"),
+            "High: the problem is in your home (weak Wi-Fi, interference, a busy router), and \
+             every other figure goes up with it.",
+        ),
+        Lang::Pl => card_tip(
+            "Ping do Twojego routera: jedyny odcinek trasy, który jest w całości Twój.",
+            &three_bands(good, bad, "ms"),
+            "Wysoko: problem jest u Ciebie w domu (słabe Wi-Fi, zakłócenia, obciążony router) i \
+             rosną przez to wszystkie pozostałe liczby.",
+        ),
+    }
+}
+
+pub fn live_tip_dns(good: f64, bad: f64) -> String {
+    match current() {
+        Lang::En => card_tip(
+            "How long it takes to turn a site's name (like google.com) into an address.",
+            &three_bands(good, bad, "ms"),
+            "High: pages hang for a moment before they start loading. An error means sites will \
+             not open even if the connection works. A faster DNS can be set on the Optimise tab.",
+        ),
+        Lang::Pl => card_tip(
+            "Ile trwa zamiana nazwy strony (np. google.com) na adres.",
+            &three_bands(good, bad, "ms"),
+            "Wysoko: strony chwilę wiszą, zanim zaczną się ładować. Błąd oznacza, że strony się \
+             nie otwierają, choć łącze działa. Szybszy DNS ustawisz w zakładce Optymalizacja.",
+        ),
+    }
+}
+
+pub fn live_tip_uptime() -> String {
+    match current() {
+        Lang::En => "How long since the last outage. An outage is a break: the router, the \
+                     provider or DNS stopped answering for long enough to count, not one lost \
+                     packet. Periods of poor quality are counted separately.\n\nClick to open \
+                     the outage history."
+            .into(),
+        Lang::Pl => "Ile czasu minęło od ostatniej awarii. Awaria to przerwa: router, dostawca \
+                     albo DNS przestały odpowiadać na dłużej, a nie jeden zgubiony pakiet. Okresy \
+                     słabej jakości liczone są osobno.\n\nKliknij, żeby otworzyć historię awarii."
+            .into(),
+    }
 }
 
 /// What a given probe target is, and what a high reading on it means.

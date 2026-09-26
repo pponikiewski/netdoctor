@@ -183,7 +183,6 @@ pub enum Job {
     BloatDone(Box<BloatResult>),
     /// A ping of the running load test, with the speed at that moment.
     BloatLive(crate::bandwidth::Sample, Option<f64>),
-    Traceroute(Vec<String>),
     AirDone(Box<crate::probe::airscan::AirScan>),
     /// The Windows event log around one outage, keyed by that outage's row id
     /// so a slow read landing after the user moved on is discarded, not shown
@@ -281,9 +280,6 @@ pub struct App {
     /// speed, for drawing it while it runs.
     pub bloat_live: Vec<crate::bandwidth::Sample>,
     pub bloat_speed: [Option<f64>; 2],
-
-    pub trace: Vec<String>,
-    pub tracing: bool,
 
     /// How far back the live chart looks, in seconds.
     pub chart_range_s: f64,
@@ -448,8 +444,6 @@ impl App {
             bloat_at: None,
             bloat_live: Vec::new(),
             bloat_speed: [None; 2],
-            trace: Vec::new(),
-            tracing: false,
             chart_range_s: 300.0,
             chart_smooth: false,
             hidden_series: std::collections::HashSet::new(),
@@ -673,10 +667,6 @@ impl App {
                     self.air = *scan;
                     self.air_scanning = false;
                     self.monitor.release();
-                }
-                Job::Traceroute(lines) => {
-                    self.trace = lines;
-                    self.tracing = false;
                 }
                 Job::UpdateState(state) => {
                     // Reopen the banner on every transition worth announcing,

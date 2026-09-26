@@ -206,8 +206,8 @@ one English label that would silently fail everywhere else.
   each say on hover what they are and what a bad value there points at. The
   outage card counts breaks only, with periods of poor quality beside them,
   and opens the outage history when clicked.
-  Folded away under *Technical details*: the path hop by hop with a verdict on
-  which one the trouble starts at, and traceroute.
+  Folded away under *Route to the internet*: the path hop by hop, measured
+  continuously, with a verdict on which hop the trouble starts at.
 - **Diagnose**: nine checks: adapter and medium (on a cable, also whether
   it is corrupting frames and what speed it negotiated), Wi-Fi quality and band,
   adapter power management, DNS, the link to the router, internet latency and
