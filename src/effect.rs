@@ -8,6 +8,7 @@
 
 use crate::diagnose::{ANCHOR_ALT_KEY, ANCHOR_KEY};
 use crate::store::{Store, TweakLogRow};
+use std::collections::HashMap;
 
 /// How far each side reaches: a day before, and up to a day after.
 pub const WINDOW_S: f64 = 86_400.0;
@@ -44,7 +45,61 @@ pub struct Effect {
 /// The side after ends at a revert of the same tweak, if one came later: past
 /// that point the machine is back as it was and the figures say nothing
 /// about the change.
+#[cfg(test)]
 pub fn of(store: &Store, log: &[TweakLogRow], tweak_id: &str, now: f64) -> Option<Effect> {
+    of_with(log, tweak_id, now, |from, to| side(store, from, to))
+}
+
+/// Sides already read, by the stretch they cover.
+///
+/// Reading a side is a day of samples on two anchors, and the Optimise tab
+/// asked for every applied tweak at start-up, on every visit and after every
+/// change: 44 queries and 1.9 million rows on a week-old history. A stretch
+/// that has ended never reads differently, so each is read once.
+#[derive(Default)]
+pub struct Cache {
+    sides: HashMap<(u64, u64), Option<Side>>,
+}
+
+/// The side after a change is still growing for a day. It is read up to the
+/// last whole step of this length, so asking again within the step is the
+/// same stretch and costs nothing. `span_s` says how far it reaches.
+const AFTER_STEP_S: f64 = 300.0;
+
+/// Beyond this many stretches the cache starts over.
+// ponytail: a growing side leaves one stale entry per step until its day is
+// up; clearing wholesale bounds that without tracking which are still asked
+// for. An LRU would keep the hot ones across the reset if it ever shows.
+const CACHE_MAX: usize = 512;
+
+impl Cache {
+    fn side(&mut self, store: &Store, from: f64, to: f64) -> Option<Side> {
+        if self.sides.len() >= CACHE_MAX {
+            self.sides.clear();
+        }
+        *self.sides.entry((from.to_bits(), to.to_bits())).or_insert_with(|| side(store, from, to))
+    }
+}
+
+/// [`of`] through `cache`, with the side after read up to the last
+/// [`AFTER_STEP_S`] boundary rather than up to `now`.
+pub fn of_cached(
+    store: &Store,
+    log: &[TweakLogRow],
+    tweak_id: &str,
+    now: f64,
+    cache: &mut Cache,
+) -> Option<Effect> {
+    let now = (now / AFTER_STEP_S).floor() * AFTER_STEP_S;
+    of_with(log, tweak_id, now, |from, to| cache.side(store, from, to))
+}
+
+fn of_with(
+    log: &[TweakLogRow],
+    tweak_id: &str,
+    now: f64,
+    mut side: impl FnMut(f64, f64) -> Option<Side>,
+) -> Option<Effect> {
     let applied = log
         .iter()
         .filter(|r| r.tweak_id == tweak_id && r.action == "apply")
@@ -56,11 +111,7 @@ pub fn of(store: &Store, log: &[TweakLogRow], tweak_id: &str, now: f64) -> Optio
         .map(|r| r.ts)
         .fold(f64::INFINITY, f64::min);
     let end = (applied + WINDOW_S).min(reverted).min(now);
-    Some(Effect {
-        applied,
-        before: side(store, applied - WINDOW_S, applied),
-        after: side(store, applied, end),
-    })
+    Some(Effect { applied, before: side(applied - WINDOW_S, applied), after: side(applied, end) })
 }
 
 fn side(store: &Store, from: f64, to: f64) -> Option<Side> {
@@ -115,6 +166,28 @@ mod tests {
         assert_eq!(after.median_ms, Some(20.0));
         assert_eq!(after.loss_pct, 0.0);
         assert_eq!(after.span_s, 900.0, "the side after covers only the time since");
+    }
+
+    #[test]
+    fn a_stretch_is_read_once_and_the_side_after_stops_at_a_step() {
+        let store = Store::open_in_memory().unwrap();
+        let applied = 100_020.0;
+        fill(&store, applied - 1_000.0, 1_000, 40.0, 0);
+        fill(&store, applied, 1_000, 20.0, 0);
+        let log = [row(applied, "apply")];
+        let mut cache = Cache::default();
+        let now = applied + 950.0;
+        let first = of_cached(&store, &log, "nagle", now, &mut cache).unwrap();
+        // Up to the last step boundary, and saying so.
+        let step_end = (now / AFTER_STEP_S).floor() * AFTER_STEP_S;
+        assert_eq!(first.after.unwrap().span_s, step_end - applied);
+        assert_eq!(first.before, of(&store, &log, "nagle", now).unwrap().before);
+
+        // Rows that land in a stretch already read do not change it: the
+        // answer came from the cache, not from another query.
+        fill(&store, applied - 500.5, 400, 90.0, 0);
+        let again = of_cached(&store, &log, "nagle", now + 10.0, &mut cache).unwrap();
+        assert_eq!(again, first);
     }
 
     #[test]

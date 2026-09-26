@@ -16,7 +16,7 @@ mod update_ui;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 
@@ -299,6 +299,9 @@ pub struct App {
     /// What the line did before and after each change the log says was
     /// applied, keyed by tweak id. Read with the states, off the UI thread.
     pub tweak_effects: HashMap<String, crate::effect::Effect>,
+    /// What `tweak_effects` was read from, kept for the next refresh. Shared
+    /// with the worker that does the reading.
+    effect_cache: Arc<Mutex<crate::effect::Cache>>,
     pub selected_tweak: Option<usize>,
     /// The read this app has asked for most recently. Bumped by every
     /// `refresh_tweaks`; a result carrying an older number is a read that an
@@ -331,6 +334,8 @@ pub struct App {
     /// changes, not on every frame. 33 KB of JSON per outage, and the panel
     /// used to parse it twice a frame at 60 Hz.
     pub outage_detail: Option<history::OutageDetail>,
+    /// The outage list, re-read once a second rather than every frame.
+    pub history_list: Option<history::ListCache>,
     /// The event log read for one outage, kept so opening an entry launches
     /// `wevtutil` once rather than on every frame it stays open.
     pub syslog: Option<(i64, Vec<crate::probe::eventlog::SysEvent>)>,
@@ -440,6 +445,7 @@ impl App {
             card_cache: None,
             tweak_states: Vec::new(),
             tweak_effects: HashMap::new(),
+            effect_cache: Default::default(),
             tweaks_gen: 0,
             tweaks_shown_gen: 0,
             tweak_pending: HashMap::new(),
@@ -450,6 +456,7 @@ impl App {
             show_unavailable: true,
             selected_outage: None,
             outage_detail: None,
+            history_list: None,
             syslog: None,
             syslog_pending: None,
             report_range: report::Range::Day,
@@ -485,6 +492,7 @@ impl App {
         let net = self.net.clone();
         let tx = self.tx.clone();
         let store = Arc::clone(&self.store);
+        let cache = Arc::clone(&self.effect_cache);
         let ctx = self.ctx.clone();
         self.tweaks_gen += 1;
         let gen = self.tweaks_gen;
@@ -501,12 +509,15 @@ impl App {
             // a day of samples on two anchors is tens of thousands of rows.
             let now = crate::store::now();
             let log = store.tweaks_between(0.0, now);
+            let mut cache = cache.lock().unwrap_or_else(|p| p.into_inner());
             let effects = tweaks
                 .iter()
                 .filter_map(|t| {
-                    crate::effect::of(&store, &log, t.id(), now).map(|e| (t.id().to_string(), e))
+                    crate::effect::of_cached(&store, &log, t.id(), now, &mut cache)
+                        .map(|e| (t.id().to_string(), e))
                 })
                 .collect();
+            drop(cache);
             let _ = tx.send(Job::TweakStates(gen, states, effects));
             ctx.request_repaint();
         });
@@ -756,7 +767,17 @@ impl eframe::App for App {
 
         // The monitor produces a sample per second; repainting on that cadence
         // keeps the chart live without spinning the GPU.
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        //
+        // Not while hidden in the tray: nothing is drawn, and a booked frame
+        // was what woke the event loop to find a window it could not paint
+        // (see `NETDOC PATCH` in vendor/winit). A frame still runs when
+        // something asks for one, a job landing or the tray bringing the
+        // window back, and books the next from there. Minimised is the same:
+        // restoring it is an event of its own.
+        let minimised = ctx.input(|i| i.viewport().minimized) == Some(true);
+        if !minimised && crate::tray::main_window_shown().unwrap_or(true) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        }
 
         // All three panels indent to the same GUTTER, so the header, the tab
         // labels and whatever the tab draws share one left edge. They were

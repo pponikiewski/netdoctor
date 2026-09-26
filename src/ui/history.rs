@@ -19,6 +19,7 @@ use crate::diagnose::format_datetime;
 use crate::i18n;
 use crate::probe::eventlog::SysEvent;
 use crate::store::Event;
+use std::rc::Rc;
 
 /// Everything the detail panel needs from one outage's stored context, read
 /// from the database once and parsed once.
@@ -36,6 +37,111 @@ pub struct OutageDetail {
     pub state: Option<serde_json::Value>,
     /// State it recovered into, for the "came back into" block.
     pub recovery: Option<serde_json::Value>,
+    /// Everything the panel reads from the other tables, and the verdict
+    /// drawn from it. `None` until the first frame that shows the outage.
+    derived: Option<Derived>,
+}
+
+/// What the detail panel reads around one outage, held between frames.
+///
+/// All of this used to be read on every frame: the tweak log, the router's
+/// answers, the cause rules and, heaviest by far, every sample from the start
+/// of the lead-up to a minute after the end. Behind an eight-hour outage that
+/// is 170 000 rows, re-read sixty times a second while the pointer was over
+/// the plot.
+struct Derived {
+    /// The inputs the causes are drawn from. Any change re-reads them.
+    key: DerivedKey,
+    built_at: f64,
+    tweaks: Vec<crate::store::TweakLogRow>,
+    log: Vec<SysEvent>,
+    causes: Vec<Cause>,
+    /// Every sample read so far, unthinned. While the outage is still open
+    /// only the rows after `raw.to` are read, so an eight-hour outage costs
+    /// five seconds of rows per refresh rather than eight hours.
+    raw: RawLead,
+    series: LeadSeries,
+}
+
+/// The samples behind the lead-up plot, relative to the start of the outage.
+#[derive(Default)]
+struct RawLead {
+    /// The newest sample taken in, which the next read starts after. Not the
+    /// end of the span asked for: a sweep's rows carry the moment it began
+    /// and land when it ends, so one running at read time is not there yet
+    /// and must not be skipped past. Sweeps are written one at a time, in
+    /// order, so everything up to this one is.
+    newest: Option<f64>,
+    router: Vec<[f64; 2]>,
+    router_lost: Vec<f64>,
+    /// The internet is the best of the public anchors in each second, the
+    /// way the monitor reads it: one slow anchor is not the internet being
+    /// slow. Keyed by the second, so rows read later join theirs.
+    net: std::collections::BTreeMap<i64, (Option<f64>, bool)>,
+}
+
+impl RawLead {
+    /// Takes in samples newer than any already held.
+    fn absorb(&mut self, samples: &[(f64, String, Option<f64>, bool)], t0: f64) {
+        let after = self.newest;
+        for (ts, target, rtt_ms, ok) in samples {
+            if after.is_some_and(|a| *ts <= a) {
+                continue;
+            }
+            self.newest = Some(self.newest.map_or(*ts, |n| n.max(*ts)));
+            let x = ts - t0;
+            match target.as_str() {
+                "gateway" => match (ok, rtt_ms) {
+                    (true, Some(ms)) => self.router.push([x, *ms]),
+                    _ => self.router_lost.push(x),
+                },
+                "cloudflare" | "google" => {
+                    let slot = self.net.entry(x.round() as i64).or_insert((None, false));
+                    if let (true, Some(ms)) = (ok, rtt_ms) {
+                        slot.0 = Some(slot.0.map_or(*ms, |best: f64| best.min(*ms)));
+                    }
+                    slot.1 |= ok;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[derive(PartialEq)]
+struct DerivedKey {
+    ts_end: Option<f64>,
+    kind: String,
+    /// Whether the event log read had landed. It arrives after the first
+    /// frame, and the causes read it.
+    log_ready: bool,
+    /// The outage list the cause rules compare against: its length and its
+    /// newest row, which is where a change shows.
+    history: (usize, Option<i64>),
+}
+
+/// While an outage is open, or less than a minute closed, its plot still
+/// grows at the right edge. That is re-read this often.
+const LIVE_REFRESH_S: f64 = 5.0;
+
+/// The most points either line of the lead-up plot is drawn with. An hour at
+/// one sweep a second is 3600 per line, and egui re-tessellates and hit-tests
+/// all of them every frame; past this the plot is thinned.
+const MAX_PLOT_POINTS: usize = 2000;
+
+/// The lead-up plot's series, relative to the start of the outage.
+#[derive(Default)]
+struct LeadSeries {
+    from: f64,
+    to: f64,
+    router: Vec<[f64; 2]>,
+    router_lost: Vec<f64>,
+    internet: Vec<[f64; 2]>,
+    internet_lost: Vec<f64>,
+    rssi: Vec<[f64; 2]>,
+    /// The stored context had no lead-up: an older row, or one pruned past
+    /// the sample retention.
+    no_lead: bool,
 }
 
 /// Reads and parses the selected outage's context, unless it is already in
@@ -50,7 +156,126 @@ fn ensure_detail(app: &mut App, id: i64) {
         evidence: ctx.as_ref().and_then(Evidence::from_context),
         state: ctx.as_ref().and_then(|c| c.context_json()),
         recovery: ctx.as_ref().and_then(|c| c.context_end_json()),
+        derived: None,
     });
+}
+
+/// Reads the tables around the outage and runs the cause rules, unless what
+/// is in hand was built from the same inputs and is not still growing.
+fn ensure_derived(app: &App, detail: &mut OutageDetail, event: &Event, events: &[Event]) {
+    let now = crate::store::now();
+    let log = match &app.syslog {
+        Some((id, log)) if *id == event.id => Some(log),
+        _ => None,
+    };
+    let key = DerivedKey {
+        ts_end: event.ts_end,
+        kind: event.kind.clone(),
+        log_ready: log.is_some(),
+        history: (events.len(), events.first().map(|e| e.id)),
+    };
+    let settled = event.ts_end.is_some_and(|end| now >= end + 60.0);
+    if let Some(d) = &detail.derived {
+        if d.key == key && (settled || now - d.built_at < LIVE_REFRESH_S) {
+            return;
+        }
+    }
+
+    // Changes applied in the hour before the outage: the correlation the app
+    // has always had the data for and never drawn.
+    let tweaks = app.store.tweaks_between(event.ts_start - 3600.0, event.ts_start);
+    let log = log.cloned().unwrap_or_default();
+    let router = app.store.router_between(
+        event.ts_start - cause::ROUTER_MARGIN_S,
+        event.ts_end.unwrap_or(event.ts_start) + cause::ROUTER_MARGIN_S,
+    );
+    let causes = cause::analyse(event, detail.evidence.as_ref(), events, &tweaks, &log, &router);
+
+    let lead: &[crate::monitor::LeadSample] =
+        detail.evidence.as_ref().map(|e| e.lead.as_slice()).unwrap_or(&[]);
+    let t0 = event.ts_start;
+    let from = lead.first().map(|s| s.ts).unwrap_or(t0 - 180.0);
+    // A minute of recovery, but never past the present: for an outage that
+    // just ended, the rest of that minute is an empty stretch of axis.
+    let to = (event.ts_end.unwrap_or(now) + 60.0).min(now);
+    let mut raw = detail.derived.take().map(|d| d.raw).unwrap_or_default();
+    raw.absorb(&app.store.samples_between(raw.newest.unwrap_or(from), to), t0);
+    let series = lead_series(&raw, lead, t0, from, to);
+
+    detail.derived = Some(Derived { key, built_at: now, tweaks, log, causes, raw, series });
+}
+
+/// The plot's series: the samples read so far, thinned to what a plot can
+/// draw every frame, and the signal from the lead-up.
+///
+/// Router and internet latency come from the stored samples rather than the
+/// lead-up, because the lead-up stops where the outage begins and the shape
+/// of the outage itself is half the evidence.
+fn lead_series(
+    raw: &RawLead,
+    lead: &[crate::monitor::LeadSample],
+    t0: f64,
+    from: f64,
+    to: f64,
+) -> LeadSeries {
+    let net = &raw.net;
+    let internet = net.iter().filter_map(|(x, (ms, _))| ms.map(|ms| [*x as f64, ms])).collect();
+    let internet_lost =
+        net.iter().filter(|(_, (_, any_ok))| !any_ok).map(|(x, _)| *x as f64).collect();
+    let rssi = lead.iter().filter_map(|s| s.rssi_dbm.map(|r| [s.ts - t0, r as f64])).collect();
+
+    let bucket = (to - from) / MAX_PLOT_POINTS as f64;
+    LeadSeries {
+        from,
+        to,
+        router: thin(raw.router.clone(), bucket),
+        router_lost: thin_marks(raw.router_lost.clone(), bucket),
+        internet: thin(internet, bucket),
+        internet_lost: thin_marks(internet_lost, bucket),
+        rssi,
+        no_lead: lead.is_empty(),
+    }
+}
+
+/// At most one point per `bucket` seconds, and that one the slowest: a
+/// thinned plot that dropped the spike would be hiding the evidence. Points
+/// already sparse enough are returned untouched.
+fn thin(points: Vec<[f64; 2]>, bucket: f64) -> Vec<[f64; 2]> {
+    if points.len() <= MAX_PLOT_POINTS || bucket <= 0.0 {
+        return points;
+    }
+    let mut out: Vec<[f64; 2]> = Vec::with_capacity(MAX_PLOT_POINTS + 1);
+    let mut slot = i64::MIN;
+    for p in points {
+        let s = (p[0] / bucket).floor() as i64;
+        match out.last_mut() {
+            Some(last) if s == slot => {
+                if p[1] > last[1] {
+                    *last = p;
+                }
+            }
+            _ => {
+                slot = s;
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// At most one lost-ping mark per `bucket` seconds: a run of them is one red
+/// band either way, and each mark is a shape egui draws every frame.
+fn thin_marks(xs: Vec<f64>, bucket: f64) -> Vec<f64> {
+    if xs.len() <= MAX_PLOT_POINTS || bucket <= 0.0 {
+        return xs;
+    }
+    let mut out: Vec<f64> = Vec::with_capacity(MAX_PLOT_POINTS + 1);
+    for x in xs {
+        if out.last().is_none_or(|last| (x / bucket).floor() != (last / bucket).floor()) {
+            out.push(x);
+        }
+    }
+    out
 }
 
 /// Width of the outage list beside the detail. Wide enough for a date, a
@@ -59,8 +284,38 @@ fn ensure_detail(app: &mut App, id: i64) {
 const LIST_W: f32 = 340.0;
 const ROW_H: f32 = 54.0;
 
+/// The outage list and the last day of it, held between frames.
+///
+/// Both were queried on every frame, and the tab repaints at 60 Hz whenever
+/// it scrolls or the pointer moves. Outages open and close at the sweep's
+/// pace, so a second-old list is as current as the data.
+pub struct ListCache {
+    built_at: f64,
+    recent: Rc<Vec<Event>>,
+    day: Rc<Vec<Event>>,
+}
+
+const LIST_REFRESH_S: f64 = 1.0;
+
+fn list_cache(app: &mut App) -> (Rc<Vec<Event>>, Rc<Vec<Event>>) {
+    let now = crate::store::now();
+    let fresh = app.history_list.as_ref().filter(|c| now - c.built_at < LIST_REFRESH_S);
+    if let Some(c) = fresh {
+        return (Rc::clone(&c.recent), Rc::clone(&c.day));
+    }
+    let c = ListCache {
+        built_at: now,
+        recent: Rc::new(app.store.recent_events(300)),
+        day: Rc::new(app.store.events_since(24.0 * 3600.0)),
+    };
+    let out = (Rc::clone(&c.recent), Rc::clone(&c.day));
+    app.history_list = Some(c);
+    out
+}
+
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    let events = app.store.recent_events(300);
+    let (events, day) = list_cache(app);
+    let events = events.as_slice();
 
     // A selection made before the list refreshed may name a row that is no
     // longer here; dropping it is better than showing the wrong outage.
@@ -87,8 +342,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         // outage under it across the whole width. The summary scrolls away
         // with the list instead of standing over it.
         anchored_scroll(ui, "history_page", |ui| {
-            header(app, ui, &events);
-            if clear_confirm(app, ui, &events) {
+            header(app, ui, events, &day);
+            if clear_confirm(app, ui, events) {
                 return None;
             }
             if events.is_empty() {
@@ -99,7 +354,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 });
                 return None;
             }
-            list(app, ui, &events)
+            list(app, ui, events)
         });
         return;
     };
@@ -111,7 +366,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical()
             .id_salt("history_detail")
             .auto_shrink([false, false])
-            .show(ui, |ui| detail(app, ui, event, &events));
+            .show(ui, |ui| detail(app, ui, event, events));
         return;
     }
 
@@ -120,14 +375,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .exact_width(list_w)
         .show_separator_line(false)
         .frame(egui::Frame::none().inner_margin(egui::Margin { right: S_LG, ..Default::default() }))
-        .show_inside(ui, |ui| anchored_scroll(ui, "history_table", |ui| list(app, ui, &events)));
+        .show_inside(ui, |ui| anchored_scroll(ui, "history_table", |ui| list(app, ui, events)));
 
     egui::CentralPanel::default().frame(egui::Frame::none()).show_inside(ui, |ui| {
         close_button(app, ui);
         egui::ScrollArea::vertical()
             .id_salt("history_detail")
             .auto_shrink([false, false])
-            .show(ui, |ui| detail(app, ui, event, &events));
+            .show(ui, |ui| detail(app, ui, event, events));
     });
 }
 
@@ -202,9 +457,8 @@ fn confirm_id() -> egui::Id {
 }
 
 /// The day in one sentence, what the entries hold, and the report.
-fn header(app: &mut App, ui: &mut egui::Ui, events: &[Event]) {
+fn header(app: &mut App, ui: &mut egui::Ui, events: &[Event], day: &[Event]) {
     let can_clear = events.iter().any(|e| e.ts_end.is_some());
-    let day = app.store.events_since(24.0 * 3600.0);
     let (text, colour) = if day.is_empty() {
         let watched =
             app.last.observed_from.map_or(0.0, |from| (crate::store::now() - from).max(0.0));
@@ -300,6 +554,7 @@ fn clear_confirm(app: &mut App, ui: &mut egui::Ui, events: &[Event]) -> bool {
                             app.selected_outage = None;
                             app.outage_detail = None;
                             app.syslog = None;
+                            app.history_list = None;
                             app.toast(i18n::hist_cleared(n), GREEN, now);
                         }
                         Err(e) => app.toast(i18n::hist_clear_failed(&e.to_string()), RED, now),
@@ -408,8 +663,10 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
     // a reload: `ensure_detail` only reads the database when the selection
     // changed.
     ensure_detail(app, event.id);
-    let cached = app.outage_detail.take();
-    let detail = cached.as_ref().expect("ensure_detail just stored one");
+    let Some(mut cached) = app.outage_detail.take() else { return };
+    ensure_derived(app, &mut cached, event, events);
+    let detail = &cached;
+    let Some(derived) = detail.derived.as_ref() else { return };
 
     ui.label(
         egui::RichText::new(i18n::hist_cause_for(&format_datetime(event.ts_start)))
@@ -439,29 +696,18 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
     });
     ui.add_space(S_MD);
 
-    // Changes applied in the hour before the outage: the correlation the app
-    // has always had the data for and never drawn.
-    let tweaks = app.store.tweaks_between(event.ts_start - 3600.0, event.ts_start);
     request_log(app, event);
-    let log = match &app.syslog {
-        Some((id, events)) if *id == event.id => events.clone(),
-        _ => Vec::new(),
-    };
-    let router = app.store.router_between(
-        event.ts_start - cause::ROUTER_MARGIN_S,
-        event.ts_end.unwrap_or(event.ts_start) + cause::ROUTER_MARGIN_S,
-    );
-    let causes = cause::analyse(event, detail.evidence.as_ref(), events, &tweaks, &log, &router);
+    let (tweaks, log) = (&derived.tweaks, &derived.log);
 
     card(ui, i18n::hist_cause_heading(), |ui| {
-        for c in &causes {
+        for c in &derived.causes {
             cause_row(app, ui, c);
         }
     });
 
     if !tweaks.is_empty() {
         card(ui, i18n::hist_tweaks_heading(), |ui| {
-            for t in &tweaks {
+            for t in tweaks {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(figure(format_datetime(t.ts), T_META, FG_DIM));
                     ui.label(
@@ -474,7 +720,7 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
     }
 
     card(ui, i18n::hist_leadup_heading(), |ui| {
-        lead_up(app, ui, event, detail.evidence.as_ref());
+        lead_up(ui, event, &derived.series);
     });
 
     // Failure state and recovery state are meant to be compared, so they sit
@@ -503,9 +749,9 @@ fn detail(app: &mut App, ui: &mut egui::Ui, event: &Event, events: &[Event]) {
         }
     });
 
-    card(ui, i18n::hist_log_heading(), |ui| system_log(app, ui, event, &log));
+    card(ui, i18n::hist_log_heading(), |ui| system_log(app, ui, event, log));
 
-    app.outage_detail = cached;
+    app.outage_detail = Some(cached);
 }
 
 /// A heading inside a card, one step below the card's own title.
@@ -668,51 +914,12 @@ fn open_tweak(app: &mut App, tweak_id: &str) {
 /// stories the table cannot: both lines failing together is this side of the
 /// router, the internet failing alone is the provider. The signal below
 /// shows whether the Wi-Fi was sliding away first.
-fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event, evidence: Option<&Evidence>) {
-    // The same parse the cause rules read, rather than a second one of the
-    // same 33 KB.
-    let lead: &[crate::monitor::LeadSample] = evidence.map(|e| e.lead.as_slice()).unwrap_or(&[]);
-
+fn lead_up(ui: &mut egui::Ui, event: &Event, series: &LeadSeries) {
+    let LeadSeries { from, to, router, router_lost, internet, internet_lost, rssi, no_lead } =
+        series;
+    let (from, to) = (*from, *to);
     let t0 = event.ts_start;
-    let from = lead.first().map(|s| s.ts).unwrap_or(t0 - 180.0);
-    let now = crate::store::now();
-    let end = event.ts_end.unwrap_or(now);
-    // A minute of recovery, but never past the present: for an outage that
-    // just ended, the rest of that minute is an empty stretch of axis.
-    let to = (end + 60.0).min(now);
-
-    // Router and internet latency come from the stored samples rather than
-    // the lead-up, because the lead-up stops where the outage begins and the
-    // shape of the outage itself is half the evidence.
-    let mut router = Vec::new();
-    let mut router_lost = Vec::new();
-    // The internet is the best of the public anchors in each second, the way
-    // the monitor reads it: one slow anchor is not the internet being slow.
-    let mut net: std::collections::BTreeMap<i64, (Option<f64>, bool)> = Default::default();
-    for (ts, target, rtt_ms, ok) in app.store.samples_between(from, to) {
-        let x = ts - t0;
-        match target.as_str() {
-            "gateway" => match (ok, rtt_ms) {
-                (true, Some(ms)) => router.push([x, ms]),
-                _ => router_lost.push(x),
-            },
-            "cloudflare" | "google" => {
-                let slot = net.entry(x.round() as i64).or_insert((None, false));
-                if let (true, Some(ms)) = (ok, rtt_ms) {
-                    slot.0 = Some(slot.0.map_or(ms, |best: f64| best.min(ms)));
-                }
-                slot.1 |= ok;
-            }
-            _ => {}
-        }
-    }
-    let internet: Vec<[f64; 2]> =
-        net.iter().filter_map(|(x, (ms, _))| ms.map(|ms| [*x as f64, ms])).collect();
-    let internet_lost: Vec<f64> =
-        net.iter().filter(|(_, (_, any_ok))| !any_ok).map(|(x, _)| *x as f64).collect();
-
-    let rssi: Vec<[f64; 2]> =
-        lead.iter().filter_map(|s| s.rssi_dbm.map(|r| [s.ts - t0, r as f64])).collect();
+    let end = event.ts_end.unwrap_or_else(crate::store::now);
 
     if router.is_empty() && router_lost.is_empty() && internet.is_empty() && rssi.is_empty() {
         ui.label(egui::RichText::new(i18n::hist_no_leadup()).size(T_META).color(FG_DIM));
@@ -721,7 +928,7 @@ fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event, evidence: Option<&Eviden
 
     // Lost pings sit in a band just above the highest real reply, so they
     // are in view without squashing every real reply towards zero.
-    let peak = router.iter().chain(&internet).map(|p| p[1]).fold(0.0_f64, f64::max);
+    let peak = router.iter().chain(internet).map(|p| p[1]).fold(0.0_f64, f64::max);
     let ceiling = (peak * 1.15).max(20.0);
     let lost_y = ceiling * 1.08;
 
@@ -788,12 +995,12 @@ fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event, evidence: Option<&Eviden
             plot.polygon(outage(0.0, lost_y * 1.04));
             plot.vline(VLine::new(0.0).color(RED.linear_multiply(0.6)));
             plot.line(
-                Line::new(PlotPoints::from(router))
+                Line::new(PlotPoints::from(router.clone()))
                     .name(i18n::hist_leadup_rtt())
                     .color(router_colour),
             );
             plot.line(
-                Line::new(PlotPoints::from(internet))
+                Line::new(PlotPoints::from(internet.clone()))
                     .name(i18n::hist_leadup_net())
                     .color(net_colour),
             );
@@ -870,14 +1077,14 @@ fn lead_up(app: &App, ui: &mut egui::Ui, event: &Event, evidence: Option<&Eviden
                         .style(egui_plot::LineStyle::dashed_dense()),
                 );
                 plot.line(
-                    Line::new(PlotPoints::from(rssi))
+                    Line::new(PlotPoints::from(rssi.clone()))
                         .name(i18n::hist_leadup_rssi())
                         .color(signal_colour),
                 );
             });
     }
 
-    if lead.is_empty() {
+    if *no_lead {
         ui.label(egui::RichText::new(i18n::hist_no_leadup()).size(T_META).color(FG_DIM));
     }
 }
@@ -932,6 +1139,60 @@ fn join_strs(v: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_outage_is_plotted_thinned_without_losing_its_worst_reading() {
+        // Eight hours at two sweeps a second: what game mode records.
+        let t0: f64 = 100_000.0;
+        let (from, to) = (t0 - 180.0, t0 + 8.0 * 3600.0);
+        let mut samples = Vec::new();
+        let mut ts: f64 = from;
+        while ts < to {
+            let spike = (ts - (t0 + 3600.0)).abs() < 0.25;
+            let rtt = if spike { 900.0 } else { 5.0 };
+            samples.push((ts, "gateway".to_string(), Some(rtt), true));
+            samples.push((ts, "cloudflare".to_string(), None, false));
+            ts += 0.5;
+        }
+        let mut raw = RawLead::default();
+        raw.absorb(&samples, t0);
+        let s = lead_series(&raw, &[], t0, from, to);
+        assert!(s.router.len() <= MAX_PLOT_POINTS + 1, "{}", s.router.len());
+        assert!(s.internet_lost.len() <= MAX_PLOT_POINTS + 1, "{}", s.internet_lost.len());
+        assert!(s.router.iter().any(|p| p[1] == 900.0), "the spike survives thinning");
+        assert!(s.router.windows(2).all(|w| w[0][0] < w[1][0]), "still in time order");
+        assert!(s.no_lead);
+
+        // A short one is drawn exactly as recorded.
+        let mut short = RawLead::default();
+        short.absorb(&samples[..400], t0);
+        assert_eq!(lead_series(&short, &[], t0, from, from + 100.0).router.len(), 200);
+    }
+
+    #[test]
+    fn an_open_outage_read_in_pieces_is_the_same_as_read_whole() {
+        let t0 = 1_000.0;
+        let row = |ts: f64, target: &str, ok: bool| (ts, target.to_string(), ok.then_some(4.0), ok);
+        let all: Vec<_> = (0..40)
+            .flat_map(|i| {
+                let ts = t0 - 10.0 + i as f64 * 0.5;
+                [row(ts, "gateway", i % 7 != 0), row(ts, "cloudflare", i % 5 != 0)]
+            })
+            .collect();
+        let mut whole = RawLead::default();
+        whole.absorb(&all, t0);
+
+        // Each read starts at the newest row already held and so returns it
+        // again, as `samples_between` does with its inclusive bounds.
+        let mut pieces = RawLead::default();
+        pieces.absorb(&all[..30], t0);
+        let again = all.iter().position(|r| Some(r.0) == pieces.newest).unwrap();
+        pieces.absorb(&all[again..], t0);
+
+        assert_eq!(pieces.router, whole.router);
+        assert_eq!(pieces.router_lost, whole.router_lost);
+        assert_eq!(pieces.net, whole.net);
+    }
 
     #[test]
     fn value_axis_steps_are_round_and_four_or_five_to_a_plot() {

@@ -26,13 +26,21 @@ pub const OBSERVATION_GAP_S: f64 = 60.0;
 pub const OUTAGE_KEEP_DAYS: i64 = 365;
 
 const SCHEMA: &str = r#"
+-- One row per target per sweep: most of the file. Keyed on the sweep's time
+-- with no rowid, which makes the table its own time index, and naming the
+-- target by a number from `targets` rather than by its key in every row.
+-- Together that halved a sample, from 77 bytes to 39.
+CREATE TABLE IF NOT EXISTS targets (
+    id  INTEGER PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE
+);
 CREATE TABLE IF NOT EXISTS samples (
     ts     REAL NOT NULL,
-    target TEXT NOT NULL,
+    target INTEGER NOT NULL,
     rtt_ms REAL,
-    ok     INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_samples_ts ON samples(ts);
+    ok     INTEGER NOT NULL,
+    PRIMARY KEY (ts, target)
+) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_samples_target_ts ON samples(target, ts);
 
 CREATE TABLE IF NOT EXISTS events (
@@ -195,13 +203,21 @@ impl Store {
 
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        let conn = Connection::open(path)?;
+        let mut conn = Connection::open(path)?;
         // WAL is what lets the reader below see a consistent database while
         // the writer is mid-transaction, instead of one of them waiting.
         let _: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
         conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
         conn.execute_batch(SCHEMA)?;
         migrate(&conn);
+        // Unlike the columns above, this one cannot be skipped: every query
+        // below names the new shape, and against the old one they would all
+        // come back empty rather than fail.
+        if migrate_samples(&mut conn)? {
+            // The old table's pages are free now but still in the file; give
+            // them back once rather than wait for new samples to fill them.
+            conn.execute_batch("VACUUM")?;
+        }
 
         // Opened after the schema exists, and marked read-only in SQLite
         // itself: "the UI never writes through this" is then a fact about the
@@ -269,9 +285,15 @@ impl Store {
         let mut conn = self.held();
         let tx = conn.transaction()?;
         {
-            let mut stmt =
-                tx.prepare_cached("INSERT INTO samples (ts, target, rtt_ms, ok) VALUES (?,?,?,?)")?;
+            let mut name = tx.prepare_cached("INSERT OR IGNORE INTO targets (key) VALUES (?)")?;
+            // The same target at the same instant is the same reading written
+            // twice, not a second one; the key refuses it and the first stays.
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR IGNORE INTO samples (ts, target, rtt_ms, ok) \
+                 VALUES (?1, (SELECT id FROM targets WHERE key = ?2), ?3, ?4)",
+            )?;
             for (ts, target, rtt, ok) in rows {
+                name.execute(params![target])?;
                 stmt.execute(params![ts, target, rtt, *ok as i64])?;
             }
         }
@@ -296,7 +318,9 @@ impl Store {
     pub fn stats_between(&self, target: &str, from: f64, to: f64) -> Stats {
         let conn = self.held_read();
         let mut stmt = match conn.prepare_cached(
-            "SELECT rtt_ms, ok FROM samples WHERE target=? AND ts>=? AND ts<? ORDER BY ts",
+            "SELECT rtt_ms, ok FROM samples \
+              WHERE target = (SELECT id FROM targets WHERE key = ?) AND ts>=? AND ts<? \
+              ORDER BY ts",
         ) {
             Ok(s) => s,
             Err(_) => return Stats::default(),
@@ -480,7 +504,8 @@ impl Store {
     pub fn samples_between(&self, from: f64, to: f64) -> Vec<(f64, String, Option<f64>, bool)> {
         let conn = self.held_read();
         let Ok(mut stmt) = conn.prepare_cached(
-            "SELECT ts, target, rtt_ms, ok FROM samples WHERE ts>=? AND ts<=? ORDER BY ts",
+            "SELECT s.ts, t.key, s.rtt_ms, s.ok FROM samples s JOIN targets t ON t.id = s.target \
+              WHERE s.ts>=? AND s.ts<=? ORDER BY s.ts",
         ) else {
             return Vec::new();
         };
@@ -555,7 +580,7 @@ impl Store {
         let conn = self.held_read();
         let sql =
             format!("SELECT {EVENT_COLUMNS} FROM events ORDER BY ts_start DESC LIMIT {limit}");
-        let Ok(mut stmt) = conn.prepare(&sql) else {
+        let Ok(mut stmt) = conn.prepare_cached(&sql) else {
             return Vec::new();
         };
         let rows = stmt.query_map([], map_event);
@@ -565,7 +590,7 @@ impl Store {
     fn query_events(&self, tail: &str, arg: Option<f64>) -> Vec<Event> {
         let conn = self.held_read();
         let sql = format!("SELECT {EVENT_COLUMNS} FROM events {tail}");
-        let Ok(mut stmt) = conn.prepare(&sql) else {
+        let Ok(mut stmt) = conn.prepare_cached(&sql) else {
             return Vec::new();
         };
         let rows = match arg {
@@ -589,7 +614,7 @@ impl Store {
         let sql = format!(
             "SELECT ts, tweak_id, action, COALESCE(result,'') FROM tweaks ORDER BY ts DESC LIMIT {limit}"
         );
-        let Ok(mut stmt) = conn.prepare(&sql) else {
+        let Ok(mut stmt) = conn.prepare_cached(&sql) else {
             return Vec::new();
         };
         let rows = stmt.query_map([], |r| {
@@ -641,6 +666,49 @@ fn migrate(conn: &Connection) {
             let _ = conn.execute_batch(&format!("ALTER TABLE events ADD COLUMN {name} {decl}"));
         }
     }
+}
+
+/// Moves samples written by an older build into the current table.
+/// Returns whether there was anything to move.
+///
+/// The old table kept a rowid, an index on the time beside the one on
+/// target and time, and the target's key as text in every row. All in one
+/// transaction: a failure leaves the old table as it was and the error goes
+/// up, so the app says it could not open the history rather than showing
+/// one it cannot read.
+// ponytail: runs at open, before the window, so a full fortnight of history
+// (~10 M rows) holds startup for about a minute, once. Moving it to a
+// background step would need the monitor to write to both shapes meanwhile.
+fn migrate_samples(conn: &mut Connection) -> Result<bool> {
+    let old = conn
+        .query_row("SELECT type FROM pragma_table_info('samples') WHERE name = 'target'", [], |r| {
+            r.get::<_, String>(0)
+        })
+        .map(|t| t.eq_ignore_ascii_case("TEXT"))
+        .unwrap_or(false);
+    if !old {
+        return Ok(false);
+    }
+    let tx = conn.transaction()?;
+    tx.execute_batch(
+        "INSERT OR IGNORE INTO targets (key) SELECT DISTINCT target FROM samples;
+         ALTER TABLE samples RENAME TO samples_old;
+         DROP INDEX IF EXISTS idx_samples_ts;
+         DROP INDEX IF EXISTS idx_samples_target_ts;
+         CREATE TABLE samples (
+             ts     REAL NOT NULL,
+             target INTEGER NOT NULL,
+             rtt_ms REAL,
+             ok     INTEGER NOT NULL,
+             PRIMARY KEY (ts, target)
+         ) WITHOUT ROWID;
+         INSERT OR IGNORE INTO samples (ts, target, rtt_ms, ok)
+             SELECT o.ts, t.id, o.rtt_ms, o.ok FROM samples_old o JOIN targets t ON t.key = o.target;
+         DROP TABLE samples_old;
+         CREATE INDEX idx_samples_target_ts ON samples(target, ts);",
+    )?;
+    tx.commit()?;
+    Ok(true)
 }
 
 /// Loss, average, median, extremes and mean consecutive deviation (jitter).
@@ -1003,6 +1071,88 @@ mod tests {
         assert_eq!(events.len(), 1, "the old row must still be readable");
         let ctx = store.event_context(events[0].id).expect("the old row is still there");
         assert_eq!(ctx.context, "", "an old row simply has no context");
+    }
+
+    /// Times the queries the app leans on against a real history. Point
+    /// `NETDOC_BENCH_DB` at a *copy* of `history.db` (it is migrated in
+    /// place) and run `cargo test --release bench_ -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs a copy of a real history.db"]
+    fn bench_hot_queries_on_a_real_history() {
+        let Ok(path) = std::env::var("NETDOC_BENCH_DB") else { return };
+        let t = std::time::Instant::now();
+        let store = Store::open(&path).unwrap();
+        println!("open (with any migration): {:?}", t.elapsed());
+        let newest = store.last_sample_ts().unwrap_or_else(now);
+        let time = |name: &str, n: u32, f: &dyn Fn() -> usize| {
+            let t = std::time::Instant::now();
+            let mut rows = 0;
+            for _ in 0..n {
+                rows = f();
+            }
+            println!("{name:<32} {:>9.2?}  rows {rows}", t.elapsed() / n);
+        };
+        time("stats 60 s", 50, &|| store.stats_between("gateway", newest - 60.0, newest).count);
+        time("stats a day (effect side)", 5, &|| {
+            store.stats_between("cloudflare", newest - 86_400.0, newest).count
+        });
+        time("samples_between 1 h (chart)", 10, &|| {
+            store.samples_between(newest - 3600.0, newest).len()
+        });
+        time("samples_between 8 h (outage)", 3, &|| {
+            store.samples_between(newest - 8.0 * 3600.0, newest).len()
+        });
+        time("observing_since (startup)", 3, &|| {
+            store.observing_since(OBSERVATION_GAP_S).map_or(0, |_| 1)
+        });
+        time("recent_events(300)", 50, &|| store.recent_events(300).len());
+    }
+
+    #[test]
+    fn samples_from_an_older_build_move_to_the_compact_table() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE samples (ts REAL NOT NULL, target TEXT NOT NULL, rtt_ms REAL,
+                                   ok INTEGER NOT NULL);
+             CREATE INDEX idx_samples_ts ON samples(ts);
+             CREATE INDEX idx_samples_target_ts ON samples(target, ts);
+             INSERT INTO samples VALUES (10.0, 'gateway', 2.0, 1), (10.0, 'cloudflare', 20.0, 1),
+                                        (11.0, 'gateway', NULL, 0), (11.0, 'cloudflare', 22.0, 1);",
+        )
+        .unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        assert!(migrate_samples(&mut conn).unwrap(), "the old table is found and moved");
+        assert!(!migrate_samples(&mut conn).unwrap(), "and only once");
+
+        let store = Store { conn: Mutex::new(conn), read: None };
+        // Oldest first; within one sweep the order is the targets' numbering.
+        let mut moved = store.samples_between(0.0, 100.0);
+        assert!(moved.windows(2).all(|w| w[0].0 <= w[1].0), "{moved:?}");
+        moved.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        assert_eq!(
+            moved,
+            vec![
+                (10.0, "cloudflare".to_string(), Some(20.0), true),
+                (10.0, "gateway".to_string(), Some(2.0), true),
+                (11.0, "cloudflare".to_string(), Some(22.0), true),
+                (11.0, "gateway".to_string(), None, false),
+            ]
+        );
+        let gw = store.stats_between("gateway", 0.0, 100.0);
+        assert_eq!((gw.count, gw.loss_pct), (2, 50.0));
+
+        // New rows land beside the moved ones, under the same target.
+        store.add_samples(&[(12.0, "gateway".into(), Some(3.0), true)]).unwrap();
+        assert_eq!(store.stats_between("gateway", 0.0, 100.0).count, 3);
+        let conn = store.held();
+        let old_index: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_samples_ts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_index, 0, "the time index is the table's own key now");
     }
 
     #[test]

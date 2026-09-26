@@ -57,6 +57,13 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# SQLite is where the app's real computing happens (a day of samples per
+# tweak side, the chart, the report), and `cc` compiles it at the profile's
+# level, which for "z" is -Os. At 3 the same queries run measurably faster
+# for a few hundred KB of binary. See `bench_hot_queries_on_a_real_history`.
+[profile.release.package.libsqlite3-sys]
+opt-level = 3
+
 # winit 0.30.13 unwraps a monitor handle that goes stale when a screen is
 # unplugged, and egui-winit reads the monitor every frame, so the app died
 # (crash.log, 1.5.0; rust-windowing/winit#3258). The copy in vendor/winit is

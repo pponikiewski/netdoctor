@@ -11,6 +11,7 @@
 //! A router with UPnP switched off simply has no readings, and the analysis
 //! then says nothing about it.
 
+use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -70,7 +71,18 @@ pub fn discover(gateway: Ipv4Addr) -> Option<Igd> {
     let deadline = Instant::now() + WAIT;
     let mut buf = [0u8; 2048];
     while Instant::now() < deadline {
-        let Ok((n, from)) = socket.recv_from(&mut buf) else { continue };
+        let (n, from) = match socket.recv_from(&mut buf) {
+            Ok(got) => got,
+            // The read timeout: it already waited.
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => continue,
+            // Anything else comes back at once (Windows reports an ICMP
+            // "port unreachable" as WSAECONNRESET on the next read), and
+            // retrying at once spun a core until the deadline.
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+        };
         if from.ip() != gateway {
             continue;
         }

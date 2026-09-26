@@ -472,8 +472,10 @@ impl Settings {
     /// Built-in targets plus whatever the user added. Invalid entries are
     /// skipped rather than failing the whole list.
     ///
-    /// Resolves every hostname the user added, so it blocks on DNS. The
-    /// monitor must not call it: see [`Settings::targets_with`].
+    /// Resolves every hostname the user added, so it blocks on DNS. Tests
+    /// only: the app reads the list through `monitor::Shared::targets`,
+    /// which uses the monitor's cache instead.
+    #[cfg(test)]
     pub fn targets(&self) -> Vec<Target> {
         self.targets_with(resolve_target)
     }

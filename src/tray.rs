@@ -122,7 +122,7 @@ fn fill(dst: &mut [u16], s: &str) {
 }
 
 #[cfg(windows)]
-pub use imp::{remove_after_crash, Tray};
+pub use imp::{main_window_shown, remove_after_crash, Tray};
 
 #[cfg(windows)]
 mod imp {
@@ -490,6 +490,19 @@ mod imp {
                 }
             }
         });
+    }
+
+    /// Whether the app's window is on screen, or `None` when it cannot be
+    /// found. The handle is looked up once: the window lives as long as the
+    /// process, and the answer is asked for on every frame.
+    pub fn main_window_shown() -> Option<bool> {
+        static WINDOW: AtomicIsize = AtomicIsize::new(0);
+        let mut id = WINDOW.load(Ordering::Relaxed);
+        if id == 0 {
+            id = main_window()?.0 as isize;
+            WINDOW.store(id, Ordering::Relaxed);
+        }
+        Some(unsafe { IsWindowVisible(HWND(id as *mut _)) }.as_bool())
     }
 
     /// The app's own window: this process's, and titled as the app's.

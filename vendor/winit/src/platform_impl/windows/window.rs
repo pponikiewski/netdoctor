@@ -41,7 +41,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     HTTOPLEFT, HTTOPRIGHT, MENU_ITEM_STATE, MFS_DISABLED, MFS_ENABLED, MF_BYCOMMAND, NID_READY,
     PM_NOREMOVE, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SM_DIGITIZER,
     SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, TPM_LEFTALIGN, TPM_RETURNCMD,
-    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_NCLBUTTONDOWN, WM_SYSCOMMAND, WNDCLASSEXW,
+    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_NCLBUTTONDOWN, WM_PAINT, WM_SYSCOMMAND, WNDCLASSEXW,
 };
 
 use tracing::warn;
@@ -152,8 +152,20 @@ impl Window {
     pub fn request_redraw(&self) {
         // NOTE: mark that we requested a redraw to handle requests during `WM_PAINT` handling.
         self.window_state.lock().unwrap().redraw_requested = true;
+        // NETDOC PATCH (see vendor/README.md): Windows sends no `WM_PAINT` to
+        // a hidden window, so upstream's `RedrawWindow` asks for a
+        // `RedrawRequested` that never comes. eframe sets `ControlFlow::Poll`
+        // while it waits for that event, and the event loop then spins on a
+        // whole core until some unrelated input happens to reset it; hidden
+        // in the tray, that was up to 80% of a core for as long as the mouse
+        // stayed still. A queued `WM_PAINT` reaches the window hidden or not,
+        // and the `WM_PAINT` handler turns it into the event.
         unsafe {
-            RedrawWindow(self.hwnd(), ptr::null(), 0, RDW_INTERNALPAINT);
+            if IsWindowVisible(self.hwnd()) == 0 {
+                PostMessageW(self.hwnd(), WM_PAINT, 0, 0);
+            } else {
+                RedrawWindow(self.hwnd(), ptr::null(), 0, RDW_INTERNALPAINT);
+            }
         }
     }
 

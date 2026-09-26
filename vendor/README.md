@@ -26,3 +26,18 @@ longer unwrap. Check `MonitorHandle::size` in the new winit's
 `platform_impl/windows/monitor.rs`, then delete this folder and the
 `[patch.crates-io]` entry. Cargo warns `patch ... was not used` once the
 version no longer matches, which is the reminder.
+
+Changed: `src/platform_impl/windows/window.rs`, `Window::request_redraw`.
+Windows sends no `WM_PAINT` to a hidden window, so upstream's `RedrawWindow`
+asks for a `RedrawRequested` that never arrives. eframe 0.29 sets
+`ControlFlow::Poll` while it waits for that event (`check_redraw_requests`),
+and the event loop then spins without sleeping until some unrelated input,
+typically a mouse move, makes eframe reset it to `Wait`. The app lives hidden
+in the tray, and there it was measured burning up to 80% of a core for as
+long as the mouse stayed still. The patch queues a `WM_PAINT` for a hidden
+window; the `WM_PAINT` handler turns it into the event either way.
+
+When to remove: when winit delivers `RedrawRequested` for hidden windows on
+Windows, or eframe stops polling while it waits for one. Check
+`request_redraw` in the new winit's `platform_impl/windows/window.rs` and
+`check_redraw_requests` in the new eframe's `native/run.rs`.

@@ -653,6 +653,14 @@ impl Monitor {
 }
 
 impl Shared {
+    /// [`Settings::targets`] without the lookups: the user's hostnames come
+    /// from `run_hosts`'s cache, as the sweep's do. For the UI thread, where
+    /// a live lookup stalls the window for as long as DNS takes to fail.
+    pub fn targets(&self, settings: &Settings) -> Vec<crate::settings::Target> {
+        let hosts = held(&self.hosts);
+        settings.targets_with(|text| text.parse().ok().or_else(|| hosts.get(text).copied()))
+    }
+
     pub(crate) fn new(settings: Settings) -> Shared {
         Shared {
             last: Mutex::new(Snapshot::default()),
@@ -1407,8 +1415,10 @@ fn run_loop(
         };
         let tcp = *held(&shared.tcp);
         let tcp_vouches = !heard && tcp.is_some_and(|t| t.vouches(dark_since, Instant::now()));
+        // Read once: the verdict is judged on it and the cards show it.
+        let quality = line_quality(&targets, &store, quality_window);
         let (status, note) = past_filtered_pings(
-            classify(&results, &targets, &net, &dns_error, &settings, &store, quality_window),
+            classify(&results, &targets, &net, &dns_error, &settings, &quality),
             tcp_vouches,
             &dns_error,
         );
@@ -1428,9 +1438,9 @@ fn run_loop(
             observed_from: Some(observed_from),
             blind: None,
             unrecorded,
-            // The same read `classify` judged on, repeated for the cards: two
-            // small queries, and the figures cannot drift from the verdict.
-            quality: line_quality(&targets, &store, quality_window),
+            // The very read `classify` judged on, so the figures cannot drift
+            // from the verdict.
+            quality,
         };
 
         // The lead-up is recorded on every sweep, good ones included: by the
@@ -1558,8 +1568,7 @@ fn classify(
     net: &NetState,
     dns_error: &str,
     settings: &Settings,
-    store: &Store,
-    quality_window_s: f64,
+    quality: &LineQuality,
 ) -> (Status, String) {
     // Only a public address can vouch for the internet: see
     // [`crate::diagnose::is_public`]. A resolver the user runs at home, or a
@@ -1573,7 +1582,7 @@ fn classify(
         if !dns_error.is_empty() {
             return (Status::DnsFail, i18n::mon_dns_detail(dns_error));
         }
-        return quality_verdict(results, targets, settings, store, quality_window_s);
+        return quality_verdict(results, targets, settings, quality);
     }
 
     // Nothing on the internet answered. Who is still there?
@@ -1640,14 +1649,12 @@ fn quality_verdict(
     results: &HashMap<String, Sample>,
     targets: &[Resolved],
     settings: &Settings,
-    store: &Store,
-    window_s: f64,
+    q: &LineQuality,
 ) -> (Status, String) {
     let fastest = public_internet(targets)
         .filter_map(|t| results.get(&t.key).and_then(|s| s.rtt_ms))
         .fold(f64::NAN, f64::min);
 
-    let q = line_quality(targets, store, window_s);
     if let Some(loss) = q.loss_pct.filter(|l| *l > settings.loss_ok_pct) {
         return (Status::Degraded, i18n::mon_loss_detail(loss));
     }
@@ -1696,6 +1703,27 @@ fn line_quality(targets: &[Resolved], store: &Store, window_s: f64) -> LineQuali
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`classify`] with the line quality read from `store`, the way the
+    /// sweep reads it.
+    fn classify_at(
+        results: &HashMap<String, Sample>,
+        targets: &[Resolved],
+        net: &NetState,
+        dns_error: &str,
+        settings: &Settings,
+        store: &Store,
+        window_s: f64,
+    ) -> (Status, String) {
+        classify(
+            results,
+            targets,
+            net,
+            dns_error,
+            settings,
+            &line_quality(targets, store, window_s),
+        )
+    }
 
     /// Four addresses reserved for documentation (RFC 5737). Nothing answers
     /// at them, so every ping runs the full timeout — which is the shape of a
@@ -1796,7 +1824,7 @@ mod tests {
                 .map(|(t, r)| (t.key.clone(), sample(r.ok(), r.rtt_ms)))
                 .collect();
             let store = Store::open_in_memory().unwrap();
-            let (status, _) = classify(
+            let (status, _) = classify_at(
                 &results,
                 &targets(),
                 &wifi_state(),
@@ -2240,7 +2268,7 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(true, Some(2.0)));
         r.insert("cloudflare".into(), sample(true, Some(12.0)));
-        let (status, _) = classify(
+        let (status, _) = classify_at(
             &r,
             &targets(),
             &wifi_state(),
@@ -2258,7 +2286,7 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(true, Some(2.0)));
         r.insert("cloudflare".into(), sample(false, None));
-        let (status, note) = classify(
+        let (status, note) = classify_at(
             &r,
             &targets(),
             &wifi_state(),
@@ -2297,7 +2325,8 @@ mod tests {
         }
         let store = Store::open_in_memory().unwrap();
         let s = Settings::default();
-        let (status, _) = classify(&r, &targets, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
+        let (status, _) =
+            classify_at(&r, &targets, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
         assert_eq!(status, Status::IspDown);
 
         // And a public address the user added does count.
@@ -2305,7 +2334,7 @@ mod tests {
         let mut public = targets;
         public.push(resolved("custom3", [9, 9, 9, 9], Scope::Internet));
         r.insert("custom3".into(), sample(true, Some(20.0)));
-        let (status, _) = classify(&r, &public, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
+        let (status, _) = classify_at(&r, &public, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
         assert_ne!(status, Status::IspDown);
     }
 
@@ -2315,7 +2344,7 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(false, None));
         r.insert("cloudflare".into(), sample(false, None));
-        let (status, _) = classify(
+        let (status, _) = classify_at(
             &r,
             &targets(),
             &wifi_state(),
@@ -2334,7 +2363,7 @@ mod tests {
         r.insert("cloudflare".into(), sample(false, None));
         let net = NetState { gateway: None, ..Default::default() };
         let (status, _) =
-            classify(&r, &targets(), &net, "", &Settings::default(), &store, QUALITY_WINDOW_S);
+            classify_at(&r, &targets(), &net, "", &Settings::default(), &store, QUALITY_WINDOW_S);
         assert_eq!(status, Status::AdapterDown);
     }
 
@@ -2344,7 +2373,7 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(true, Some(2.0)));
         r.insert("cloudflare".into(), sample(true, Some(12.0)));
-        let (status, _) = classify(
+        let (status, _) = classify_at(
             &r,
             &targets(),
             &wifi_state(),
@@ -2371,7 +2400,7 @@ mod tests {
         let mut r = HashMap::new();
         r.insert("gateway".into(), sample(true, Some(2.0)));
         r.insert("cloudflare".into(), sample(true, Some(12.0)));
-        let (status, note) = classify(
+        let (status, note) = classify_at(
             &r,
             &targets(),
             &wifi_state(),
@@ -2411,9 +2440,9 @@ mod tests {
         store.add_samples(&rows).unwrap();
 
         let s = Settings::default();
-        let across = classify(&line_up(), &targets(), &wifi_state(), "", &s, &store, 60.0).0;
+        let across = classify_at(&line_up(), &targets(), &wifi_state(), "", &s, &store, 60.0).0;
         assert_eq!(across, Status::Degraded, "the old window reads the outage as loss");
-        let after = classify(&line_up(), &targets(), &wifi_state(), "", &s, &store, 16.0).0;
+        let after = classify_at(&line_up(), &targets(), &wifi_state(), "", &s, &store, 16.0).0;
         assert_eq!(after, Status::Ok, "from the outage's end on, nothing was lost");
     }
 
@@ -2450,7 +2479,7 @@ mod tests {
         r.insert("google".into(), sample(true, Some(14.0)));
         let s = Settings::default();
         let (status, note) =
-            classify(&r, &targets, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
+            classify_at(&r, &targets, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
         assert_eq!(status, Status::Ok, "{note}");
 
         // Loss on every public target is loss on the line.
@@ -2464,7 +2493,8 @@ mod tests {
             .add_samples(&rows.iter().filter(|r| r.1 == "cloudflare").cloned().collect::<Vec<_>>())
             .unwrap();
         store2.add_samples(&lossy).unwrap();
-        let (status, _) = classify(&r, &targets, &wifi_state(), "", &s, &store2, QUALITY_WINDOW_S);
+        let (status, _) =
+            classify_at(&r, &targets, &wifi_state(), "", &s, &store2, QUALITY_WINDOW_S);
         assert_eq!(status, Status::Degraded);
     }
 
@@ -2500,7 +2530,7 @@ mod tests {
         r.insert("google".into(), sample(true, Some(10.0)));
         let s = Settings::default();
         let (status, note) =
-            classify(&r, &targets, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
+            classify_at(&r, &targets, &wifi_state(), "", &s, &store, QUALITY_WINDOW_S);
         assert_eq!(status, Status::Degraded, "{note}");
     }
 
@@ -2552,7 +2582,7 @@ mod tests {
         ];
         store.add_samples(&rows).unwrap();
         let s = Settings::default();
-        let status = classify(&line_up(), &targets(), &wifi_state(), "", &s, &store, 5.0).0;
+        let status = classify_at(&line_up(), &targets(), &wifi_state(), "", &s, &store, 5.0).0;
         assert_eq!(status, Status::Ok, "one lost reply in three is not 33% loss");
     }
 

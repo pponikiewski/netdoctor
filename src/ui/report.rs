@@ -134,7 +134,7 @@ fn head(app: &App) -> String {
 
     let _ = writeln!(out);
     let _ = writeln!(out, "{}", i18n::rep_sec_measurements());
-    for t in app.settings.targets() {
+    for t in app.monitor.shared.targets(&app.settings) {
         let s = app.store.stats(&t.key, 3600.0);
         if s.count == 0 {
             continue;

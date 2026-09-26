@@ -261,9 +261,9 @@ fn refresh(app: &mut App) {
     let range = app.chart_range_s;
     let rows = app.store.samples_between(now - range, now);
 
-    // Resolved once per rebuild. Each call re-resolves every hostname the
-    // user added, and this function used to ask for the list twice.
-    let targets = app.settings.targets();
+    // From the monitor's cache of the user's hostnames: a live lookup here
+    // ran on the render thread every few seconds.
+    let targets = app.monitor.shared.targets(&app.settings);
 
     let mut series = Vec::new();
     for t in &targets {

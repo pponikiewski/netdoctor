@@ -488,7 +488,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-397 tests, covering the failure-blame logic, the statistics, the registry layer,
+402 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable
@@ -535,10 +535,16 @@ the kind, the state they failed on and the path. An outage still in progress
 is never pruned. The log of changes the app made is kept.
 
 `history.db` is the one file here that gets big. At the defaults — four targets,
-one sweep a second — a full 14 days of retention measures **367 MB**. That is
-the steady state, not a leak: pruning keeps it there. If it is more than you
-want to spend, the retention setting is the dial, and dropping to seven days
-roughly halves it.
+one sweep a second — a sample takes 39 bytes, so a full 14 days of retention
+comes to about **190 MB**. Game mode samples twice a second, so time spent in
+a game counts double. That is the steady state, not a leak: pruning keeps it
+there. If it is more than you want to spend, the retention setting is the dial,
+and dropping to seven days roughly halves it.
+
+Versions before this one stored a sample in 77 bytes. The first start of a
+newer version moves the history into the compact table and shrinks the file,
+once: a few seconds for a week of history, up to a minute for a full fortnight,
+before the window appears. An older version cannot read the history afterwards.
 
 ## Building
 
@@ -546,7 +552,7 @@ roughly halves it.
 cargo build --release
 ```
 
-Produces `target/release/netdoctor.exe`, about 5.3 MB, with no external
+Produces `target/release/netdoctor.exe`, about 7.6 MB, with no external
 dependencies. Requires Rust 1.82+ and the MSVC toolchain.
 
 `.cargo/config.toml` links the C runtime statically. Without it the binary
