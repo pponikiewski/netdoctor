@@ -107,20 +107,21 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
     // screen are whatever the last pass found, and the buttons that act on
     // that reading are held back rather than acting on a stale one.
     let loading = app.tweaks_loading();
-    if loading || !app.elevated {
-        ui.add_space(S_XS);
-        ui.horizontal_wrapped(|ui| {
-            if loading {
-                ui.label(
-                    egui::RichText::new(i18n::opt_reading()).size(T_META).color(super::ACCENT),
-                );
-            }
-            if !app.elevated {
-                ui.label(egui::RichText::new(i18n::opt_read_only()).size(T_META).color(YELLOW));
-            }
-        });
-    }
+    // The line is there whether or not it has anything to say: every switch
+    // starts a read, and a line that came and went with it moved every card
+    // below it down and back up again under the pointer.
+    ui.add_space(S_XS);
+    ui.horizontal_wrapped(|ui| {
+        let reading = if loading { i18n::opt_reading() } else { " " };
+        ui.label(egui::RichText::new(reading).size(T_META).color(super::ACCENT));
+        if !app.elevated {
+            ui.label(egui::RichText::new(i18n::opt_read_only()).size(T_META).color(YELLOW));
+        }
+    });
     ui.add_space(S_MD);
+    // Apply-all acts on the last read and writes the same snapshot file, so
+    // it waits for the switches still in flight.
+    let loading = loading || !app.tweak_pending.is_empty();
 
     ui.horizontal(|ui| {
         let apply_all = button_ex(
@@ -227,16 +228,10 @@ fn group(
     if cards.is_empty() {
         return;
     }
-    // What is left to do first, what is set after it, what cannot be touched
-    // here last; declaration order breaks ties so nothing moves between frames.
-    cards.sort_by_key(|i| {
-        let rank = match status_at(app, *i) {
-            Status::Todo => 0,
-            Status::Set => 1,
-            Status::Unavailable => 2,
-        };
-        (rank, *i)
-    });
+    // What cannot be touched here goes last, everything else keeps its
+    // declaration order. Set and to-do are not sorted apart: flicking a
+    // switch moves a card between them, and the card left the pointer.
+    cards.sort_by_key(|i| (status_at(app, *i) == Status::Unavailable, *i));
 
     let (count, colour) = if available == 0 {
         (i18n::opt_section_none().to_string(), FG_DIM)
@@ -461,6 +456,16 @@ fn card_switch(
     status: Status,
     loading: bool,
 ) {
+    // Flicked and not yet read back: shown where it was moved to, held there.
+    if let Some(&(target, _)) = app.tweak_pending.get(t.id()) {
+        if t.reversible() {
+            toggle(ui, target, false).on_hover_text(i18n::opt_switching());
+        } else {
+            button_ex(ui, i18n::btn_apply(), Emphasis::Danger, false, 0.0)
+                .on_hover_text(i18n::opt_switching());
+        }
+        return;
+    }
     let on = status == Status::Set;
     match switch_for(app, t, status) {
         Switch::Action => {
@@ -478,9 +483,8 @@ fn card_switch(
         Switch::Locked(why) => {
             toggle(ui, on, false).on_hover_text(why);
         }
-        Switch::CanApply | Switch::CanRevert if loading => {
-            toggle(ui, on, false).on_hover_text(i18n::opt_reading());
-        }
+        // A read in flight does not hold the other switches back: each one
+        // acts on its own card's state, and only its own change moves that.
         Switch::CanApply => {
             if toggle(ui, on, true).clicked() {
                 if t.risk() == Risk::High {
@@ -492,13 +496,13 @@ fn card_switch(
                         d.insert_temp(open_id(t), true);
                     });
                 } else {
-                    apply_one(app, ui, t);
+                    app.flip_tweak(t.id(), true);
                 }
             }
         }
         Switch::CanRevert => {
             if toggle(ui, on, true).clicked() {
-                revert_one(app, ui, t);
+                app.flip_tweak(t.id(), false);
             }
         }
     }
@@ -554,45 +558,13 @@ fn card_detail(app: &mut App, ui: &mut egui::Ui, t: &dyn optimize::Tweak, confir
         ui.horizontal(|ui| {
             if button(ui, i18n::opt_btn_apply_anyway(), Emphasis::Danger).clicked() {
                 ui.data_mut(|d| d.insert_temp(confirm_id(t), false));
-                apply_one(app, ui, t);
+                app.flip_tweak(t.id(), true);
             }
             if button(ui, i18n::hist_btn_cancel(), Emphasis::Ghost).clicked() {
                 ui.data_mut(|d| d.insert_temp(confirm_id(t), false));
             }
         });
     }
-}
-
-fn apply_one(app: &mut App, ui: &mut egui::Ui, t: &dyn optimize::Tweak) {
-    let net = app.net.clone();
-    let now = ui.input(|inp| inp.time);
-    match optimize::apply(t, &net) {
-        Ok(msg) => {
-            app.store.log_tweak(t.id(), "apply", "", &msg);
-            app.toast(msg, GREEN, now);
-        }
-        Err(e) => {
-            app.store.log_tweak(t.id(), "apply_failed", "", &e.to_string());
-            app.toast(e.to_string(), RED, now);
-        }
-    }
-    app.refresh_tweaks();
-}
-
-fn revert_one(app: &mut App, ui: &mut egui::Ui, t: &dyn optimize::Tweak) {
-    let net = app.net.clone();
-    let now = ui.input(|inp| inp.time);
-    match optimize::revert(t, &net) {
-        Ok(msg) => {
-            app.store.log_tweak(t.id(), "revert", "", &msg);
-            app.toast(msg, GREEN, now);
-        }
-        Err(e) => {
-            app.store.log_tweak(t.id(), "revert_failed", "", &e.to_string());
-            app.toast(e.to_string(), RED, now);
-        }
-    }
-    app.refresh_tweaks();
 }
 
 /// An on/off switch. Painted, like the buttons, so it answers the pointer

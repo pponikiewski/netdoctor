@@ -1948,6 +1948,9 @@ Płaci się to raz, przy otwieraniu \
     opt_reading =>
         "reading the current state…",
         "odczyt bieżącego stanu…";
+    opt_switching =>
+        "changing it, then reading it back…",
+        "zmieniam i sprawdzam wynik…";
     opt_all_ok =>
         "Everything safe is already set correctly.",
         "Wszystko, co bezpieczne, jest już ustawione poprawnie.";

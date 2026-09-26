@@ -202,6 +202,13 @@ pub enum Job {
     /// happen on the UI thread. The generation is what makes a read that
     /// started before an apply land in the bin rather than on screen.
     TweakStates(u64, Vec<(String, String, Option<bool>)>, HashMap<String, crate::effect::Effect>),
+    /// One switch's apply or revert, run off the UI thread: `netsh` and the
+    /// registry held the window still for as long as they took.
+    TweakDone {
+        id: &'static str,
+        action: &'static str,
+        result: Result<String, String>,
+    },
     /// The AI's reading of a scan, with the generation of the scan it was
     /// asked about, so an answer landing after a rescan is dropped rather
     /// than shown beside numbers it never saw.
@@ -300,6 +307,14 @@ pub struct App {
     /// The read that produced what `tweak_states` currently holds. Behind
     /// `tweaks_gen` means a read is in flight and the list on screen is stale.
     tweaks_shown_gen: u64,
+    /// Switches flicked and not yet confirmed by a read: tweak id to the
+    /// position the switch was moved to, and whether the change has finished.
+    /// The card shows that position, held, until the read after it lands; a
+    /// change that fails is dropped at once and the switch goes back.
+    pub tweak_pending: HashMap<&'static str, (bool, bool)>,
+    /// For worker threads to wake the window when their result is in, rather
+    /// than leaving it for the next half-second repaint.
+    pub ctx: egui::Context,
 
     /// What the Wi-Fi card can hear around it, and the channel advice read
     /// off it. Empty until the first scan is asked for.
@@ -427,6 +442,8 @@ impl App {
             tweak_effects: HashMap::new(),
             tweaks_gen: 0,
             tweaks_shown_gen: 0,
+            tweak_pending: HashMap::new(),
+            ctx: cc.egui_ctx.clone(),
             selected_tweak: None,
             air: Default::default(),
             air_scanning: false,
@@ -468,6 +485,7 @@ impl App {
         let net = self.net.clone();
         let tx = self.tx.clone();
         let store = Arc::clone(&self.store);
+        let ctx = self.ctx.clone();
         self.tweaks_gen += 1;
         let gen = self.tweaks_gen;
         std::thread::spawn(move || {
@@ -490,6 +508,32 @@ impl App {
                 })
                 .collect();
             let _ = tx.send(Job::TweakStates(gen, states, effects));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Moves one switch: applies the tweak when `on`, reverts it otherwise,
+    /// on a worker thread. The switch shows the new position straight away
+    /// and cannot be flicked again until the read after the change lands.
+    pub fn flip_tweak(&mut self, id: &'static str, on: bool) {
+        if self.tweak_pending.contains_key(id) {
+            return;
+        }
+        self.tweak_pending.insert(id, (on, false));
+        let net = self.net.clone();
+        let tx = self.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            // The trait objects are not `Send`, so the worker builds its own.
+            let result = match crate::optimize::all().into_iter().find(|t| t.id() == id) {
+                Some(t) if on => crate::optimize::apply(t.as_ref(), &net),
+                Some(t) => crate::optimize::revert(t.as_ref(), &net),
+                None => Err(anyhow::anyhow!("unknown tweak {id}")),
+            };
+            let action = if on { "apply" } else { "revert" };
+            let _ =
+                tx.send(Job::TweakDone { id, action, result: result.map_err(|e| e.to_string()) });
+            ctx.request_repaint();
         });
     }
 
@@ -615,7 +659,27 @@ impl App {
                         self.tweaks_shown_gen = gen;
                         self.tweak_states = states;
                         self.tweak_effects = effects;
+                        // A change that finished before this read began is
+                        // in it; one still running is not, and stays held.
+                        self.tweak_pending.retain(|_, (_, done)| !*done);
                     }
+                }
+                Job::TweakDone { id, action, result } => {
+                    match result {
+                        Ok(msg) => {
+                            self.store.log_tweak(id, action, "", &msg);
+                            self.toast(msg, GREEN, now);
+                            if let Some((_, done)) = self.tweak_pending.get_mut(id) {
+                                *done = true;
+                            }
+                        }
+                        Err(e) => {
+                            self.store.log_tweak(id, &format!("{action}_failed"), "", &e);
+                            self.toast(e, RED, now);
+                            self.tweak_pending.remove(id);
+                        }
+                    }
+                    self.refresh_tweaks();
                 }
                 Job::SysLog(id, events) => {
                     if self.syslog_pending == Some(id) {

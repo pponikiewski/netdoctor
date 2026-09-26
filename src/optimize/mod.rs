@@ -245,6 +245,18 @@ fn snapshot_key_for(
     snaps.contains_key(&bare).then_some(bare)
 }
 
+/// Held across every apply and revert. Each one reads the snapshot file,
+/// changes one entry and writes it back, and the switches run them on worker
+/// threads: two at once would each write back a file missing the other's
+/// entry, and the one lost is a "before" value that exists nowhere else.
+static SNAPSHOT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn snapshot_lock() -> std::sync::MutexGuard<'static, ()> {
+    // The guard protects no data of its own, so a poisoned lock is still a
+    // working lock.
+    SNAPSHOT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn has_snapshot(tweak: &dyn Tweak, net: &NetState) -> bool {
     read_snapshots().map(|m| snapshot_key_for(&m, tweak, net).is_some()).unwrap_or(false)
 }
@@ -260,6 +272,7 @@ pub fn apply(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
     if tweak.needs_admin() && !is_elevated() {
         return Err(anyhow!(crate::i18n::tw_needs_admin()));
     }
+    let _lock = snapshot_lock();
     // Refuses rather than starting from an empty map: see `read_snapshots`.
     let mut snaps = read_snapshots()?;
     let state = tweak.read(net);
@@ -298,6 +311,7 @@ pub fn revert(tweak: &dyn Tweak, net: &NetState) -> Result<String> {
     if tweak.needs_admin() && !is_elevated() {
         return Err(anyhow!(crate::i18n::tw_revert_needs_admin()));
     }
+    let _lock = snapshot_lock();
     let mut snaps = read_snapshots()?;
     let Some(key) = snapshot_key_for(&snaps, tweak, net) else {
         return Err(anyhow!(crate::i18n::tw_no_snapshot()));
