@@ -2,7 +2,7 @@
 type: project
 project: netdoc
 status: active
-updated: 2026-09-26
+updated: 2026-09-27
 ---
 
 # 🧠 netdoc
