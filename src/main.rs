@@ -125,11 +125,9 @@ fn main() -> eframe::Result<()> {
     //
     // Held in a binding rather than dropped straight away: the name is only
     // taken for as long as this handle lives.
-    let acquired = if args.iter().any(|a| a == update::AFTER_UPDATE_FLAG) {
-        single::acquire_within(AFTER_UPDATE_WAIT)
-    } else {
-        single::acquire()
-    };
+    let replacing = args.iter().any(|a| a == update::AFTER_UPDATE_FLAG);
+    let acquired =
+        if replacing { single::acquire_within(AFTER_UPDATE_WAIT) } else { single::acquire() };
     let _instance = match acquired {
         Some(guard) => guard,
         None => {
@@ -142,7 +140,10 @@ fn main() -> eframe::Result<()> {
         }
     };
 
-    let minimised = args.iter().any(|a| a == "--minimised") || cfg.start_minimised;
+    // The setting is for a fresh start. A copy that replaces a running one
+    // (an update's restart, the elevated relaunch) was asked for by a button
+    // in the window, so it comes up where the user is looking.
+    let minimised = args.iter().any(|a| a == "--minimised") || (cfg.start_minimised && !replacing);
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1120.0, 760.0])
