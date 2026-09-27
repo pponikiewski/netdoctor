@@ -16,6 +16,7 @@ use super::{
     button, button_ex, card, status_dot, App, Emphasis, Job, ACCENT, BG2, BG3, FG, FG_DIM, GREEN,
     RED, S_LG, S_MD, S_SM, S_XS, T_BODY, T_HEAD, T_LEAD, T_META, T_TITLE, YELLOW,
 };
+use crate::clock;
 use crate::diagnose::{self, Ipv6State, Link, LinkState, Segment, Severity, Verdict};
 use crate::i18n;
 use crate::longrun::{LongRun, Trouble};
@@ -756,7 +757,7 @@ fn measure_card(app: &App, ui: &mut egui::Ui) {
             m.syslog
                 .iter()
                 .take(4)
-                .map(|e| format!("{} {}", diagnose::format_clock_s(e.ts), i18n::log_kind(e.kind)))
+                .map(|e| format!("{} {}", clock::format_clock_s(e.ts), i18n::log_kind(e.kind)))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -850,7 +851,7 @@ fn long_card(run: &LongRun, ui: &mut egui::Ui) {
             painter.text(
                 egui::pos2(x_of(s), axis_y),
                 align,
-                diagnose::format_clock_s(run.started_at + s as f64),
+                clock::format_clock_s(run.started_at + s as f64),
                 egui::FontId::monospace(super::T_MICRO),
                 FG_DIM,
             );
@@ -884,7 +885,7 @@ fn long_card(run: &LongRun, ui: &mut egui::Ui) {
                     (false, _) => YELLOW,
                 };
                 ui.label(super::figure(
-                    diagnose::format_clock_s(run.started_at + e.start_s as f64),
+                    clock::format_clock_s(run.started_at + e.start_s as f64),
                     T_BODY,
                     FG,
                 ));
@@ -918,7 +919,7 @@ fn verdict_card(app: &App, ui: &mut egui::Ui, jump_to: &mut Option<String>) {
         .inner_margin(egui::Margin { left: S_LG + 4.0, right: S_LG, top: S_LG, bottom: S_LG })
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            let when = app.scan_at.map(diagnose::format_clock).unwrap_or_default();
+            let when = app.scan_at.map(clock::format_clock).unwrap_or_default();
             ui.label(
                 egui::RichText::new(i18n::verdict_meta(&when, &scan_where(&app.scan_net)))
                     .size(T_META)
@@ -1000,7 +1001,7 @@ fn since(prev: &PrevScan, app: &App) -> String {
     let avg = |s: &Option<crate::store::Stats>| s.as_ref().and_then(|s| s.avg);
     let router = prev.router_ms.zip(avg(&app.measurements.gateway));
     let internet = prev.internet_ms.zip(avg(&app.measurements.internet));
-    i18n::verdict_since(&diagnose::format_clock(prev.at), prev.segment.label(), router, internet)
+    i18n::verdict_since(&clock::format_clock(prev.at), prev.segment.label(), router, internet)
 }
 
 fn open_tweak(app: &mut App, id: &str) {

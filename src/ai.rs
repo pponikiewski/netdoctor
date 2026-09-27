@@ -16,6 +16,7 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
+use crate::clock;
 use crate::diagnose::{self, LinkState, Scan};
 use crate::i18n::{self, Lang};
 use crate::probe::netstate::NetState;
@@ -319,7 +320,7 @@ pub fn report(scan: &Scan, net: &NetState, cfg: &Settings) -> String {
     for e in &m.syslog {
         line(format!(
             "- Windows logged at {}: {}{}",
-            diagnose::format_clock_s(e.ts),
+            clock::format_clock_s(e.ts),
             i18n::log_kind(e.kind),
             e.reason.map(|r| format!(" (reason {r})")).unwrap_or_default()
         ));
@@ -362,7 +363,7 @@ pub fn report(scan: &Scan, net: &NetState, cfg: &Settings) -> String {
         for e in &run.episodes {
             line(format!(
                 "- At {} for {} s: {} starting {}{}",
-                diagnose::format_clock_s(run.started_at + e.start_s as f64),
+                clock::format_clock_s(run.started_at + e.start_s as f64),
                 e.len_s,
                 match e.kind {
                     crate::longrun::Trouble::Loss => "packets lost",

@@ -398,7 +398,7 @@ fn iso_utc(ts: f64) -> String {
     let t = ts as i64;
     let days = t.div_euclid(86400);
     let secs = t.rem_euclid(86400);
-    let (y, m, d) = crate::diagnose::civil_from_days(days);
+    let (y, m, d) = crate::clock::civil_from_days(days);
     format!(
         "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.000Z",
         secs / 3600,

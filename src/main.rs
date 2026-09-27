@@ -12,6 +12,7 @@ mod ai;
 mod autostart;
 mod bandwidth;
 mod cause;
+mod clock;
 mod diagnose;
 mod effect;
 mod folder;

@@ -15,7 +15,7 @@ use super::{
     YELLOW,
 };
 use crate::cause::{self, Cause, Confidence, Evidence};
-use crate::diagnose::format_datetime;
+use crate::clock::format_datetime;
 use crate::i18n;
 use crate::probe::eventlog::SysEvent;
 use crate::store::Event;

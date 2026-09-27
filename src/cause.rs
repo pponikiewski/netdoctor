@@ -16,6 +16,7 @@
 //! a matching entry in the Optimise tab, it carries that tweak's id and the UI
 //! can take the user straight to it.
 
+use crate::clock;
 use crate::i18n;
 use crate::monitor::LeadSample;
 use crate::probe::eventlog::{Kind, SysEvent};
@@ -738,9 +739,8 @@ fn recurrence(event: &Event, history: &[Event], out: &mut Vec<Cause>) {
     if same.len() < 3 {
         return;
     }
-    let this_hour = crate::diagnose::local_hour(event.ts_start);
-    let matching =
-        same.iter().filter(|e| crate::diagnose::local_hour(e.ts_start) == this_hour).count();
+    let this_hour = clock::local_hour(event.ts_start);
+    let matching = same.iter().filter(|e| clock::local_hour(e.ts_start) == this_hour).count();
 
     if matching >= 3 && matching * 2 >= same.len() {
         out.push(Cause::new(

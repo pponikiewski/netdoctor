@@ -945,7 +945,7 @@ fn readout(
 
     let ts = newest + x;
     ui.label(
-        egui::RichText::new(i18n::live_hover_when(&crate::diagnose::format_clock(ts), -x))
+        egui::RichText::new(i18n::live_hover_when(&crate::clock::format_clock(ts), -x))
             .size(T_META)
             .strong()
             .color(FG),

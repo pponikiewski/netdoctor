@@ -16,7 +16,7 @@ use anyhow::Result;
 use super::{App, Job};
 use crate::bandwidth::Grade;
 use crate::cause::{self, Evidence};
-use crate::diagnose::format_datetime;
+use crate::clock::format_datetime;
 use crate::i18n;
 use crate::monitor::LeadSample;
 use crate::probe::eventlog::{self, SysEvent};
@@ -499,7 +499,7 @@ fn signal_text(n: &NetState) -> String {
 /// which says the same thing.
 fn write(text: &str, dir: &std::path::Path) -> Result<String> {
     std::fs::create_dir_all(dir)?;
-    let stem = format!("{} {}", i18n::rep_file_stem(), crate::diagnose::file_stamp(store::now()));
+    let stem = format!("{} {}", i18n::rep_file_stem(), crate::clock::file_stamp(store::now()));
     let (bytes, ext) = match crate::pdf::render(text, i18n::pdf_page) {
         Ok(pdf) => (pdf, "pdf"),
         Err(_) => (text.as_bytes().to_vec(), "txt"),

@@ -581,7 +581,7 @@ fn card_detail(app: &mut App, ui: &mut egui::Ui, t: &dyn optimize::Tweak) {
     // it. Only there once it has been applied and measured on both sides.
     if let Some(e) = app.tweak_effects.get(t.id()) {
         ui.add_space(S_XS);
-        let heading = i18n::opt_effect_heading(&crate::diagnose::format_datetime(e.applied));
+        let heading = i18n::opt_effect_heading(&crate::clock::format_datetime(e.applied));
         ui.label(egui::RichText::new(heading).size(T_META).strong().color(FG_DIM));
         for (label, side) in
             [(i18n::opt_effect_before(), e.before), (i18n::opt_effect_after(), e.after)]

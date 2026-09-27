@@ -354,7 +354,7 @@ fn result(app: &App, ui: &mut egui::Ui) {
 
     let mut foot = Vec::new();
     if let Some(at) = app.bloat_at {
-        foot.push(i18n::bloat_measured_at(&crate::diagnose::format_clock(at)));
+        foot.push(i18n::bloat_measured_at(&crate::clock::format_clock(at)));
     }
     if r.total_bytes() > 0 {
         foot.push(i18n::bloat_data_used(r.total_bytes() as f64 / 1_000_000.0));

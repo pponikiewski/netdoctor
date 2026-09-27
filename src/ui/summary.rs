@@ -195,9 +195,9 @@ fn since_text(s: Since, now: f64) -> String {
     let at = |ts: f64| {
         // A clock time alone is ambiguous once it could be yesterday's.
         if now - ts > 12.0 * 3600.0 {
-            crate::diagnose::format_datetime(ts)
+            crate::clock::format_datetime(ts)
         } else {
-            crate::diagnose::format_clock(ts)
+            crate::clock::format_clock(ts)
         }
     };
     let long = |ts: f64| i18n::span(now - ts);
