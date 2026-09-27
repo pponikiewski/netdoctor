@@ -1133,7 +1133,7 @@ fn cards(app: &mut App, ui: &mut egui::Ui) {
                 // the column at the point a window is squeezed to nothing,
                 // and a negative width reaches egui's layout sanity check.
                 let width = (cols[i].available_width() - 2.0 * S_MD).max(0.0);
-                let resp = super::stat_card_ex(
+                let resp = super::stat_card(
                     &mut cols[i],
                     stat.label,
                     &stat.value,
