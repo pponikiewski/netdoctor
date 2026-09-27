@@ -496,8 +496,9 @@ it heard radar, which is exactly the outage this app exists to explain.
 
 ## Why the Windows APIs, not the command-line tools
 
-The original prototype (kept in `legacy-python/`) shelled out to `ping.exe`,
-`netsh`, `ipconfig`, `powercfg` and `reg.exe`, and parsed their output. That
+The original Python prototype (gone from the tree; its last state is commit
+`81124f8`) shelled out to `ping.exe`, `netsh`, `ipconfig`, `powercfg` and
+`reg.exe`, and parsed their output. That
 approach has three problems this version does not:
 
 - **Cost.** `ping.exe` needs about 40 ms of process startup per sample.
