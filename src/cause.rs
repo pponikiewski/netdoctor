@@ -387,7 +387,7 @@ pub const ROUTER_MARGIN_S: f64 = 300.0;
 
 /// Slack on "the counter started during the outage": the router's clock and
 /// this machine's are read a poll apart.
-const ROUTER_CLOCK_SLACK_S: f64 = 60.0;
+pub const ROUTER_CLOCK_SLACK_S: f64 = 60.0;
 
 /// What the router said about its WAN link around the outage.
 ///

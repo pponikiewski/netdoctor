@@ -27,6 +27,7 @@ mod probe;
 mod settings;
 mod single;
 mod store;
+mod tally;
 mod tray;
 mod ui;
 mod update;

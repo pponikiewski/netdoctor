@@ -10,6 +10,7 @@ mod live;
 mod opt;
 mod report;
 mod settings_tab;
+mod stats_tab;
 mod summary;
 mod update_ui;
 mod widgets;
@@ -175,6 +176,7 @@ pub enum Tab {
     Bloat,
     Optimise,
     History,
+    Stats,
     Settings,
 }
 
@@ -222,6 +224,9 @@ pub enum Job {
     /// asked about, so an answer landing after a rescan is dropped rather
     /// than shown beside numbers it never saw.
     AiDone(u64, Result<crate::ai::Explanation, String>),
+    /// The statistics tab's figures, counted off the UI thread: they scan
+    /// every sample in the period.
+    Stats(Box<crate::tally::Totals>),
 }
 
 pub struct App {
@@ -347,6 +352,9 @@ pub struct App {
     pub outage_detail: Option<history::OutageDetail>,
     /// The outage list, re-read once a second rather than every frame.
     pub history_list: Option<history::ListCache>,
+    /// What the outage list is narrowed to, from a click on the statistics
+    /// tab.
+    pub history_filter: Option<history::Filter>,
     /// The event log read for one outage, kept so opening an entry launches
     /// `wevtutil` once rather than on every frame it stays open.
     pub syslog: Option<(i64, Vec<crate::probe::eventlog::SysEvent>)>,
@@ -354,6 +362,11 @@ pub struct App {
     pub syslog_pending: Option<i64>,
     /// How far back the next report reaches.
     pub report_range: report::Range,
+    /// The period the statistics tab adds up, its last count, and whether a
+    /// count is running.
+    pub stats_range: report::Range,
+    pub stats: Option<crate::tally::Totals>,
+    pub stats_busy: bool,
     /// A report is being written on a worker thread.
     pub report_busy: bool,
     /// Where the last report went, or why it did not, for the next frame's
@@ -468,9 +481,13 @@ impl App {
             selected_outage: None,
             outage_detail: None,
             history_list: None,
+            history_filter: None,
             syslog: None,
             syslog_pending: None,
             report_range: report::Range::Day,
+            stats_range: report::Range::Week,
+            stats: None,
+            stats_busy: false,
             report_busy: false,
             report_done: None,
             elevated: crate::optimize::is_elevated(),
@@ -732,6 +749,10 @@ impl App {
                     self.report_busy = false;
                     self.report_done = Some(result);
                 }
+                Job::Stats(totals) => {
+                    self.stats_busy = false;
+                    self.stats = Some(*totals);
+                }
             }
         }
     }
@@ -839,6 +860,7 @@ impl eframe::App for App {
                         (Tab::Bloat, crate::i18n::tab_bloat()),
                         (Tab::Optimise, crate::i18n::tab_optimise()),
                         (Tab::History, crate::i18n::tab_history()),
+                        (Tab::Stats, crate::i18n::tab_stats()),
                         (Tab::Settings, crate::i18n::tab_settings()),
                     ] {
                         let selected = self.tab == tab;
@@ -930,6 +952,7 @@ impl eframe::App for App {
                 Tab::Bloat => bloat::show(self, ui),
                 Tab::Optimise => opt::show(self, ui),
                 Tab::History => history::show(self, ui),
+                Tab::Stats => stats_tab::show(self, ui),
                 Tab::Settings => settings_tab::show(self, ui),
             });
     }

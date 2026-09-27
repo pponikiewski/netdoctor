@@ -339,6 +339,25 @@ one English label that would silently fail everywhere else.
   outage shaded on both. **Clear history** deletes every finished outage
   after asking, and names the report as the way to keep a copy; an outage
   still in progress and the measurements behind the live chart are kept.
+- **Statistics**: the history added up over a period you pick (24 hours, 7
+  or 30 days, or everything kept): time without internet, availability,
+  how many drops and slowdowns, the longest stretch without a drop and how
+  often one came on average, how many times the router (or its connection
+  to the provider) restarted and the public address changed, as the router
+  reports over UPnP, and the same period just before for comparison, with
+  how much of it was watched. Below: which kind of outage took the most
+  time, ping to the router and to the internet (average, 95th percentile,
+  worst, and packet loss both with the drops left out and in total), the
+  minutes lost per hour or per day, and for longer periods the share of
+  each hour of the day that was down or slow. Clicking a drop count, a kind
+  of outage or a bar opens exactly those entries in Outage history.
+  Every share is of the time the app was watching, never of the calendar: an
+  hour of the day watched less than 30 minutes gets no bar, less than ten
+  minutes watched in all gives no availability figure, and a stretch the
+  computer was off is not a stretch without drops. Drops are kept for a year
+  and counted over the whole period; ping and availability only reach back
+  as far as measurements are kept, and the tab says so when the period is
+  longer. The same summary opens the saved report.
 - **Settings**: your line (fibre, cable, DSL, radio, LTE / 5G, satellite, or
   don't know) and your plan's speeds, which the app cannot read for itself: the
   line sets the ping to expect until the app has its own history and fits the
@@ -522,7 +541,7 @@ say "not set" rather than "failed").
 cargo test
 ```
 
-403 tests, covering the failure-blame logic, the statistics, the registry layer,
+422 tests, covering the failure-blame logic, the statistics, the registry layer,
 settings migration, and the ICMP status-code mapping. Several run against the
 live machine — a `ping_once` to loopback must succeed, a reserved address must
 fail without hanging, and a full diagnostic scan must produce presentable

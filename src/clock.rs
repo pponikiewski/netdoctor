@@ -34,6 +34,24 @@ pub fn local_hour(ts: f64) -> i64 {
     (ts as i64 + local_offset_at(ts)).div_euclid(3600).rem_euclid(24)
 }
 
+/// Local date without the year, "27.09", for a label under a day's bar.
+pub fn format_day(ts: f64) -> String {
+    let t = ts as i64 + local_offset_at(ts);
+    let (_, m, d) = civil_from_days(t.div_euclid(86400));
+    format!("{d:02}.{m:02}")
+}
+
+/// The local midnight that begins the day `ts` falls in.
+pub fn local_midnight(ts: f64) -> f64 {
+    ts - (ts as i64 + local_offset_at(ts)).rem_euclid(86400) as f64 - ts.fract()
+}
+
+/// The local midnight after the one that begins `ts`'s day. Not `+ 86400`:
+/// the days daylight saving starts and ends on are 23 and 25 hours long.
+pub fn next_local_midnight(ts: f64) -> f64 {
+    local_midnight(local_midnight(ts) + 26.0 * 3600.0)
+}
+
 /// Seconds to add to a unix timestamp to get the machine's local time at
 /// that moment, daylight saving included.
 ///

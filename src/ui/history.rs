@@ -291,21 +291,84 @@ const ROW_H: f32 = 54.0;
 /// pace, so a second-old list is as current as the data.
 pub struct ListCache {
     built_at: f64,
+    filter: Option<Filter>,
+    /// How many entries the filter matched, of which the newest
+    /// [`LIST_MAX`] are in `recent`.
+    matched: usize,
     recent: Rc<Vec<Event>>,
     day: Rc<Vec<Event>>,
+}
+
+/// Rows the list holds at most. It is laid out in full every frame (see
+/// [`list`]), which is fine for this many and not for a year of slowdowns.
+const LIST_MAX: usize = 300;
+
+/// The list narrowed to one stretch of time and one kind of trouble, set by
+/// clicking a figure on the statistics tab: the figure there says how many,
+/// and this shows which.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Filter {
+    pub from: f64,
+    pub to: f64,
+    pub kinds: Kinds,
+    /// What the list says it is showing.
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Kinds {
+    Any,
+    /// Every kind but slowness.
+    Breaks,
+    Slow,
+    One(String),
+}
+
+impl Filter {
+    fn keeps(&self, e: &Event) -> bool {
+        let slow = crate::tally::is_slow(e);
+        match &self.kinds {
+            Kinds::Any => true,
+            Kinds::Breaks => !slow,
+            Kinds::Slow => slow,
+            Kinds::One(kind) => e.kind == *kind,
+        }
+    }
 }
 
 const LIST_REFRESH_S: f64 = 1.0;
 
 fn list_cache(app: &mut App) -> (Rc<Vec<Event>>, Rc<Vec<Event>>) {
     let now = crate::store::now();
-    let fresh = app.history_list.as_ref().filter(|c| now - c.built_at < LIST_REFRESH_S);
+    let fresh = app
+        .history_list
+        .as_ref()
+        .filter(|c| now - c.built_at < LIST_REFRESH_S && c.filter == app.history_filter);
     if let Some(c) = fresh {
         return (Rc::clone(&c.recent), Rc::clone(&c.day));
     }
+    // Filtered, the list is the newest matches inside the stretch, not the
+    // matches among the newest rows: a week of slowdowns can be all of those.
+    let (recent, matched) = match &app.history_filter {
+        Some(f) => {
+            let mut v = app.store.events_overlapping(f.from, f.to);
+            v.retain(|e| f.keeps(e));
+            let matched = v.len();
+            v.reverse();
+            v.truncate(LIST_MAX);
+            (v, matched)
+        }
+        None => {
+            let v = app.store.recent_events(LIST_MAX);
+            let n = v.len();
+            (v, n)
+        }
+    };
     let c = ListCache {
         built_at: now,
-        recent: Rc::new(app.store.recent_events(300)),
+        filter: app.history_filter.clone(),
+        matched,
+        recent: Rc::new(recent),
         day: Rc::new(app.store.events_since(24.0 * 3600.0)),
     };
     let out = (Rc::clone(&c.recent), Rc::clone(&c.day));
@@ -347,6 +410,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 return None;
             }
             if events.is_empty() {
+                filter_bar(app, ui);
                 card(ui, i18n::hist_list_heading(), |ui| {
                     ui.label(
                         egui::RichText::new(i18n::hist_nothing_logged()).size(T_BODY).color(FG_DIM),
@@ -592,9 +656,36 @@ fn duration_text(e: &Event) -> String {
     }
 }
 
+/// What the list is narrowed to, and the way back to all of it.
+fn filter_bar(app: &mut App, ui: &mut egui::Ui) {
+    let Some(label) = app.history_filter.as_ref().map(|f| f.label.clone()) else {
+        return;
+    };
+    let matched = app.history_list.as_ref().map_or(0, |c| c.matched);
+    ui.horizontal_wrapped(|ui| {
+        super::status_dot(ui, super::ACCENT, 4.0);
+        ui.label(egui::RichText::new(i18n::hist_filtered(&label)).size(T_BODY).strong().color(FG));
+        // Said, not left to be noticed: the figure that opened this list
+        // counted all of them.
+        if matched > LIST_MAX {
+            ui.label(
+                egui::RichText::new(i18n::hist_filtered_newest(LIST_MAX, matched))
+                    .size(T_META)
+                    .color(FG_DIM),
+            );
+        }
+        if button(ui, i18n::hist_show_all(), Emphasis::Ghost).clicked() {
+            app.history_filter = None;
+            app.selected_outage = None;
+        }
+    });
+    ui.add_space(S_SM);
+}
+
 /// The outage rows. Returns how far the pinned row is from where it has to
 /// be, when a view change pinned one; see [`anchor_on_change`].
 fn list(app: &mut App, ui: &mut egui::Ui, events: &[Event]) -> Option<f32> {
+    filter_bar(app, ui);
     ui.label(
         egui::RichText::new(format!("{} · {}", i18n::hist_list_heading(), events.len()))
             .size(T_META)
@@ -613,7 +704,7 @@ fn list(app: &mut App, ui: &mut egui::Ui, events: &[Event]) -> Option<f32> {
     }
     // Drawn in full rather than a visible slice: the list scrolls with the
     // page above it, and a row has to be laid out to be measured. At most
-    // 300 rows, and `list_row` paints nothing for one that is off screen.
+    // `LIST_MAX` rows, and `list_row` paints nothing for one that is off screen.
     let mut rows = Vec::with_capacity(events.len());
     let mut delta = None;
     for e in events {
@@ -1139,6 +1230,25 @@ fn join_strs(v: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_filter_from_the_statistics_keeps_only_what_its_figure_counted() {
+        let ev = |kind: &str| Event {
+            id: 0,
+            ts_start: 0.0,
+            ts_end: Some(1.0),
+            kind: kind.into(),
+            scope: String::new(),
+            detail: String::new(),
+        };
+        let f = |kinds| Filter { from: 0.0, to: 1.0, kinds, label: String::new() };
+        let (slow, down) = (ev("degraded"), ev("isp_down"));
+        assert!(f(Kinds::Breaks).keeps(&down) && !f(Kinds::Breaks).keeps(&slow));
+        assert!(f(Kinds::Slow).keeps(&slow) && !f(Kinds::Slow).keeps(&down));
+        assert!(f(Kinds::Any).keeps(&slow) && f(Kinds::Any).keeps(&down));
+        let one = f(Kinds::One("isp_down".into()));
+        assert!(one.keeps(&down) && !one.keeps(&ev("lan_down")));
+    }
 
     #[test]
     fn a_long_outage_is_plotted_thinned_without_losing_its_worst_reading() {

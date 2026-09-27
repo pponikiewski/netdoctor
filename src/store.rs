@@ -89,6 +89,23 @@ pub struct Stats {
     pub jitter: Option<f64>,
 }
 
+/// What [`Store::ping_totals`] counts over a stretch.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PingTotals {
+    pub sent: u64,
+    pub lost: u64,
+    /// `None` when nothing was answered: not a zero round trip.
+    pub avg: Option<f64>,
+    pub max: Option<f64>,
+}
+
+impl PingTotals {
+    /// Share of pings lost, or `None` when none were sent.
+    pub fn loss_pct(&self) -> Option<f64> {
+        (self.sent > 0).then(|| self.lost as f64 * 100.0 / self.sent as f64)
+    }
+}
+
 /// One outage, as the lists and tables read it.
 ///
 /// Deliberately without the stored context: see [`EventContext`], which is
@@ -230,6 +247,19 @@ impl Store {
         let store = Store { conn: Mutex::new(conn), read: read.ok().map(Mutex::new) };
         store.close_orphans();
         Ok(store)
+    }
+
+    /// Another read-only view of the same file, for one long read.
+    ///
+    /// The statistics tab scans weeks of samples, most of a second on a real
+    /// history. On the shared read connection that second is one the monitor
+    /// waits out before it can judge its next sweep. `None` for an in-memory
+    /// database, which has no file to open twice.
+    pub fn side_reader(&self) -> Option<Store> {
+        let path = self.held_read().path().filter(|p| !p.is_empty())?.to_string();
+        let conn = Connection::open(path).ok()?;
+        conn.execute_batch("PRAGMA query_only=ON; PRAGMA busy_timeout=2000;").ok()?;
+        Some(Store { conn: Mutex::new(conn), read: None })
     }
 
     /// Closes outages that a previous run left open.
@@ -443,6 +473,29 @@ impl Store {
         self.query_events("WHERE ts_start >= ? ORDER BY ts_start DESC", Some(now() - window_s))
     }
 
+    /// Every outage with any part inside `[from, to]`, oldest first,
+    /// including one that began before `from` and one still running: counting
+    /// by start alone, a day that opened in the middle of an outage showed
+    /// none of it.
+    pub fn events_overlapping(&self, from: f64, to: f64) -> Vec<Event> {
+        let conn = self.held_read();
+        let sql = format!(
+            "SELECT {EVENT_COLUMNS} FROM events \
+              WHERE ts_start <= ?2 AND (ts_end IS NULL OR ts_end >= ?1) ORDER BY ts_start"
+        );
+        let Ok(mut stmt) = conn.prepare_cached(&sql) else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map(params![from, to], map_event);
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
+    }
+
+    /// When the oldest outage on record began.
+    pub fn first_event_ts(&self) -> Option<f64> {
+        let conn = self.held_read();
+        conn.query_row("SELECT MIN(ts_start) FROM events", [], |r| r.get(0)).ok().flatten()
+    }
+
     /// When the current unbroken stretch of watching began, or `None` on an
     /// empty history.
     ///
@@ -490,6 +543,83 @@ impl Store {
             |r| r.get(0),
         )
         .unwrap_or(0.0)
+    }
+
+    /// Pings sent to one target in `[from, to]`, how many went unanswered,
+    /// and the mean and worst of the answered ones.
+    ///
+    /// Reduced in SQL rather than through [`Store::stats_between`]: that one
+    /// pulls every row into Rust for the jitter, which is fine for minutes and
+    /// a stall for the weeks the statistics tab asks about.
+    pub fn ping_totals(&self, target: &str, from: f64, to: f64) -> PingTotals {
+        let conn = self.held_read();
+        conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(ok = 0), 0), \
+                    AVG(CASE WHEN ok THEN rtt_ms END), MAX(CASE WHEN ok THEN rtt_ms END) \
+               FROM samples \
+              WHERE target = (SELECT id FROM targets WHERE key = ?1) AND ts >= ?2 AND ts <= ?3",
+            params![target, from, to],
+            |r| {
+                Ok(PingTotals {
+                    sent: r.get::<_, i64>(0)?.max(0) as u64,
+                    lost: r.get::<_, i64>(1)?.max(0) as u64,
+                    avg: r.get(2)?,
+                    max: r.get(3)?,
+                })
+            },
+        )
+        .unwrap_or_default()
+    }
+
+    /// The answered round trip below which `share` of the answered pings to
+    /// one target in `[from, to]` fell: 0.95 for the 95th percentile. `None`
+    /// when nothing was answered.
+    ///
+    /// The worst single ping is one moment; this is how bad the line usually
+    /// gets, which is the figure worth quoting.
+    ///
+    /// ponytail: pulls every answered round trip and picks the rank in Rust.
+    /// `ORDER BY rtt_ms LIMIT 1 OFFSET n` in SQLite sorted the lot and took a
+    /// second for two weeks; this is a sixth of that, and 2 MB for a moment.
+    pub fn rtt_percentile(&self, target: &str, from: f64, to: f64, share: f64) -> Option<f64> {
+        let mut rtts: Vec<f64> = {
+            let conn = self.held_read();
+            let mut stmt = conn
+                .prepare_cached(
+                    "SELECT rtt_ms FROM samples \
+                      WHERE target = (SELECT id FROM targets WHERE key = ?1) \
+                        AND ts >= ?2 AND ts <= ?3 AND ok AND rtt_ms IS NOT NULL",
+                )
+                .ok()?;
+            let rows = stmt.query_map(params![target, from, to], |r| r.get(0)).ok()?;
+            rows.flatten().collect()
+        };
+        if rtts.is_empty() {
+            return None;
+        }
+        // Nearest rank: the smallest value with at least `share` of them at or
+        // below it.
+        let n = rtts.len();
+        let rank = ((share.clamp(0.0, 1.0) * n as f64).ceil() as usize).clamp(1, n);
+        let (_, value, _) = rtts.select_nth_unstable_by(rank - 1, |a, b| a.total_cmp(b));
+        Some(*value)
+    }
+
+    /// Every sweep's time in `[from, to]`, oldest first: the raw material for
+    /// when somebody was watching. See [`crate::tally::watched`].
+    ///
+    /// ponytail: a float per sweep, so two weeks at one sweep a second is
+    /// 10 MB for the moment it is being read, off the UI thread. Reduce in SQL
+    /// with `LAG` if it is ever needed over longer than the samples are kept.
+    pub fn sweep_times(&self, from: f64, to: f64) -> Vec<f64> {
+        let conn = self.held_read();
+        let Ok(mut stmt) = conn.prepare_cached(
+            "SELECT DISTINCT ts FROM samples WHERE ts >= ? AND ts <= ? ORDER BY ts",
+        ) else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map(params![from, to], |r| r.get(0));
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
     /// The newest sample on record. Tells a restart whether it is resuming a
@@ -1106,6 +1236,76 @@ mod tests {
             store.observing_since(OBSERVATION_GAP_S).map_or(0, |_| 1)
         });
         time("recent_events(300)", 50, &|| store.recent_events(300).len());
+        time("ping_totals 14 days (stats tab)", 3, &|| {
+            store.ping_totals("cloudflare", newest - 14.0 * 86_400.0, newest).sent as usize
+        });
+        time("rtt_percentile 14 days (stats tab)", 3, &|| {
+            store.rtt_percentile("cloudflare", newest - 14.0 * 86_400.0, newest, 0.95).is_some()
+                as usize
+        });
+        time("sweep_times 14 days (stats tab)", 3, &|| {
+            store.sweep_times(newest - 14.0 * 86_400.0, newest).len()
+        });
+    }
+
+    #[test]
+    fn a_side_reader_sees_the_same_file_and_cannot_write_to_it() {
+        let path = std::env::temp_dir().join(format!("netdoctor-side-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let store = Store::open(&path).unwrap();
+        store.add_samples(&[(10.0, "gateway".into(), Some(2.0), true)]).unwrap();
+
+        let side = store.side_reader().expect("a file-backed store has a file to reopen");
+        assert_eq!(side.ping_totals("gateway", 0.0, 100.0).sent, 1);
+        // Written after it was opened, and still seen: another view, not a copy.
+        store.add_samples(&[(11.0, "gateway".into(), None, false)]).unwrap();
+        assert_eq!(side.ping_totals("gateway", 0.0, 100.0).sent, 2);
+        assert!(side.add_samples(&[(12.0, "gateway".into(), None, false)]).is_err());
+
+        assert!(Store::open_in_memory().unwrap().side_reader().is_none());
+        drop((side, store));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ping_totals_count_the_lost_and_average_only_the_answered() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .add_samples(&[
+                (10.0, "cloudflare".into(), Some(20.0), true),
+                (11.0, "cloudflare".into(), None, false),
+                (12.0, "cloudflare".into(), Some(40.0), true),
+                (12.0, "gateway".into(), Some(2.0), true),
+                (500.0, "cloudflare".into(), Some(900.0), true),
+            ])
+            .unwrap();
+        let t = store.ping_totals("cloudflare", 0.0, 100.0);
+        assert_eq!((t.sent, t.lost, t.avg, t.max), (3, 1, Some(30.0), Some(40.0)));
+        assert!((t.loss_pct().unwrap() - 100.0 / 3.0).abs() < 1e-9);
+
+        // Nothing sent is not "no loss", and nothing answered is not 0 ms.
+        let none = store.ping_totals("nowhere", 0.0, 100.0);
+        assert_eq!((none.sent, none.avg, none.loss_pct()), (0, None, None));
+        store.add_samples(&[(20.0, "dead".into(), None, false)]).unwrap();
+        let dead = store.ping_totals("dead", 0.0, 100.0);
+        assert_eq!((dead.loss_pct(), dead.avg), (Some(100.0), None));
+        assert_eq!(store.rtt_percentile("dead", 0.0, 100.0, 0.95), None);
+    }
+
+    #[test]
+    fn the_95th_percentile_is_a_real_reading_and_ignores_the_lost() {
+        let store = Store::open_in_memory().unwrap();
+        // 1..=20 ms answered, and lost pings that must not count as zero.
+        let mut rows: Vec<(f64, String, Option<f64>, bool)> =
+            (1..=20).map(|i| (i as f64, "cloudflare".into(), Some(i as f64), true)).collect();
+        rows.extend((21..=30).map(|i| (i as f64, "cloudflare".into(), None, false)));
+        store.add_samples(&rows).unwrap();
+        assert_eq!(store.rtt_percentile("cloudflare", 0.0, 100.0, 0.95), Some(19.0));
+        assert_eq!(store.rtt_percentile("cloudflare", 0.0, 100.0, 1.0), Some(20.0));
+        assert_eq!(store.rtt_percentile("cloudflare", 0.0, 100.0, 0.0), Some(1.0));
+        // One sweep per timestamp, whatever the number of targets.
+        store.add_samples(&[(5.0, "gateway".into(), Some(1.0), true)]).unwrap();
+        assert_eq!(store.sweep_times(3.0, 6.0), vec![3.0, 4.0, 5.0, 6.0]);
     }
 
     #[test]

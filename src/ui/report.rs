@@ -36,7 +36,7 @@ pub enum Range {
 impl Range {
     pub const ALL: [Range; 4] = [Range::Day, Range::Week, Range::Month, Range::All];
 
-    fn days(self) -> Option<u32> {
+    pub fn days(self) -> Option<u32> {
         match self {
             Range::Day => Some(1),
             Range::Week => Some(7),
@@ -75,23 +75,127 @@ pub fn save_in_background(app: &mut App, range: Range) {
     std::thread::spawn(move || {
         let to = store::now();
         let from = range.days().map_or(0.0, |d| to - f64::from(d) * 86_400.0);
+        let side = store.side_reader();
+        let totals =
+            crate::tally::count(side.as_ref().unwrap_or(&store), range.days(), keep_days, to);
+        let summary = summary_section(&totals, &range.label());
         let outages = outages_section(&store, from, to, &range.label(), keep_days, |e| {
             let (a, b) = eventlog::span_around(e);
             eventlog::window(a, b)
         });
-        let result = write(&format!("{head}{outages}{tail}"), &dir).map_err(|e| e.to_string());
+        let title = title(to);
+        let result = write(&format!("{title}{summary}{head}{outages}{tail}"), &dir)
+            .map_err(|e| e.to_string());
         let _ = tx.send(Job::ReportSaved(result));
     });
 }
 
-/// The title, the connection, the last hour's measurements and the path now.
+/// The report's title line, dated.
+fn title(at: f64) -> String {
+    format!("{}, {}\n{}\n\n", i18n::rep_title(), format_datetime(at), "=".repeat(72))
+}
+
+/// The period added up, first: what someone reading one page of the report
+/// should take from it. From [`crate::tally`], the same figures as the
+/// statistics tab.
+fn summary_section(t: &crate::tally::Totals, range: &str) -> String {
+    let mut out = String::new();
+    let p = &t.now;
+    let line = |out: &mut String, label: &str, value: String| {
+        let _ = writeln!(out, "  {label:<24}: {value}");
+    };
+    let pct = |v: f64| format!("{v:.2} %");
+    let ms = |v: Option<f64>| v.map_or("—".to_string(), |v| format!("{v:.0} ms"));
+
+    // Upper case throughout: the PDF tells a heading by that.
+    let _ = writeln!(out, "{} ({})", i18n::rep_sec_summary(), range.to_uppercase());
+    let window = i18n::span(p.to - p.measured_from);
+    let watched = i18n::stats_watched(&i18n::span(p.watched_s), &window);
+    line(
+        &mut out,
+        i18n::stats_uptime(),
+        match p.availability() {
+            Some(a) => format!("{} ({watched})", pct(a)),
+            None => i18n::stats_too_little().to_string(),
+        },
+    );
+    let mut down = i18n::span(p.tally.down_s);
+    if p.tally.breaks > 0 {
+        down = format!("{down}, {}", i18n::stats_offline_sub(p.tally.breaks));
+    }
+    line(&mut out, i18n::stats_offline(), down);
+    let mut breaks = p.tally.breaks.to_string();
+    if p.tally.breaks > 0 {
+        breaks = format!("{breaks}, {}", i18n::stats_longest(&i18n::span(p.tally.longest_s)));
+    }
+    line(&mut out, i18n::stats_breaks(), breaks);
+    line(
+        &mut out,
+        i18n::stats_slow(),
+        format!("{}, {}", p.tally.slow, i18n::stats_slow_sub(&i18n::span(p.tally.slow_s))),
+    );
+    if let Some(clear) = p.longest_clear_s {
+        let every = p.mean_between_breaks().map_or_else(
+            || i18n::stats_no_drop_watched().to_string(),
+            |m| i18n::stats_every(&i18n::span(m)),
+        );
+        line(&mut out, i18n::stats_clear(), format!("{}, {every}", i18n::span(clear)));
+    }
+    let router = match t.router.and_then(|r| r.restarts.map(|n| (n, r.new_ips))) {
+        Some((n, ips)) => match ips {
+            Some(ips) => format!("{n}, {}", i18n::stats_new_ips(ips)),
+            None => n.to_string(),
+        },
+        None => i18n::stats_router_silent().to_string(),
+    };
+    line(&mut out, i18n::stats_router(), router);
+    for (name, ping) in
+        [(i18n::stats_ping_internet(), &t.internet), (i18n::stats_ping_router(), &t.router_ping)]
+    {
+        let value = match ping.totals.loss_pct() {
+            None => i18n::stats_not_measured().to_string(),
+            Some(all) => format!(
+                "{} {}, {} {}, {} {}, {} {}, {} {}",
+                i18n::stats_col_avg(),
+                ms(ping.totals.avg),
+                i18n::stats_col_p95(),
+                ms(ping.p95),
+                i18n::stats_col_max(),
+                ms(ping.totals.max),
+                i18n::stats_col_loss_up(),
+                ping.outside_loss_pct().map_or("—".to_string(), pct),
+                i18n::stats_col_loss_all(),
+                pct(all),
+            ),
+        };
+        line(&mut out, &format!("Ping, {name}"), value);
+    }
+    if let (Some(prev), Some(days)) = (t.comparable_prev(), t.days) {
+        let avail = prev.availability().map(pct);
+        let _ = writeln!(
+            out,
+            "  {}",
+            i18n::stats_prev(
+                days,
+                &i18n::span(prev.watched_s),
+                prev.tally.breaks,
+                &i18n::span(prev.tally.down_s),
+                prev.tally.slow,
+                avail.as_deref(),
+            )
+        );
+    }
+    if p.measured_from > p.from + 1.0 {
+        let _ = writeln!(out, "  {}", i18n::stats_samples_kept(t.keep_days, t.outage_keep_days()));
+    }
+    let _ = writeln!(out);
+    out
+}
+
+/// The connection, the last hour's measurements and the path now.
 fn head(app: &App) -> String {
     let mut out = String::new();
     let n = &app.net;
-
-    let _ = writeln!(out, "{}, {}", i18n::rep_title(), format_datetime(store::now()));
-    let _ = writeln!(out, "{}", "=".repeat(72));
-    let _ = writeln!(out);
 
     let _ = writeln!(out, "{}", i18n::rep_sec_connection());
     // The first two things a provider asks, and the two this computer cannot
@@ -522,6 +626,22 @@ fn free_name(dir: &std::path::Path, stem: &str, ext: &str) -> std::path::PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_summary_leads_with_a_heading_the_pdf_recognises_and_claims_nothing_unwatched() {
+        let _guard = crate::i18n::test_lock();
+        let store = Store::open_in_memory().unwrap();
+        let totals = crate::tally::count(&store, Some(7), 14, store::now());
+        let text = summary_section(&totals, "last 7 days");
+        let first = text.lines().next().unwrap();
+        assert_eq!(first, "SUMMARY (LAST 7 DAYS)");
+        // Nothing watched: no availability, no clear stretch, no router.
+        assert!(text.contains(i18n::stats_too_little()), "{text}");
+        assert!(!text.contains("100.00 %"), "{text}");
+        assert!(!text.contains(i18n::stats_clear()), "{text}");
+        assert!(text.contains(i18n::stats_router_silent()), "{text}");
+        assert!(text.contains(i18n::stats_not_measured()), "{text}");
+    }
 
     #[test]
     fn a_second_report_in_the_same_minute_does_not_overwrite_the_first() {

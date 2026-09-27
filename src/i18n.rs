@@ -79,7 +79,73 @@ strings! {
     tab_bloat => "Speed test", "Test prędkości";
     tab_optimise => "Optimise", "Optymalizacja";
     tab_history => "Outage history", "Historia awarii";
+    tab_stats => "Statistics", "Statystyki";
     tab_settings => "Settings", "Ustawienia";
+
+    // -----------------------------------------------------------------------
+    // statistics tab
+    // -----------------------------------------------------------------------
+    stats_heading => "How the connection held up", "Jak trzymało łącze";
+    stats_range => "Period:", "Okres:";
+    stats_counting => "Counting…", "Liczę…";
+    stats_offline => "Without internet", "Bez internetu";
+    stats_offline_tip =>
+        "All the time the connection was broken, whether at the adapter, the router, the provider or DNS. Time it only worked slowly is not in it; that is counted under Slowdowns.",
+        "Cały czas, w którym łącze było zerwane: na karcie sieciowej, routerze, u dostawcy albo na DNS. Nie ma tu czasu, gdy działało tylko wolno; ten jest liczony w Spowolnieniach.";
+    stats_uptime => "Availability", "Dostępność";
+    stats_uptime_tip =>
+        "The share of the watched time in which the connection worked. Time the app was closed or the computer was asleep is left out, not counted as working, because nobody measured it.",
+        "Jaka część obserwowanego czasu łącze działało. Czas, gdy aplikacja była zamknięta albo komputer spał, jest pominięty, a nie liczony jako działający, bo nikt go nie mierzył.";
+    stats_too_little => "too little watched to say", "za mało pomiarów, by ocenić";
+    stats_breaks => "Drops", "Zerwania";
+    stats_breaks_tip =>
+        "How many times the connection broke, whatever the cause. Each one is listed with its evidence in Outage history.",
+        "Ile razy łącze się zerwało, z dowolnej przyczyny. Każde zerwanie, z dowodami, jest w Historii awarii.";
+    stats_no_breaks => "not one", "ani jednego";
+    stats_slow => "Slowdowns", "Spowolnienia";
+    stats_slow_tip =>
+        "Periods when the connection worked, but badly: pings far longer than usual, or packets lost.",
+        "Okresy, gdy łącze działało, ale źle: ping dużo dłuższy niż zwykle albo gubione pakiety.";
+    stats_ongoing => "one is going on now", "jedno trwa teraz";
+    stats_causes => "What broke", "Co się psuło";
+    stats_nothing => "Nothing was recorded in this period.", "W tym okresie nic nie zapisano.";
+    stats_ping => "Ping in this period", "Ping w tym okresie";
+    stats_ping_internet => "Internet", "Internet";
+    stats_ping_router => "Router", "Router";
+    stats_col_avg => "average", "średnio";
+    stats_col_p95 => "95% below", "95% poniżej";
+    stats_col_max => "worst", "najgorzej";
+    stats_col_loss_up => "lost while up", "utracone, gdy działało";
+    stats_col_loss_all => "lost in total", "utracone łącznie";
+    stats_ping_note =>
+        "95% below: 95 answers in 100 came faster than this, so one slow moment does not decide it. Lost while up leaves the drops out: a drop loses every ping, so counted in, the figure only repeats how many drops there were.",
+        "95% poniżej: 95 odpowiedzi na 100 przyszło szybciej, więc jedna wolna chwila tego nie przesądza. Utracone, gdy działało, pomija zerwania: zerwanie gubi wszystkie pingi, więc liczone razem powtarza tylko, ile było zerwań.";
+    stats_not_measured => "not measured", "brak pomiarów";
+    stats_when => "When it happened", "Kiedy to było";
+    stats_when_hours => "Minutes in each hour", "Minuty w każdej godzinie";
+    stats_when_days => "Minutes on each day", "Minuty każdego dnia";
+    stats_when_hint =>
+        "Click a bar to see what happened then.",
+        "Kliknij słupek, żeby zobaczyć, co się wtedy działo.";
+    stats_causes_hint =>
+        "Click a row to see those events in Outage history.",
+        "Kliknij wiersz, żeby zobaczyć te zdarzenia w Historii awarii.";
+    stats_clear => "Longest without a drop", "Najdłużej bez zerwania";
+    stats_clear_tip =>
+        "The longest stretch the app watched without the connection breaking once. Time it was not watching does not count: a weekend with the computer off is not a clean weekend.",
+        "Najdłuższy odcinek, w którym aplikacja mierzyła, a łącze ani razu się nie zerwało. Czas bez pomiarów się nie liczy: weekend z wyłączonym komputerem to nie czysty weekend.";
+    stats_no_drop_watched => "no drop while watched", "bez zerwań, gdy mierzono";
+    stats_router => "Router restarts", "Restarty routera";
+    stats_router_tip =>
+        "How many times the router, or its connection to the provider, started again, read from what the router reports about itself over UPnP. At least this many: two restarts while the app was not watching count as one. A new public address after one usually means the provider's side set the connection up again.",
+        "Ile razy router albo jego połączenie z dostawcą uruchomiło się od nowa, według tego, co router sam podaje przez UPnP. Co najmniej tyle: dwa restarty, gdy aplikacja nie mierzyła, liczą się jako jeden. Nowy publiczny adres po takim restarcie zwykle znaczy, że połączenie zestawiła od nowa strona dostawcy.";
+    stats_router_silent => "the router does not report it", "router tego nie podaje";
+    stats_hours => "Time of day", "Pora dnia";
+    stats_hours_sub =>
+        "The share of the watched time in each hour of the day that was without internet or slow. Hours watched for less than 30 minutes in total are left out.",
+        "Jaka część obserwowanego czasu w danej godzinie była bez internetu albo wolna. Godziny obserwowane łącznie krócej niż 30 minut są pominięte.";
+    hist_show_all => "Show all", "Pokaż wszystkie";
+    rep_sec_summary => "SUMMARY", "PODSUMOWANIE";
 
     // The notification-area icon: its menu and the tooltip's two states that
     // are not a verdict.
@@ -4963,6 +5029,141 @@ pub fn hist_summary(count: usize, where_text: &str) -> String {
             let noun = pl_form(count, "awaria", "awarie", "awarii");
             format!("{count} {noun} w ciągu ostatnich 24 godzin, głównie {where_text}.")
         }
+    }
+}
+
+/// Under the statistics tab's downtime figure: how many drops it came from.
+pub fn stats_offline_sub(drops: usize) -> String {
+    match current() {
+        Lang::En if drops == 1 => "in 1 drop".into(),
+        Lang::En => format!("in {drops} drops"),
+        Lang::Pl if drops == 1 => "w 1 zerwaniu".into(),
+        Lang::Pl => format!("w {drops} zerwaniach"),
+    }
+}
+
+/// Under the drop count: the longest of them.
+pub fn stats_longest(span: &str) -> String {
+    match current() {
+        Lang::En => format!("longest {span}"),
+        Lang::Pl => format!("najdłuższe {span}"),
+    }
+}
+
+/// Under the slowdown count: their time together.
+pub fn stats_slow_sub(span: &str) -> String {
+    match current() {
+        Lang::En => format!("{span} in total"),
+        Lang::Pl => format!("łącznie {span}"),
+    }
+}
+
+/// Under the availability figure: how much of the period it rests on.
+pub fn stats_watched(watched: &str, window: &str) -> String {
+    match current() {
+        Lang::En => format!("of {watched} watched out of {window}"),
+        Lang::Pl => format!("z {watched} obserwacji na {window}"),
+    }
+}
+
+/// Under the longest clear stretch: watched time per drop.
+pub fn stats_every(span: &str) -> String {
+    match current() {
+        Lang::En => format!("one drop every {span} on average"),
+        Lang::Pl => format!("średnio jedno zerwanie co {span}"),
+    }
+}
+
+/// Under the router restarts: how often the public address changed.
+pub fn stats_new_ips(n: usize) -> String {
+    match current() {
+        Lang::En => format!("public address changed: {n}×"),
+        Lang::Pl => format!("zmiana publicznego adresu: {n}×"),
+    }
+}
+
+/// The period before, to compare with. `watched` says how much of it the
+/// counts rest on, since a week half watched has fewer drops for that alone.
+pub fn stats_prev(
+    days: u32,
+    watched: &str,
+    breaks: usize,
+    down: &str,
+    slow: usize,
+    availability: Option<&str>,
+) -> String {
+    let mut out = match current() {
+        Lang::En => {
+            let before = if days == 1 {
+                "The 24 hours before".into()
+            } else {
+                format!("The {days} days before")
+            };
+            format!(
+                "{before} (watched {watched}): {breaks} drop(s), {down} without internet, {slow} slowdown(s)"
+            )
+        }
+        Lang::Pl => {
+            let before = if days == 1 {
+                "Poprzednie 24 godziny".into()
+            } else {
+                format!("Poprzednie {days} dni")
+            };
+            let d = pl_form(breaks, "zerwanie", "zerwania", "zerwań");
+            let s = pl_form(slow, "spowolnienie", "spowolnienia", "spowolnień");
+            format!(
+                "{before} (obserwowane {watched}): {breaks} {d}, {down} bez internetu, {slow} {s}"
+            )
+        }
+    };
+    if let Some(a) = availability {
+        match current() {
+            Lang::En => out.push_str(&format!(", availability {a}")),
+            Lang::Pl => out.push_str(&format!(", dostępność {a}")),
+        }
+    }
+    out.push('.');
+    out
+}
+
+/// The busiest hour of the day, under the time-of-day chart.
+pub fn stats_worst_hour(hour: usize, pct: &str) -> String {
+    match current() {
+        Lang::En => {
+            format!("Worst at {hour}:00: {pct} of the watched time without internet or slow.")
+        }
+        Lang::Pl => {
+            format!("Najgorzej o {hour}:00: {pct} obserwowanego czasu bez internetu lub wolno.")
+        }
+    }
+}
+
+/// What the outage list is narrowed to.
+pub fn hist_filtered(label: &str) -> String {
+    match current() {
+        Lang::En => format!("Showing: {label}"),
+        Lang::Pl => format!("Pokazuję: {label}"),
+    }
+}
+
+/// Beside a filter that matched more entries than the list holds.
+pub fn hist_filtered_newest(shown: usize, total: usize) -> String {
+    match current() {
+        Lang::En => format!("(the newest {shown} of {total})"),
+        Lang::Pl => format!("(najnowsze {shown} z {total})"),
+    }
+}
+
+/// Why ping and availability reach back less far than the drop counts.
+/// `outage_days` is how long drops are kept, which is at least as long.
+pub fn stats_samples_kept(days: i64, outage_days: i64) -> String {
+    match current() {
+        Lang::En => format!(
+            "Measurements are kept for {days} days, so availability and ping cover only the last {days} days. Drops are kept for {outage_days} days and are counted over the whole period."
+        ),
+        Lang::Pl => format!(
+            "Pomiary są przechowywane {days} dni, więc dostępność i ping dotyczą tylko ostatnich {days} dni. Zerwania są trzymane {outage_days} dni i liczone za cały okres."
+        ),
     }
 }
 
