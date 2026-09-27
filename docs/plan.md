@@ -108,3 +108,10 @@ Wynik: `prompts/audyt-wynik-2026-09-25.md`. 12 z 13 ustaleń z 23.09 potwierdzon
 - [ ] Hipoteza J: rekomendacja kanałów 149-165 niedostępnych w części routerów w PL
 - [x] Awaria z crash.log (1.1.0): `--scan`/`--help`/`--version` do zamkniętego potoku panikowały w `println!`; teraz `say` pomija błąd zapisu. Nie sprawdzone na żywo (brak miejsca na dysku na drugi build)
 - [x] Awaria z crash.log (1.5.0): winit 0.30.13 `MonitorHandle::size` robił `unwrap` na nieważnym uchwycie monitora (błąd 1461, winit #3258), wołane co klatkę przez egui-winit. Łatka w `vendor/winit` przez `[patch.crates-io]` (wybór użytkownika zamiast restartu z hooka): `name`, `native_identifier`, `size` bez `unwrap`; `cargo tree -i winit` wskazuje kopię, clippy i testy zielone. Nie sprawdzone odłączeniem monitora
+
+## Statystyki (2026-09-27)
+- [x] Liczenie (`src/tally.rs`): testy jednostkowe zielone, liczby na kopii prawdziwej bazy sprawdzone ręcznie dla 24 h / 7 / 30 dni / wszystko
+- [x] Liczenie nie blokuje monitora: osobne połączenie tylko do odczytu, test `a_side_reader_sees_the_same_file_and_cannot_write_to_it`
+- [ ] Zakładka nieoglądana na ekranie: układ tabeli pingu (6 kolumn) w wąskim oknie, trafianie kliknięciem w słupek, przejście do Historii z filtrem (do sprawdzenia przez użytkownika)
+- [ ] Podsumowanie w PDF nieoglądane w wygenerowanym pliku (sprawdzony tylko tekst w teście)
+- [ ] Niestabilne testy czasowe w `store.rs` pod obciążeniem (`a_reader_drawing_a_chart...`), znane od 1.6.0

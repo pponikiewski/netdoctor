@@ -32,6 +32,7 @@ zgadywanka.
 
 ## Status
 <!-- aktualizuj przy kamieniach milowych -->
+- 2026-09-27: zakładka Statystyki: czas bez internetu, dostępność, zerwania i spowolnienia, restarty routera, ping z p95, pora dnia, porównanie z poprzednim okresem; kliknięcie prowadzi do Historii, to samo podsumowanie w raporcie PDF.
 - 2026-09-27: porządki po audycie `/cleanup`: bez `legacy-python/`, czas lokalny w `clock.rs`, kontrolki w `ui/widgets.rs`, wykres Na żywo podzielony; godziny awarii liczone w strefie z dnia zdarzenia (wcześniej po zmianie czasu przesunięte o godzinę). Wydania gotowe do podpisu przez SignPath.
 - 2026-09-26: audyt wydajności: aplikacja w trayu nie zjada już rdzenia (łatka winit), Historia i Optymalizacja nie czytają bazy przy każdej klatce, historia zajmuje o połowę mniej miejsca (migracja przy pierwszym starcie).
 - 2026-09-26: audyt funkcji 2 zamknięty poza VPN (#10) i dwiema hipotezami; aplikacja nie znika już przy odłączeniu monitora (łatka winit w `vendor/`) ani przy `--scan` do zamkniętego potoku, aktualizacja bez sumy kontrolnej jest odrzucana.
