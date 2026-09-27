@@ -43,12 +43,13 @@ robocze i wracają kanałem `Job`. Wszystkie trzy spotykają się wyłącznie na
 
 | Moduł | Za co odpowiada |
 |---|---|
-| `ui/` | egui: `mod.rs` to `App` i pętla klatki, reszta to po jednej zakładce na plik |
+| `ui/` | egui: `mod.rs` to `App`, pętla klatki, kolory i skala tekstu; `widgets.rs` to wspólne kontrolki (przyciski, karty, wiersze listy, podpowiedzi), reeksportowane z `mod.rs`; reszta to po jednej zakładce na plik |
 | `settings.rs` | ustawienia w JSON, migracja starych kluczy, `data_dir()` |
 | `single.rs` | nazwany mutex i wyniesienie okna pierwszej instancji na wierzch |
 | `tray.rs` | ikona w zasobniku na własnym wątku Win32: kolor stanu, menu, powiadomienia Windows o awariach |
 | `update.rs` | wydania z GitHuba, weryfikacja przez `SHA256SUMS`, podmiana działającej binarki |
 | `i18n.rs` | dwa języki, jeden wpis na komunikat |
+| `clock.rs` | czas lokalny dla znaczników unixowych (godzina, data, nazwa pliku) bez biblioteki dat |
 
 **Zasada, która trzyma to razem.** Wszystko, co dotyka bazy, sieci albo blokady
 dzielonej z monitorem, jest liczone w rytmie pomiaru i trzymane w pamięci
@@ -117,6 +118,8 @@ z łamania dokładnie tej zasady.
 - 2026-09-26: druga łatka w `vendor/winit` (`Window::request_redraw` na Windows). System nie wysyła `WM_PAINT` do ukrytego okna, a eframe 0.29 po zażądaniu przerysowania ustawia `ControlFlow::Poll` i czeka na `RedrawRequested`; schowana w trayu aplikacja kręciła pętlą zdarzeń bez snu (zmierzone do 80% rdzenia, dopóki przypadkowe zdarzenie jej nie zresetowało). Łatka wstawia `WM_PAINT` do kolejki dla ukrytego okna. Do tego `App::update` nie planuje odświeżenia co 500 ms, gdy okno jest ukryte albo zminimalizowane (`tray::main_window_shown`), więc w trayu wątek UI nie robi nic. Odrzucone: łatanie eframe (nie jest w `vendor/`) i utrzymywanie okna „widocznego” poza ekranem.
 
 - 2026-09-26: SQLite kompilowany z `opt-level = 3` (`[profile.release.package.libsqlite3-sys]`), reszta zostaje na `"z"`. `cc` bierze poziom z profilu, więc przy `"z"` SQLite szedł z `-Os`. Benchmark `bench_hot_queries_on_a_real_history` (ignorowany, na kopii prawdziwej bazy), mediana z 3 naprzemiennych przebiegów: doba statystyk 95 → 69 ms, wykres 1 h 1,81 → 1,06 ms, migracja 6,7 → 5,3 s; binarka 7,1 → 7,6 MB.
+
+- 2026-09-27: wydania podpisywane Authenticode przez SignPath Foundation (`release.yml`, kopia konfiguracji w `.signpath/`). Kolejność jest częścią decyzji: podpis zmienia plik, więc `SHA256SUMS` liczony jest po podpisaniu, a nieważny podpis przerywa wydanie. Wyłączone, dopóki nie ma zmiennej `SIGNPATH_ORGANIZATION_ID`, więc tagi przed akceptacją projektu dalej publikują niepodpisany exe.
 
 ## Open questions
 <!-- Track unresolved technical decisions -->
