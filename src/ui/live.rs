@@ -509,26 +509,17 @@ fn plot_body(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
     let newest = cache.newest;
-    let spikes = cache.spikes.clone();
 
     // Hidden series are dropped here rather than skipped while drawing, so
     // the scale, the spike markers and the readout all agree with what is on
     // screen: a y axis set by a line nobody can see is a scale with no
     // explanation.
-    let visible: Vec<(ChartSeries, egui::Color32)> = cache
+    let visible: Vec<(&ChartSeries, egui::Color32)> = cache
         .series
         .iter()
         .enumerate()
         .filter(|(_, s)| !app.hidden_series.contains(&s.key))
-        .map(|(i, s)| (s.clone(), SERIES_COLOURS[i % SERIES_COLOURS.len()]))
-        .collect();
-    let all: Vec<(String, String, egui::Color32, crate::settings::Scope)> = cache
-        .series
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            (s.key.clone(), s.label.clone(), SERIES_COLOURS[i % SERIES_COLOURS.len()], s.scope)
-        })
+        .map(|(i, s)| (s, SERIES_COLOURS[i % SERIES_COLOURS.len()]))
         .collect();
 
     let (y_top, above) = scale(&visible, &app.settings);
@@ -553,184 +544,8 @@ fn plot_body(app: &mut App, ui: &mut egui::Ui) {
         .map(|t| [t - newest, y_top * 0.025])
         .collect();
 
-    // The plot is the tab's centrepiece, so it takes a share of whatever
-    // height there is rather than a fixed 280 px that is most of a laptop
-    // screen and a fifth of a desktop one.
-    let plot_height = (ui.ctx().screen_rect().height() * 0.32).clamp(170.0, 420.0);
-
-    // The axis numbers were set in the body size, a step and a half above
-    // every other caption on the tab, which made the scale shout over the
-    // thing it was scaling. egui_plot resolves its tick labels against the
-    // style of the `Ui` the plot is added to, so a scope is the only place
-    // this can be said.
-    let plotted = ui
-        .scope(|ui| {
-            ui.style_mut().text_styles.insert(
-                egui::TextStyle::Body,
-                egui::FontId::new(T_MICRO, egui::FontFamily::Proportional),
-            );
-            Plot::new("latency")
-                .height(plot_height)
-                .allow_drag(false)
-                .allow_zoom(false)
-                .allow_scroll(false)
-                .allow_boxed_zoom(false)
-                .show_axes([true, true])
-                // No rotated "ms" down the side: two letters turned on end, drawn
-                // hard against the tick labels, collided with them and bought
-                // nothing. The unit is said once in the caption instead.
-                .x_axis_formatter(|mark, _| {
-                    // x is seconds relative to now, so label it as age. Rounding to
-                    // whole minutes past 90 s printed "-2m" on six consecutive ticks,
-                    // which is not a time axis -- it is the same word six times. Past
-                    // a minute the labels are m:ss, so every tick is its own moment.
-                    // The leading newline is the gap. egui_plot draws the x
-                    // labels at the very top of the axis strip, which is flush
-                    // with the bottom of the plot, and it has no padding to
-                    // offer: an empty first line is the only way to get the
-                    // numbers off the frame without drawing the axis by hand,
-                    // and drawing it by hand would mean picking tick positions
-                    // that the plot's own grid lines would then disagree with.
-                    let back = -mark.value;
-                    if back < 1.0 {
-                        format!("\n{}", i18n::live_x_now())
-                    } else if back < 60.0 {
-                        format!("\n-{back:.0}s")
-                    } else {
-                        let mins = (back / 60.0).floor();
-                        let secs = (back - mins * 60.0).round();
-                        format!("\n-{mins:.0}:{secs:02.0}")
-                    }
-                })
-                .y_axis_formatter(|mark, _| {
-                    // egui_plot right-aligns the y labels hard against the plot's
-                    // left edge and has no padding of its own, so "20" ended up
-                    // touching whichever line happened to pass near it and read as
-                    // part of the chart rather than as its scale. The gap has to be
-                    // part of the text; the spaces are non-breaking because a plain
-                    // trailing space is not guaranteed to keep its width through
-                    // layout.
-                    let v = mark.value;
-                    let text = if (v - v.round()).abs() < 0.05 {
-                        format!("{v:.0}")
-                    } else {
-                        format!("{v:.1}")
-                    };
-                    format!("{text}\u{a0}\u{a0}\u{a0}")
-                })
-                .label_formatter(|_, _| String::new())
-                .show(ui, |plot_ui| {
-                    plot_ui.set_plot_bounds(PlotBounds::from_min_max([x_min, 0.0], [0.0, y_top]));
-
-                    // The unit, once, in the corner of the plot it belongs
-                    // to. It used to be a word in the caption row, a long way
-                    // from the numbers it was the unit for; two letters over
-                    // the top of the scale is the whole of what that word had
-                    // to say. "ms" is the same in both languages.
-                    plot_ui.text(
-                        Text::new(
-                            PlotPoint::new(x_min, y_top),
-                            egui::RichText::new("ms").size(T_MICRO).color(FG_DIM),
-                        )
-                        .anchor(egui::Align2::LEFT_TOP),
-                    );
-
-                    // The two thresholds, each with its value written on it.
-                    // They were a faint green line and a faint red one with
-                    // nothing to say what height they marked: the reader had
-                    // to find the same number in the settings to learn what
-                    // the chart was drawing. The label sits at the oldest
-                    // edge, where the data is thinnest, and just above the
-                    // line it belongs to.
-                    for (level, colour) in
-                        [(app.settings.ping_ok_ms, GREEN), (app.settings.ping_bad_ms, RED)]
-                    {
-                        if level > 0.0 && level < y_top {
-                            plot_ui.hline(HLine::new(level).color(colour.linear_multiply(0.25)));
-                            plot_ui.text(
-                                Text::new(
-                                    PlotPoint::new(x_min, level),
-                                    egui::RichText::new(i18n::live_threshold_mark(level))
-                                        .size(T_MICRO)
-                                        .color(colour.linear_multiply(0.7)),
-                                )
-                                .anchor(egui::Align2::LEFT_BOTTOM),
-                            );
-                        }
-                    }
-
-                    // Spikes shared by every target, as marks along the top
-                    // edge. A full-height line each was the other half of
-                    // the fence: thirty of them in five minutes and the
-                    // latency lines went behind a curtain of yellow.
-                    let spike_marks: Vec<[f64; 2]> = spikes
-                        .correlated
-                        .iter()
-                        .map(|(ts, _)| [ts - newest, y_top * 0.965])
-                        .collect();
-                    if !spike_marks.is_empty() {
-                        plot_ui.points(
-                            Points::new(PlotPoints::from(spike_marks))
-                                .shape(MarkerShape::Down)
-                                .filled(true)
-                                .radius(4.0)
-                                .color(YELLOW.linear_multiply(0.85)),
-                        );
-                    }
-                    if !single.is_empty() {
-                        plot_ui.points(
-                            Points::new(PlotPoints::from(single.clone()))
-                                .shape(MarkerShape::Circle)
-                                .filled(true)
-                                .radius(2.2)
-                                .color(RED.linear_multiply(0.7)),
-                        );
-                    }
-                    for ts in &shared {
-                        plot_ui.vline(VLine::new(ts - newest).color(RED.linear_multiply(0.6)));
-                    }
-
-                    let hovered = plot_ui.pointer_coordinate();
-                    if let Some(h) = hovered {
-                        plot_ui.vline(VLine::new(h.x).color(FG_DIM.linear_multiply(0.30)));
-                    }
-
-                    for (s, colour) in &visible {
-                        // Split at gaps so a lost packet breaks the line instead of
-                        // drawing a straight segment across the outage.
-                        let mut run: Vec<[f64; 2]> = Vec::new();
-                        for (ts, rtt) in &s.points {
-                            let x = ts - newest;
-                            match rtt {
-                                Some(v) => run.push([x, *v]),
-                                None => {
-                                    if run.len() > 1 {
-                                        plot_ui.line(
-                                            Line::new(PlotPoints::from(std::mem::take(&mut run)))
-                                                .color(*colour)
-                                                .width(1.6_f32)
-                                                .name(&s.label),
-                                        );
-                                    } else {
-                                        run.clear();
-                                    }
-                                }
-                            }
-                        }
-                        if run.len() > 1 {
-                            plot_ui.line(
-                                Line::new(PlotPoints::from(run))
-                                    .color(*colour)
-                                    .width(1.6_f32)
-                                    .name(&s.label),
-                            );
-                        }
-                    }
-
-                    hovered
-                })
-        })
-        .inner;
+    let view = ChartView { visible, spikes: &cache.spikes, newest, x_min, y_top, shared, single };
+    let plotted = draw_plot(ui, &view, &app.settings);
 
     if let Some(at) = plotted.inner {
         // Repaint while the pointer is over the chart. Without it the readout
@@ -744,7 +559,7 @@ fn plot_body(app: &mut App, ui: &mut egui::Ui) {
         // the numbers sat a long way from the place on the chart they
         // described, and on a tall plot that was most of the window away.
         plotted.response.on_hover_ui_at_pointer(|ui| {
-            readout(ui, &visible, &spikes, newest, x);
+            readout(ui, &view.visible, view.spikes, newest, x);
         });
     }
 
@@ -753,11 +568,224 @@ fn plot_body(app: &mut App, ui: &mut egui::Ui) {
     // against the window edge by a right-to-left layout while the series
     // names grew from the left -- the two collided the moment a target had a
     // long name. Two rows cost eight pixels and cannot collide.
+    let toggled = legend(ui, app, &cache.series);
+    ui.add_space(S_SM);
+    key_row(ui, &app.settings);
+    facts_row(ui, view.spikes, above, y_top);
+
+    if let Some(key) = toggled {
+        if !app.hidden_series.remove(&key) {
+            app.hidden_series.insert(key);
+        }
+    }
+}
+
+/// What the plot draws, worked out once a frame from the chart cache.
+struct ChartView<'a> {
+    visible: Vec<(&'a ChartSeries, egui::Color32)>,
+    spikes: &'a crate::monitor::Spikes,
+    newest: f64,
+    x_min: f64,
+    y_top: f64,
+    /// Losses the targets shared, drawn as a line across the whole plot.
+    shared: Vec<f64>,
+    /// Every other loss, as a mark along the floor.
+    single: Vec<[f64; 2]>,
+}
+
+/// The plot itself. Its inner value is where the pointer is, if it is over it.
+fn draw_plot(
+    ui: &mut egui::Ui,
+    view: &ChartView,
+    settings: &crate::settings::Settings,
+) -> egui_plot::PlotResponse<Option<PlotPoint>> {
+    let ChartView { visible, spikes, newest, x_min, y_top, shared, single } = view;
+    let (newest, x_min, y_top) = (*newest, *x_min, *y_top);
+
+    // The plot is the tab's centrepiece, so it takes a share of whatever
+    // height there is rather than a fixed 280 px that is most of a laptop
+    // screen and a fifth of a desktop one.
+    let plot_height = (ui.ctx().screen_rect().height() * 0.32).clamp(170.0, 420.0);
+
+    // The axis numbers were set in the body size, a step and a half above
+    // every other caption on the tab, which made the scale shout over the
+    // thing it was scaling. egui_plot resolves its tick labels against the
+    // style of the `Ui` the plot is added to, so a scope is the only place
+    // this can be said.
+    ui.scope(|ui| {
+        ui.style_mut().text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::new(T_MICRO, egui::FontFamily::Proportional),
+        );
+        Plot::new("latency")
+            .height(plot_height)
+            .allow_drag(false)
+            .allow_zoom(false)
+            .allow_scroll(false)
+            .allow_boxed_zoom(false)
+            .show_axes([true, true])
+            // No rotated "ms" down the side: two letters turned on end, drawn
+            // hard against the tick labels, collided with them and bought
+            // nothing. The unit is said once in the caption instead.
+            .x_axis_formatter(|mark, _| {
+                // x is seconds relative to now, so label it as age. Rounding to
+                // whole minutes past 90 s printed "-2m" on six consecutive ticks,
+                // which is not a time axis -- it is the same word six times. Past
+                // a minute the labels are m:ss, so every tick is its own moment.
+                // The leading newline is the gap. egui_plot draws the x
+                // labels at the very top of the axis strip, which is flush
+                // with the bottom of the plot, and it has no padding to
+                // offer: an empty first line is the only way to get the
+                // numbers off the frame without drawing the axis by hand,
+                // and drawing it by hand would mean picking tick positions
+                // that the plot's own grid lines would then disagree with.
+                let back = -mark.value;
+                if back < 1.0 {
+                    format!("\n{}", i18n::live_x_now())
+                } else if back < 60.0 {
+                    format!("\n-{back:.0}s")
+                } else {
+                    let mins = (back / 60.0).floor();
+                    let secs = (back - mins * 60.0).round();
+                    format!("\n-{mins:.0}:{secs:02.0}")
+                }
+            })
+            .y_axis_formatter(|mark, _| {
+                // egui_plot right-aligns the y labels hard against the plot's
+                // left edge and has no padding of its own, so "20" ended up
+                // touching whichever line happened to pass near it and read as
+                // part of the chart rather than as its scale. The gap has to be
+                // part of the text; the spaces are non-breaking because a plain
+                // trailing space is not guaranteed to keep its width through
+                // layout.
+                let v = mark.value;
+                let text = if (v - v.round()).abs() < 0.05 {
+                    format!("{v:.0}")
+                } else {
+                    format!("{v:.1}")
+                };
+                format!("{text}\u{a0}\u{a0}\u{a0}")
+            })
+            .label_formatter(|_, _| String::new())
+            .show(ui, |plot_ui| {
+                plot_ui.set_plot_bounds(PlotBounds::from_min_max([x_min, 0.0], [0.0, y_top]));
+
+                // The unit, once, in the corner of the plot it belongs
+                // to. It used to be a word in the caption row, a long way
+                // from the numbers it was the unit for; two letters over
+                // the top of the scale is the whole of what that word had
+                // to say. "ms" is the same in both languages.
+                plot_ui.text(
+                    Text::new(
+                        PlotPoint::new(x_min, y_top),
+                        egui::RichText::new("ms").size(T_MICRO).color(FG_DIM),
+                    )
+                    .anchor(egui::Align2::LEFT_TOP),
+                );
+
+                // The two thresholds, each with its value written on it.
+                // They were a faint green line and a faint red one with
+                // nothing to say what height they marked: the reader had
+                // to find the same number in the settings to learn what
+                // the chart was drawing. The label sits at the oldest
+                // edge, where the data is thinnest, and just above the
+                // line it belongs to.
+                for (level, colour) in [(settings.ping_ok_ms, GREEN), (settings.ping_bad_ms, RED)] {
+                    if level > 0.0 && level < y_top {
+                        plot_ui.hline(HLine::new(level).color(colour.linear_multiply(0.25)));
+                        plot_ui.text(
+                            Text::new(
+                                PlotPoint::new(x_min, level),
+                                egui::RichText::new(i18n::live_threshold_mark(level))
+                                    .size(T_MICRO)
+                                    .color(colour.linear_multiply(0.7)),
+                            )
+                            .anchor(egui::Align2::LEFT_BOTTOM),
+                        );
+                    }
+                }
+
+                // Spikes shared by every target, as marks along the top
+                // edge. A full-height line each was the other half of
+                // the fence: thirty of them in five minutes and the
+                // latency lines went behind a curtain of yellow.
+                let spike_marks: Vec<[f64; 2]> =
+                    spikes.correlated.iter().map(|(ts, _)| [ts - newest, y_top * 0.965]).collect();
+                if !spike_marks.is_empty() {
+                    plot_ui.points(
+                        Points::new(PlotPoints::from(spike_marks))
+                            .shape(MarkerShape::Down)
+                            .filled(true)
+                            .radius(4.0)
+                            .color(YELLOW.linear_multiply(0.85)),
+                    );
+                }
+                if !single.is_empty() {
+                    plot_ui.points(
+                        Points::new(PlotPoints::from(single.clone()))
+                            .shape(MarkerShape::Circle)
+                            .filled(true)
+                            .radius(2.2)
+                            .color(RED.linear_multiply(0.7)),
+                    );
+                }
+                for ts in shared.iter() {
+                    plot_ui.vline(VLine::new(ts - newest).color(RED.linear_multiply(0.6)));
+                }
+
+                let hovered = plot_ui.pointer_coordinate();
+                if let Some(h) = hovered {
+                    plot_ui.vline(VLine::new(h.x).color(FG_DIM.linear_multiply(0.30)));
+                }
+
+                for (s, colour) in visible.iter() {
+                    // Split at gaps so a lost packet breaks the line instead of
+                    // drawing a straight segment across the outage.
+                    let mut run: Vec<[f64; 2]> = Vec::new();
+                    for (ts, rtt) in &s.points {
+                        let x = ts - newest;
+                        match rtt {
+                            Some(v) => run.push([x, *v]),
+                            None => {
+                                if run.len() > 1 {
+                                    plot_ui.line(
+                                        Line::new(PlotPoints::from(std::mem::take(&mut run)))
+                                            .color(*colour)
+                                            .width(1.6_f32)
+                                            .name(&s.label),
+                                    );
+                                } else {
+                                    run.clear();
+                                }
+                            }
+                        }
+                    }
+                    if run.len() > 1 {
+                        plot_ui.line(
+                            Line::new(PlotPoints::from(run))
+                                .color(*colour)
+                                .width(1.6_f32)
+                                .name(&s.label),
+                        );
+                    }
+                }
+
+                hovered
+            })
+    })
+    .inner
+}
+
+/// One chip per series: its colour, name and last reading, and a switch that
+/// hides it. Returns the key of the chip clicked this frame.
+fn legend(ui: &mut egui::Ui, app: &App, series: &[ChartSeries]) -> Option<String> {
     let mut toggled: Option<String> = None;
     super::steady(ui, "live_legend", |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(S_XS + 2.0, S_XS);
-            for (key, label, colour, scope) in &all {
+            for (i, item) in series.iter().enumerate() {
+                let (key, label, scope) = (&item.key, &item.label, item.scope);
+                let colour = SERIES_COLOURS[i % SERIES_COLOURS.len()];
                 let on = !app.hidden_series.contains(key);
 
                 // The last reading, shown on the chip. This is the number the
@@ -775,7 +803,7 @@ fn plot_body(app: &mut App, ui: &mut egui::Ui) {
                     None => None,
                 };
 
-                let resp = legend_chip(ui, *colour, label, value, on);
+                let resp = legend_chip(ui, colour, label, value, on);
 
                 // Four lines crossing each other is the state this chart is in
                 // most of the time, and the question is usually about one of
@@ -799,7 +827,7 @@ fn plot_body(app: &mut App, ui: &mut egui::Ui) {
                     },
                     None => (i18n::live_no_data().to_string(), FG_DIM),
                 };
-                let meaning = i18n::live_target_meaning(key, *scope);
+                let meaning = i18n::live_target_meaning(key, scope);
                 let hint = if on { i18n::live_series_toggle() } else { i18n::live_series_show() };
                 let label = label.clone();
                 resp.on_hover_ui(move |ui| {
@@ -825,16 +853,7 @@ fn plot_body(app: &mut App, ui: &mut egui::Ui) {
             }
         })
     });
-
-    ui.add_space(S_SM);
-    key_row(ui, &app.settings);
-    facts_row(ui, &spikes, above, y_top);
-
-    if let Some(key) = toggled {
-        if !app.hidden_series.remove(&key) {
-            app.hidden_series.insert(key);
-        }
-    }
+    toggled
 }
 
 /// How far back the chart looks, and whether it draws the range or the trend.
@@ -898,7 +917,7 @@ fn dot(ui: &mut egui::Ui) {
 /// threshold lines are drawn when they fall inside the scale and are simply
 /// absent when the link is nowhere near them -- which is itself the answer to
 /// "is that bad".
-fn scale(series: &[(ChartSeries, egui::Color32)], s: &crate::settings::Settings) -> (f64, usize) {
+fn scale(series: &[(&ChartSeries, egui::Color32)], s: &crate::settings::Settings) -> (f64, usize) {
     let mut vals: Vec<f64> =
         series.iter().flat_map(|(d, _)| d.points.iter().filter_map(|(_, r)| *r)).collect();
     if vals.is_empty() {
@@ -933,7 +952,7 @@ fn scale(series: &[(ChartSeries, egui::Color32)], s: &crate::settings::Settings)
 /// is the connection, one line jumping alone is that responder.
 fn readout(
     ui: &mut egui::Ui,
-    series: &[(ChartSeries, egui::Color32)],
+    series: &[(&ChartSeries, egui::Color32)],
     spikes: &crate::monitor::Spikes,
     newest: f64,
     x: f64,
@@ -1593,18 +1612,17 @@ mod tests {
         }
     }
 
-    fn series(values: &[f64]) -> Vec<(ChartSeries, egui::Color32)> {
-        vec![(
-            ChartSeries {
-                key: "t".into(),
-                label: "t".into(),
-                points: values.iter().enumerate().map(|(i, v)| (i as f64, Some(*v))).collect(),
-                losses: Vec::new(),
-                outages: Vec::new(),
-                scope: crate::settings::Scope::Internet,
-            },
-            egui::Color32::WHITE,
-        )]
+    /// The chart's scale for one series drawn from `values`.
+    fn scale_of(values: &[f64], s: &Settings) -> (f64, usize) {
+        let series = ChartSeries {
+            key: "t".into(),
+            label: "t".into(),
+            points: values.iter().enumerate().map(|(i, v)| (i as f64, Some(*v))).collect(),
+            losses: Vec::new(),
+            outages: Vec::new(),
+            scope: crate::settings::Scope::Internet,
+        };
+        scale(&[(&series, egui::Color32::WHITE)], s)
     }
 
     /// Twelve sweeps at a given cadence, with three in the middle lost.
@@ -1691,8 +1709,8 @@ mod tests {
         let mut spiked = calm.clone();
         spiked.push(400.0);
 
-        let (quiet_top, _) = scale(&series(&calm), &s);
-        let (top, above) = scale(&series(&spiked), &s);
+        let (quiet_top, _) = scale_of(&calm, &s);
+        let (top, above) = scale_of(&spiked, &s);
 
         assert_eq!(top, quiet_top, "one outlier must not move the axis at all");
         assert!(top < 60.0, "a 12 ms link is drawn at 12 ms scale, not at its worst moment: {top}");
@@ -1704,7 +1722,7 @@ mod tests {
         // Making room for the 120 ms "poor" line would draw a 3 ms link as a
         // line along the bottom of the chart, which is the whole complaint.
         let s = Settings::default();
-        let (top, above) = scale(&series(&[3.0; 100]), &s);
+        let (top, above) = scale_of(&[3.0; 100], &s);
         assert!(top < s.ping_ok_ms, "got {top}, which is mostly empty chart");
         assert_eq!(above, 0);
     }
@@ -1712,7 +1730,7 @@ mod tests {
     #[test]
     fn a_link_that_is_genuinely_slow_gets_a_scale_that_shows_it() {
         let s = Settings::default();
-        let (top, _) = scale(&series(&[140.0; 100]), &s);
+        let (top, _) = scale_of(&[140.0; 100], &s);
         assert!(top > s.ping_bad_ms, "the thresholds have to be visible once they matter: {top}");
     }
 
@@ -1720,7 +1738,7 @@ mod tests {
     fn the_top_of_the_scale_is_a_number_a_person_would_pick() {
         let s = Settings::default();
         for sample in [7.0, 63.0, 180.0, 640.0] {
-            let (top, _) = scale(&series(&[sample; 100]), &s);
+            let (top, _) = scale_of(&[sample; 100], &s);
             let step = if top <= 50.0 {
                 10.0
             } else if top <= 200.0 {
@@ -1742,18 +1760,15 @@ mod tests {
 
     #[test]
     fn total_loss_leaves_no_readings_to_scale_from() {
-        let empty: Vec<(ChartSeries, egui::Color32)> = vec![(
-            ChartSeries {
-                key: "t".into(),
-                label: "t".into(),
-                points: vec![(0.0, None), (1.0, None)],
-                losses: Vec::new(),
-                outages: Vec::new(),
-                scope: crate::settings::Scope::Internet,
-            },
-            egui::Color32::WHITE,
-        )];
-        let (top, above) = scale(&empty, &Settings::default());
+        let empty = ChartSeries {
+            key: "t".into(),
+            label: "t".into(),
+            points: vec![(0.0, None), (1.0, None)],
+            losses: Vec::new(),
+            outages: Vec::new(),
+            scope: crate::settings::Scope::Internet,
+        };
+        let (top, above) = scale(&[(&empty, egui::Color32::WHITE)], &Settings::default());
         assert!(top > 0.0);
         assert_eq!(above, 0);
     }
