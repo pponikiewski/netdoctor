@@ -127,6 +127,39 @@ GitHub on its own.
 If the update fails because the folder is read-only, move the executable
 somewhere you own and try again, or download the new version by hand.
 
+## What it connects to
+
+Nothing here reports on you. The app talks to these, and only these:
+
+- **The addresses it measures.** Pings to your router and to the targets in
+  Settings (by default Cloudflare `1.1.1.1` and Google `8.8.8.8`), a TCP
+  connection to port 443 on them, and DNS lookups against your own resolver
+  and a public one. That is the measurement itself.
+- **Your router**, over UPnP on your local network, for its line readings.
+- **Cloudflare's speed test** (`speed.cloudflare.com`), only while a load test
+  you started is running.
+- **GitHub**, to check for and download updates. Automatic checking can be
+  turned off in Settings → Updates.
+- **OpenRouter**, only if you paste your own API key and press the button that
+  asks for a second opinion. What is sent and what is masked is described in
+  [`src/ai.rs`](src/ai.rs).
+
+Everything it records stays on your machine, in the folder listed under
+[Data](#data).
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/).
+
+- Committers and reviewers: [pponikiewski](https://github.com/pponikiewski)
+- Approvers: [pponikiewski](https://github.com/pponikiewski)
+
+Only `netdoctor.exe` built by
+[`release.yml`](.github/workflows/release.yml) from this repository is signed,
+and every signing request is approved by hand. See
+[`.signpath/artifact-configuration.xml`](.signpath/artifact-configuration.xml).
+
 ## Running it
 
 ```text
@@ -573,7 +606,11 @@ git push origin v1.2.0
 ```
 
 `.github/workflows/release.yml` builds on Windows, runs clippy and the tests,
-and attaches `netdoctor.exe` and `SHA256SUMS` to a GitHub release. It refuses
+has the binary signed through SignPath (see
+[Code signing policy](#code-signing-policy)), and attaches `netdoctor.exe` and
+`SHA256SUMS` to a GitHub release. Signing waits for an approval in SignPath,
+so the job sits in that step until someone approves the request. It is skipped
+while the repository variable `SIGNPATH_ORGANIZATION_ID` is unset. It refuses
 to publish a tag that disagrees with the version in `Cargo.toml`: the updater
 compares the tag against the version baked into the running binary, so a
 mismatch ships a build that either re-offers itself forever or never updates.

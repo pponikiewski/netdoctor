@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copy of the artifact configuration set up in SignPath for the "netdoctor"
+  project. SignPath reads the one stored on its side, not this file; it is here
+  so the repository shows what gets signed.
+
+  The workflow uploads netdoctor.exe with actions/upload-artifact, which zips
+  it, hence the zip-file root.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="netdoctor.exe">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

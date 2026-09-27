@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: write
+  # SignPath reads the job and downloads the unsigned artifact with this token.
+  actions: read
 
 jobs:
   build:
@@ -53,14 +55,63 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Stage binary
+        shell: pwsh
+        run: Copy-Item target\release\netdoctor.exe .\netdoctor.exe
+
+      # Authenticode signing through SignPath Foundation, so SmartScreen stops
+      # treating every release as an unknown program. Off until the repository
+      # variable SIGNPATH_ORGANIZATION_ID is set (plus the SIGNPATH_API_TOKEN
+      # secret), so tags keep publishing unsigned builds before the project is
+      # accepted. Tags only: the release policy needs a manual approval in
+      # SignPath, which a trial run from the Actions tab should not ask for.
+      - name: Upload unsigned
+        id: unsigned
+        if: startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: netdoctor-unsigned
+          path: netdoctor.exe
+
+      # The approval is a person clicking in SignPath, so the wait is an hour
+      # rather than the action's ten-minute default.
+      - name: Sign
+        if: steps.unsigned.outcome == 'success'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: netdoctor
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+
+      # Overwrites the unsigned copy, so nothing after this step can pick up
+      # the wrong one. A signature that is not valid fails the release instead
+      # of shipping a file SmartScreen would reject anyway.
+      - name: Use signed binary
+        if: steps.unsigned.outcome == 'success'
+        shell: pwsh
+        run: |
+          Copy-Item signed\netdoctor.exe .\netdoctor.exe -Force
+          $sig = Get-AuthenticodeSignature .\netdoctor.exe
+          if ($sig.Status -ne 'Valid') {
+            Write-Error "signature is $($sig.Status): $($sig.StatusMessage)"
+            exit 1
+          }
+          Write-Host "signed by $($sig.SignerCertificate.Subject)"
+
       # Published next to the binary for anyone installing by hand, and read
       # by the in-app updater: `update::verify` refuses to install a download
       # whose digest is not the one listed here. The format matters — one line
       # of `<hex>  netdoctor.exe` — because that is what the parser expects.
+      # Computed after signing: the signature changes the file, and a digest of
+      # the unsigned build would make every update fail verification.
       - name: Checksum
         shell: pwsh
         run: |
-          Copy-Item target\release\netdoctor.exe .\netdoctor.exe
           (Get-FileHash .\netdoctor.exe -Algorithm SHA256).Hash.ToLower() + "  netdoctor.exe" `
             | Out-File -Encoding ascii SHA256SUMS
 
